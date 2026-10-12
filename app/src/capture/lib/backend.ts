@@ -123,7 +123,7 @@ export interface Job { id: string; name: string; status: 'queued' | 'running' | 
 export async function getJob(id: string, signal?: AbortSignal): Promise<Job> {
   const r = await fetch(`${API}/v1/jobs/${encodeURIComponent(id)}`, { signal, cache: 'no-store' }); if (!r.ok) throw new Error(r.status === 404 ? 'No such job' : `server said ${r.status}`); return r.json();
 }
-export interface Health { workersOnline: number; workers: { name: string; busy: boolean; seenSecondsAgo: number }[]; queued: number; }
+export interface Health { workersOnline: number; workersStarting?: number; workers: { name: string; busy: boolean; starting?: string | null; seenSecondsAgo: number }[]; queued: number; }
 export async function getHealth(signal?: AbortSignal): Promise<Health | null> {
   try { const r = await fetch(`${API}/v1/health`, { signal, cache: 'no-store' }); return r.ok ? r.json() : null; } catch { return null; }
 }

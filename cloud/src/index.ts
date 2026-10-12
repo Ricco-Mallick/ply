@@ -66,9 +66,9 @@ async function route(req: Request, env: Env): Promise<Response> {
 
   if (p === '/' || p === '/v1') return json({ ok: true, service: 'ply-api' });
   if (p === '/v1/health' && req.method === 'GET') {
-    const w = await env.DB.prepare('SELECT name,last_seen,busy_job FROM workers WHERE last_seen > ? ORDER BY last_seen DESC').bind(now - 90_000).all();
+    const w = await env.DB.prepare('SELECT name,last_seen,busy_job,note FROM workers WHERE last_seen > ? ORDER BY last_seen DESC').bind(now - 90_000).all();
     const q = await env.DB.prepare("SELECT COUNT(*) n FROM jobs WHERE status='queued'").first();
-    return json({ ok: true, workersOnline: w.results.length, workers: w.results.map((x: any) => ({ name: x.name, busy: !!x.busy_job, seenSecondsAgo: Math.round((now - x.last_seen) / 1000) })), queued: q.n }, 200, { 'cache-control': 'no-store' });
+    return json({ ok: true, workersOnline: w.results.filter((x: any) => !x.note).length, workersStarting: w.results.filter((x: any) => x.note).length, workers: w.results.map((x: any) => ({ name: x.name, busy: !!x.busy_job, starting: x.note || null, seenSecondsAgo: Math.round((now - x.last_seen) / 1000) })), queued: q.n }, 200, { 'cache-control': 'no-store' });
   }
 
   // ---- public reads ----
@@ -135,9 +135,14 @@ async function route(req: Request, env: Env): Promise<Response> {
       const row = await env.DB.prepare(`UPDATE jobs SET status='running', worker=?, stage=NULL, progress=0, message='claimed', started_at=?, updated_at=?
         WHERE id = (SELECT id FROM jobs WHERE status='queued' OR (status='running' AND updated_at < ?) ORDER BY created_at LIMIT 1) RETURNING *`)
         .bind(String(b.worker ?? 'worker').slice(0, 60), now, now, now - STALE_MS).first();
-      await env.DB.prepare('INSERT INTO workers (name,last_seen,busy_job) VALUES (?,?,?) ON CONFLICT(name) DO UPDATE SET last_seen=excluded.last_seen, busy_job=excluded.busy_job').bind(wname, now, row?.id ?? null).run();
+      await env.DB.prepare('INSERT INTO workers (name,last_seen,busy_job,note) VALUES (?,?,?,NULL) ON CONFLICT(name) DO UPDATE SET last_seen=excluded.last_seen, busy_job=excluded.busy_job, note=NULL').bind(wname, now, row?.id ?? null).run();
       if (!row) return new Response(null, { status: 204 });
       return json({ ...row, settings: JSON.parse(row.settings), args: JSON.parse(row.args), files: JSON.parse(row.files) });
+    }
+    if (p === '/v1/worker/hello' && req.method === 'POST') {  // a starting worker says what it is doing (install progress)
+      const b = await req.json().catch(() => ({})) as any;
+      await env.DB.prepare('INSERT INTO workers (name,last_seen,busy_job,note) VALUES (?,?,NULL,?) ON CONFLICT(name) DO UPDATE SET last_seen=excluded.last_seen, note=excluded.note').bind(String(b.worker ?? 'worker').slice(0, 60), now, String(b.note ?? '').slice(0, 200)).run();
+      return json({ ok: true });
     }
     m = p.match(/^\/v1\/worker\/jobs\/([\w-]+)$/);
     if (m && req.method === 'POST') {

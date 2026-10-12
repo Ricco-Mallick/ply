@@ -23,5 +23,6 @@ CREATE INDEX IF NOT EXISTS jobs_queue ON jobs (status, created_at);
 CREATE TABLE IF NOT EXISTS workers (
   name TEXT PRIMARY KEY,
   last_seen INTEGER NOT NULL,
-  busy_job TEXT
+  busy_job TEXT,
+  note TEXT                -- what a starting worker is doing ("installing: building gsplat"); NULL once it polls
 );
