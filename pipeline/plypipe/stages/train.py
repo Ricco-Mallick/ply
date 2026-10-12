@@ -30,7 +30,8 @@ def run_stage(ctx: Ctx) -> dict:
     ex = gsplat_examples(ctx)
     preset = ctx.opt("preset", "standard")
     result = ctx.train_dir
-    cmd = [sys.executable, "-m", "plypipe.train_launcher", "--examples", str(ex), "--data", str(ctx.data_dir),
+    # PLY_TRAIN_PYTHON: training may live in its own venv (install_fast.sh: prebuilt gsplat 1.5.3 on Python 3.10)
+    cmd = [os.environ.get("PLY_TRAIN_PYTHON") or sys.executable, "-m", "plypipe.train_launcher", "--examples", str(ex), "--data", str(ctx.data_dir),
            "--result", str(result), "--preset", preset]
     if ctx.opt("ppisp") is False:
         cmd.append("--no-ppisp")

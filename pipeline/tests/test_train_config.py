@@ -44,3 +44,24 @@ def test_advanced_overrides_beat_the_preset():
     cfg, info = train_launcher.build_config(st, "/d", "/r", "quick", None, False, iterations=12_000, sh_degree=3, cap_max=900_000)
     assert cfg.max_steps == 12_000 and cfg.ply_steps == [12_000] and cfg.sh_degree == 3 and cfg.strategy.cap_max == 900_000
     assert info["maxSteps"] == 12_000 and info["capMax"] == 900_000
+
+
+def test_gsplat_without_ppisp_falls_back_to_appearance_model():
+    """install_fast.sh trains with prebuilt gsplat 1.5.3, whose Config has no post_processing field."""
+    import dataclasses
+
+    @dataclasses.dataclass
+    class OldConfig:
+        strategy: object = None
+        init_opa: float = 0.1
+        init_scale: float = 1.0
+        opacity_reg: float = 0.0
+        scale_reg: float = 0.0
+        app_opt: bool = False
+        steps_scaler: float = 1.0
+
+    old = types.SimpleNamespace(Config=OldConfig, MCMCStrategy=FakeMCMC)
+    cfg, info = train_launcher.build_config(old, "/d", "/r", "standard", None, False)
+    assert cfg.app_opt is True and info["ppisp"] is False and not hasattr(cfg, "post_processing")
+    cfg, info = train_launcher.build_config(old, "/d", "/r", "quick", None, False)
+    assert cfg.app_opt is False and info["ppisp"] is False

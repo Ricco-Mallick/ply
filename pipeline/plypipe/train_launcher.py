@@ -54,10 +54,14 @@ def build_config(st, data: str, result: str, preset: str, ppisp: bool | None, an
     cfg.disable_viewer = True
     cfg.disable_video = True
     cfg.antialiased = antialiased
-    if use_ppisp:
+    has_ppisp = "post_processing" in getattr(st.Config, "__dataclass_fields__", {"post_processing": None})
+    if use_ppisp and not has_ppisp:  # gsplat <= 1.5.x: exposure drift handled by the appearance embedding instead
+        use_ppisp = False
+        cfg.app_opt = True
+    elif use_ppisp:
         cfg.post_processing = "ppisp"
         cfg.ppisp_controller_activation_num_steps = int(steps * 0.83)
-    else:
+    elif has_ppisp:
         cfg.post_processing = None
         cfg.app_opt = False
     return cfg, {"preset": preset, "maxSteps": steps, "shDegree": p["sh_degree"], "capMax": p["cap_max"],
