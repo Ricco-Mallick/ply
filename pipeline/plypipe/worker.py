@@ -12,6 +12,7 @@ Standard library only, so it runs anywhere the pipeline does.
 from __future__ import annotations
 
 import argparse
+import collections
 import json
 import os
 import re
@@ -141,36 +142,57 @@ def run_job(api: Api, job: dict, work: Path, extra: list[str]) -> None:
             api.download(k, inp / Path(k).name)
         # PLY_PIPELINE_CMD swaps the pipeline for a stand-in (tests: the worker plumbing without a GPU)
         runner = os.environ.get("PLY_PIPELINE_CMD", f"{sys.executable} -m plypipe").split()
-        cmd = [*runner, "run", str(inp), "--out", str(out), *job["args"], *extra]
-        print("[worker] " + " ".join(cmd), flush=True)
+        def pipeline(args: list[str]):
+            """Run the pipeline once; returns (exit code, last error event, last lines of non-JSON output)."""
+            cmd = [*runner, "run", str(inp), "--out", str(out), *args, *extra]
+            print("[worker] " + " ".join(cmd), flush=True)
+            p = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1)
+            last_err, tail = "", collections.deque(maxlen=40)
+            with (root / "pipeline.log").open("a") as logf:
+                for line in p.stdout:  # the pipeline prints the same JSON lines it writes to log.jsonl, plus library output
+                    sys.stdout.write(line)
+                    logf.write(line)
+                    try:
+                        ev = json.loads(line)
+                    except ValueError:
+                        if line.strip():
+                            tail.append(line.rstrip()[:300])
+                        continue
+                    st = ev.get("stage")
+                    if st in WEIGHTS:
+                        if st != state["stage"]:
+                            state["stage"], state["frac"] = st, 0.0
+                            try:  # tell the status page straight away; the heartbeat covers the rest
+                                post(stage=st, progress=overall(st, 0.0), message=f"{st}: started")
+                            except Exception:
+                                pass
+                        if ev.get("event") == "done":
+                            state["frac"] = 1.0
+                        f = frac_from(ev) if ev.get("event") == "progress" else None
+                        if f is not None:
+                            state["frac"] = max(state["frac"], f)
+                        if ev.get("event") in ("start", "done", "warn"):
+                            state["msg"] = f"{st}: {ev.get('msg') or ev.get('event')}"[:200]
+                    if ev.get("event") == "error":
+                        last_err = f"{st}: {ev.get('msg')}"
+            return p.wait(), last_err, list(tail)
+
         state["msg"] = "starting pipeline"
-        p = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1)
-        last_err = ""
-        for line in p.stdout:  # the pipeline prints the same JSON lines it writes to log.jsonl
-            sys.stdout.write(line)
-            try:
-                ev = json.loads(line)
-            except ValueError:
-                continue
-            st = ev.get("stage")
-            if st in WEIGHTS:
-                if st != state["stage"]:
-                    state["stage"], state["frac"] = st, 0.0
-                    try:  # tell the status page straight away; the heartbeat covers the rest
-                        post(stage=st, progress=overall(st, 0.0), message=f"{st}: started")
-                    except Exception:
-                        pass
-                if ev.get("event") == "done":
-                    state["frac"] = 1.0
-                f = frac_from(ev) if ev.get("event") == "progress" else None
-                if f is not None:
-                    state["frac"] = max(state["frac"], f)
-                if ev.get("event") in ("start", "done", "warn"):
-                    state["msg"] = f"{st}: {ev.get('msg') or ev.get('event')}"[:200]
-            if ev.get("event") == "error":
-                last_err = f"{st}: {ev.get('msg')}"
-        if p.wait() != 0:
-            raise RuntimeError(last_err or f"pipeline exited with {p.returncode}")
+        code, last_err, tail = pipeline(job["args"])
+        # a native crash in camera solving (abort/segfault: negative exit code) is usually the learned features or the
+        # global mapper on an unusual capture; retry once from the sfm stage with classic SIFT + incremental mapping
+        if code < 0 and state["stage"] == "sfm" and "--features" not in job["args"]:
+            retry = [*job["args"], "--features", "sift", "--mapper", "incremental", "--force", "sfm"]
+            post(stage="sfm", progress=overall("sfm", 0.0), message=f"sfm crashed (exit {code}); retrying with SIFT + incremental mapper")
+            state["frac"] = 0.0
+            code, last_err, tail = pipeline(retry)
+        if code != 0:
+            try:  # keep the full log next to the results for debugging
+                api.upload(f"scenes/{jid}/pipeline.log", root / "pipeline.log", "text/plain")
+            except Exception:
+                pass
+            detail = " | ".join(tail[-6:])
+            raise RuntimeError(f"{last_err or f'pipeline exited with {code}'}{' :: ' + detail if detail else ''}")
         state["msg"] = "publishing results"
         files = {}
         for name in RESULTS:
