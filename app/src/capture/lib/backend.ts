@@ -18,7 +18,13 @@ export const PRESETS: Record<Settings['preset'], { label: string; note: string; 
 export const API = (import.meta.env.VITE_API as string | undefined)?.replace(/\/$/, '');
 export const backendReady = !!API;
 const KEY = 'ply-team-key';
-export function teamKey() { try { const q = new URLSearchParams(location.search).get('key'); if (q) localStorage.setItem(KEY, q); return localStorage.getItem(KEY) ?? ''; } catch { return ''; } }
+/** A ?key= link is read once at startup, saved, and removed from the address so a stale link can't override the field later. */
+export function adoptKeyFromUrl() {
+  const u = new URL(location.href), q = u.searchParams.get('key'); if (!q) return;
+  try { localStorage.setItem(KEY, q.trim()); } catch { /* private mode */ }
+  u.searchParams.delete('key'); history.replaceState(history.state, '', u.pathname + u.search + u.hash);
+}
+export function teamKey() { try { return localStorage.getItem(KEY) ?? ''; } catch { return ''; } }
 export function setTeamKey(k: string) { try { localStorage.setItem(KEY, k.trim()); } catch { /* private mode */ } }
 
 /** CLI flags for `python -m plypipe run`, from the chosen settings. */
