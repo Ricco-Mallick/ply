@@ -171,6 +171,8 @@ def run_job(api: Api, job: dict, work: Path, extra: list[str]) -> None:
                         f = frac_from(ev) if ev.get("event") == "progress" else None
                         if f is not None:
                             state["frac"] = max(state["frac"], f)
+                        elif ev.get("event") == "progress" and ev.get("msg"):  # named steps inside a stage ("matching", "incremental mapping")
+                            state["msg"] = f"{st}: {ev['msg']}"[:200]
                         if ev.get("event") in ("start", "done", "warn"):
                             state["msg"] = f"{st}: {ev.get('msg') or ev.get('event')}"[:200]
                     if ev.get("event") == "error":
