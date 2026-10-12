@@ -195,7 +195,7 @@ def run_job(api: Api, job: dict, work: Path, extra: list[str]) -> None:
                 api.upload(f"scenes/{jid}/pipeline.log", root / "pipeline.log", "text/plain")
             except Exception:
                 pass
-            detail = " | ".join(tail[-6:])
+            detail = "\n".join(tail[-14:])
             raise RuntimeError(f"{last_err or f'pipeline exited with {code}'}{' :: ' + detail if detail else ''}")
         state["msg"] = "publishing results"
         files = {}
@@ -211,7 +211,7 @@ def run_job(api: Api, job: dict, work: Path, extra: list[str]) -> None:
         post(status="done", stage="export", progress=1, message="done", result={"base": f"/v1/scenes/{jid}/", "files": files, "report": report})
     except Exception as e:
         state["alive"] = False
-        post(status="failed", message=str(e)[:480])
+        post(status="failed", message=str(e)[-3800:])  # keep the end: that is where the real error line is
         print(f"[worker] job {jid} failed: {e}", file=sys.stderr, flush=True)
     finally:
         state["alive"] = False

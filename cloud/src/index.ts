@@ -150,7 +150,7 @@ async function route(req: Request, env: Env): Promise<Response> {
       if (b.status) { sets.push('status=?'); vals.push(b.status); if (b.status === 'done' || b.status === 'failed') { sets.push('finished_at=?'); vals.push(now); } }
       if (b.stage !== undefined) { sets.push('stage=?'); vals.push(b.stage); }
       if (b.progress !== undefined) { sets.push('progress=?'); vals.push(Math.max(0, Math.min(1, Number(b.progress) || 0))); }
-      if (b.message !== undefined) { sets.push('message=?'); vals.push(String(b.message).slice(0, 500)); }
+      if (b.message !== undefined) { sets.push('message=?'); vals.push(String(b.message).slice(0, 4000)); }
       if (b.result !== undefined) { sets.push('result=?'); vals.push(JSON.stringify(b.result)); }
       await env.DB.prepare(`UPDATE jobs SET ${sets.join(',')} WHERE id=?`).bind(...vals, m[1]).run();
       await env.DB.prepare('UPDATE workers SET last_seen=? WHERE busy_job=?').bind(now, m[1]).run();

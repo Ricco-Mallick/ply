@@ -42,7 +42,9 @@ def run_stage(ctx: Ctx) -> dict:
         cmd.append("--antialiased")
     pkg_root = Path(__file__).resolve().parents[2]
     # MPLBACKEND: notebooks (Kaggle) export an inline backend that a separate training venv can't load
-    env = {"PYTHONPATH": os.pathsep.join([str(pkg_root), os.environ.get("PYTHONPATH", "")]), "MPLBACKEND": "Agg"}
+    env = {"PYTHONPATH": os.pathsep.join([str(pkg_root), os.environ.get("PYTHONPATH", "")]), "MPLBACKEND": "Agg",
+           # gsplat's cli() spawns one process per visible GPU (Kaggle gives two T4s); train on one
+           "CUDA_VISIBLE_DEVICES": os.environ.get("PLY_TRAIN_GPU", "0")}
     run(cmd, ctx, "train", env=env, progress_every=50)
     plys = sorted((result / "ply").glob("point_cloud_*.ply"), key=lambda p: int(p.stem.rsplit("_", 1)[1]))
     if not plys:
