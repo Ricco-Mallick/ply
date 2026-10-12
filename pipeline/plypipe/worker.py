@@ -183,8 +183,10 @@ def run_job(api: Api, job: dict, work: Path, extra: list[str]) -> None:
         code, last_err, tail = pipeline(job["args"])
         # a native crash in camera solving (abort/segfault: negative exit code) is usually the learned features or the
         # global mapper on an unusual capture; retry once from the sfm stage with classic SIFT + incremental mapping
-        if code < 0 and state["stage"] == "sfm" and "--features" not in job["args"]:
-            retry = [*job["args"], "--features", "sift", "--mapper", "incremental", "--force", "sfm"]
+        if code < 0 and state["stage"] == "sfm" and "incremental" not in job["args"]:
+            base = [a for i, a in enumerate(job["args"]) if a not in ("--features", "--mapper", "--matcher")
+                    and (i == 0 or job["args"][i - 1] not in ("--features", "--mapper", "--matcher"))]
+            retry = [*base, "--features", "sift", "--mapper", "incremental", "--matcher", "sequential", "--force", "sfm"]
             post(stage="sfm", progress=overall("sfm", 0.0), message=f"sfm crashed (exit {code}); retrying with SIFT + incremental mapper")
             state["frac"] = 0.0
             code, last_err, tail = pipeline(retry)
