@@ -172,3 +172,17 @@ main h1 em { font-style: italic; color: var(--amber); }
   .actions { flex-direction: column-reverse; } .actions .btn { width: 100%; }
   .adv-row { flex-direction: column; align-items: stretch; } .adv-row input, .adv-row select { width: 100%; }
 }
+
+/* status */
+.status { max-width: 720px; }
+.bad-t { color: #FFB4A0; }
+.stages { border-radius: 20px; padding: 10px 18px; margin-top: 22px; }
+.stages ol { list-style: none; margin: 0; padding: 0; }
+.stages li { display: grid; grid-template-columns: 16px 1fr auto; gap: 14px; align-items: center; padding: 13px 0; border-bottom: 1px solid var(--line); color: var(--muted); }
+.stages li:last-child { border-bottom: 0; }
+.st-dot { width: 10px; height: 10px; border-radius: 50%; border: 1.5px solid rgba(255, 255, 255, .35); }
+.stages li.done { color: var(--fg); } .stages li.done .st-dot { background: #3DDC97; border-color: #3DDC97; }
+.stages li.now { color: var(--fg); font-weight: 700; } .stages li.now .st-dot { background: var(--accent); border-color: var(--accent); animation: pulse 1s infinite; }
+.stages li.fail { color: #FF8A80; } .stages li.fail .st-dot { background: #FF5A4E; border-color: #FF5A4E; }
+.st-p { font-size: 10.5px; color: var(--amber); }
+a.btn { text-decoration: none; }

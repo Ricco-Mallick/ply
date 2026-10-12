@@ -3,12 +3,14 @@ import QRCode from 'qrcode';
 import { Glass } from '../../shared/Glass';
 import { listCaptures, type CaptureSummary } from '../lib/store';
 import { fmtTime } from './viz';
+import { listJobs } from './Status';
 
 const BASE = import.meta.env.BASE_URL;
 const PHONE = matchMedia('(pointer: coarse)').matches;
 
 
-export function Start({ onRecord, onUpload, onOpen }: { onRecord: () => void; onUpload: (files: File[]) => void; onOpen: (id: string) => void }) {
+export function Start({ onRecord, onUpload, onOpen, onJob }: { onRecord: () => void; onUpload: (files: File[]) => void; onOpen: (id: string) => void; onJob: (id: string) => void }) {
+  const [jobs] = useState(() => listJobs());
   const [saved] = useState<CaptureSummary[]>(() => listCaptures());
   const file = useRef<HTMLInputElement>(null);
   const [drag, setDrag] = useState(false);
@@ -36,6 +38,12 @@ export function Start({ onRecord, onUpload, onOpen }: { onRecord: () => void; on
         <input ref={file} type="file" accept="video/*" multiple hidden onChange={e => pick(e.target.files)} />
       </div>
       {!PHONE && <PhoneQR />}
+      {jobs.length > 0 && (
+        <section className="saved">
+          <h2 className="wide">Sent for processing</h2>
+          <ul>{jobs.map(j => <li key={j.id}><button onClick={() => onJob(j.id)}><span className="saved-n">{j.name}</span><span className="mono">Job {j.id.slice(0, 8)} · {new Date(j.createdAt).toLocaleString(undefined, { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })}</span></button></li>)}</ul>
+        </section>
+      )}
       {saved.length > 0 && (
         <section className="saved">
           <h2 className="wide">On this device</h2>

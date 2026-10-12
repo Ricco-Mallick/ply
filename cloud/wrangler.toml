@@ -1,0 +1,19 @@
+name = "ply-api"
+main = "src/index.ts"
+compatibility_date = "2026-09-01"
+
+# R2: captures/<captureId>/<clip> (private) and scenes/<jobId>/<file> (public, read by the viewer)
+[[r2_buckets]]
+binding = "BUCKET"
+bucket_name = "ply-data"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "ply-jobs"
+database_id = "REPLACE_WITH_D1_ID"
+
+[vars]
+# origins allowed to call the write endpoints from a browser
+ALLOWED_ORIGINS = "https://ricco.codes,http://localhost:5199,https://localhost:5199"
+
+# secrets (wrangler secret put): APP_KEY (capture app uploads/jobs), WORKER_TOKEN (GPU worker)

@@ -1,10 +1,11 @@
 import { useRef, useState } from 'react';
 import { Glass } from '../../shared/Glass';
-import { PRESETS, backendReady, pipelineArgs, saveToDevice, upload, type Settings } from '../lib/backend';
+import { PRESETS, backendReady, pipelineArgs, saveToDevice, setTeamKey, teamKey, upload, type Settings } from '../lib/backend';
 import type { Capture } from '../lib/store';
 import { fmtBytes, fmtTime } from './viz';
 
-export function Submit({ capture, onRename, onBack }: { capture: Capture; onRename: (n: string) => void; onBack: () => void }) {
+export function Submit({ capture, onRename, onBack, onQueued }: { capture: Capture; onRename: (n: string) => void; onBack: () => void; onQueued: (jobId: string) => void }) {
+  const [key, setKey] = useState(teamKey());
   const [s, setS] = useState<Settings>({ preset: 'standard', advanced: { mapper: 'global', features: 'aliked', cameraHeight: 1.45 } });
   const [adv, setAdv] = useState(false); const [busy, setBusy] = useState<string | null>(null); const [pct, setPct] = useState(0);
   const [msg, setMsg] = useState<{ ok: boolean; t: string } | null>(null); const [copied, setCopied] = useState(false); const abort = useRef<AbortController | null>(null);
@@ -17,7 +18,8 @@ export function Submit({ capture, onRename, onBack }: { capture: Capture; onRena
     setMsg(null);
     if (!backendReady) { setBusy('Preparing files'); const r = await saveToDevice(capture, s).catch(e => (setMsg({ ok: false, t: e.message }), null)); setBusy(null); if (r && r !== 'cancelled') setMsg({ ok: true, t: r === 'shared' ? 'Shared. Put the files in one folder and run the command below.' : 'Saved to Downloads. Put the files in one folder and run the command below.' }); return; }
     abort.current = new AbortController(); setBusy('Uploading');
-    try { const j = await upload(capture, s, (d, t, l) => { setPct(d / t); setBusy(`Uploading ${l}`); }, abort.current.signal); setMsg({ ok: true, t: `Queued as job ${j.jobId}. You can close this page; processing continues on the server.` }); }
+    setTeamKey(key);
+    try { const j = await upload(capture, s, (d, t, l) => { setPct(d / t); setBusy(`Uploading ${l}`); }, abort.current.signal); setBusy(null); onQueued(j.jobId); return; }
     catch (e) { setMsg({ ok: false, t: (e as Error).name === 'AbortError' ? 'Upload paused. Tap again to resume where it stopped.' : `${(e as Error).message}. Tap again to resume.` }); }
     setBusy(null);
   };
@@ -52,6 +54,7 @@ export function Submit({ capture, onRename, onBack }: { capture: Capture; onRena
         </Glass>
       )}
 
+      {backendReady && <label className="field"><span className="mono">Team key</span><input value={key} onChange={e => setKey(e.target.value)} placeholder="From the Ply team" autoComplete="off" spellCheck={false} style={{ fontFamily: 'var(--font-mono)', fontSize: 16 }} /></label>}
       {!backendReady && <p className="note"><b>No processing server is connected yet.</b> Ply will save the videos and a capture file (quality and sensor log) to this phone; run them through the pipeline with the command below.</p>}
       <div className="cmd"><code className="mono">{cmd}</code><button className="mono" onClick={() => navigator.clipboard?.writeText(cmd).then(() => { setCopied(true); setTimeout(() => setCopied(false), 1600); })}>{copied ? 'Copied' : 'Copy'}</button></div>
 
@@ -59,7 +62,7 @@ export function Submit({ capture, onRename, onBack }: { capture: Capture; onRena
       {msg && <p className={`msg ${msg.ok ? 'ok' : 'bad'}`} role="status">{msg.t}</p>}
       <div className="actions">
         {busy && backendReady && <button className="btn ghost" onClick={() => abort.current?.abort()}>Pause</button>}
-        <button className="btn big" onClick={go} disabled={!!busy || !capture.name.trim()}>{backendReady ? 'Upload and process' : 'Save files to this phone'}</button>
+        <button className="btn big" onClick={go} disabled={!!busy || !capture.name.trim() || (backendReady && !key.trim())}>{backendReady ? 'Upload and process' : 'Save files to this phone'}</button>
       </div>
     </main>
   );

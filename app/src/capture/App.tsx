@@ -8,21 +8,23 @@ import { Permissions, type Granted } from './ui/Permissions';
 import { Review } from './ui/Review';
 import { Start } from './ui/Start';
 import { Submit } from './ui/Submit';
+import { Status, rememberJob } from './ui/Status';
 import { Tutorial } from './ui/Tutorial';
 
-type Screen = 'start' | 'perms' | 'tutorial' | 'live' | 'review' | 'submit' | 'analysing';
+type Screen = 'start' | 'perms' | 'tutorial' | 'live' | 'review' | 'submit' | 'analysing' | 'status';
 const SEEN = 'ply-tutorial-seen';
 const seen = () => { try { return localStorage.getItem(SEEN) === '1'; } catch { return false; } };
 
 export function App() {
-  const [screen, setScreen] = useState<Screen>('start');
+  const [jobId, setJobId] = useState<string | null>(() => new URLSearchParams(location.search).get('job'));
+  const [screen, setScreen] = useState<Screen>(() => (new URLSearchParams(location.search).get('job') ? 'status' : 'start'));
   const [granted, setGranted] = useState<Granted | null>(null);
   const [cap, setCap] = useState<Capture | null>(null);
   const [prog, setProg] = useState<{ name: string; p: number } | null>(null);
   const [err, setErr] = useState<string | null>(null);
 
   // the browser back button walks back through the flow instead of leaving the page
-  useEffect(() => { history.replaceState({ screen: 'start' }, ''); const f = (e: PopStateEvent) => setScreen((e.state?.screen as Screen) ?? 'start'); addEventListener('popstate', f); return () => removeEventListener('popstate', f); }, []);
+  useEffect(() => { history.replaceState({ screen }, ''); const f = (e: PopStateEvent) => setScreen((e.state?.screen as Screen) ?? 'start'); addEventListener('popstate', f); return () => removeEventListener('popstate', f); }, []);
   const go = (s: Screen) => { setScreen(s); history.pushState({ screen: s }, ''); scrollTo(0, 0); };
   useEffect(() => { if (screen !== 'live' && screen !== 'tutorial' && granted) { granted.stream.getTracks().forEach(t => t.stop()); setGranted(null); } }, [screen]);
 
@@ -55,12 +57,13 @@ export function App() {
   return (
     <>
       {err && <div className="toast" role="alert" onClick={() => setErr(null)}>{err}</div>}
-      {screen === 'start' && <Start onRecord={record} onUpload={onUpload} onOpen={open} />}
+      {screen === 'start' && <Start onRecord={record} onUpload={onUpload} onOpen={open} onJob={id => { setJobId(id); history.pushState({ screen: 'status' }, '', `?job=${id}`); setScreen('status'); }} />}
       {screen === 'perms' && <Permissions onReady={onGranted} onBack={() => history.back()} />}
       {screen === 'tutorial' && <Tutorial onDone={() => { try { localStorage.setItem(SEEN, '1'); } catch { /* ignore */ } setScreen('live'); history.replaceState({ screen: 'live' }, ''); }} />}
       {screen === 'live' && (granted ? <Live granted={granted} clipNo={(cap?.clips.length ?? 0) + 1} onClip={onClip} onClose={() => go(cap?.clips.length ? 'review' : 'start')} /> : <Relaunch onGo={() => go('perms')} />)}
       {screen === 'review' && cap && <Review capture={cap} onMore={() => go('perms')} onRetake={retake} onContinue={() => go('submit')} onHome={() => { setCap(null); go('start'); }} />}
-      {screen === 'submit' && cap && <Submit capture={cap} onRename={n => update({ ...cap, name: n })} onBack={() => history.back()} />}
+      {screen === 'submit' && cap && <Submit capture={cap} onRename={n => update({ ...cap, name: n })} onBack={() => history.back()} onQueued={id => { rememberJob({ id, name: cap.name, createdAt: Date.now() }); setJobId(id); history.replaceState({ screen: 'status' }, '', `?job=${id}`); setScreen('status'); }} />}
+      {screen === 'status' && jobId && <Status jobId={jobId} onHome={() => { history.replaceState({ screen: 'start' }, '', location.pathname); setScreen('start'); }} />}
       {screen === 'analysing' && (
         <main className="analysing" aria-live="polite">
           <div className="wide eyebrow">Checking your videos</div>

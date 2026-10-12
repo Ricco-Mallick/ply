@@ -1,8 +1,7 @@
-/* Getting a capture to the processing pipeline.
-   With VITE_UPLOAD_ENDPOINT (a tus server: Supabase Storage or a Cloudflare Worker in front of R2) and VITE_JOBS_ENDPOINT
-   set, clips upload resumably and a job is queued. Without them the app says so plainly and packages everything for the
-   phone instead: the videos, capture.json (quality + sensor log) and the exact pipeline command. */
-import * as tus from 'tus-js-client';
+/* Getting a capture to the processing pipeline (cloud/src/index.ts is the other side).
+   With VITE_API set, clips go to R2 as resumable multipart uploads through the Ply API worker and a job is queued for
+   the GPU worker. The team key gates writes; it is entered once and kept on the device (or arrives as ?key=).
+   Without VITE_API the app says so plainly and packages everything for the phone instead. */
 import type { Capture } from './store';
 import { readFile } from './store';
 
@@ -16,9 +15,11 @@ export const PRESETS: Record<Settings['preset'], { label: string; note: string; 
   high: { label: 'High', note: 'About 70 min on an L40S. For the final venue.', iterations: 40000, shDegree: 3, maxSplats: 3_000_000 },
 };
 
-const UPLOAD = import.meta.env.VITE_UPLOAD_ENDPOINT as string | undefined;
-const JOBS = import.meta.env.VITE_JOBS_ENDPOINT as string | undefined;
-export const backendReady = !!(UPLOAD && JOBS);
+export const API = (import.meta.env.VITE_API as string | undefined)?.replace(/\/$/, '');
+export const backendReady = !!API;
+const KEY = 'ply-team-key';
+export function teamKey() { try { const q = new URLSearchParams(location.search).get('key'); if (q) localStorage.setItem(KEY, q); return localStorage.getItem(KEY) ?? ''; } catch { return ''; } }
+export function setTeamKey(k: string) { try { localStorage.setItem(KEY, k.trim()); } catch { /* private mode */ } }
 
 /** CLI flags for `python -m plypipe run`, from the chosen settings. */
 export function pipelineArgs(s: Settings) {
@@ -44,23 +45,62 @@ export function captureJson(c: Capture, s: Settings) {
       sensorFields: ['tMs', 'headingDeg', 'pitchDeg', 'rollDeg', 'turnDegPerS', 'accelMS2'], path: k.path })) }, null, 1);
 }
 
+const PART = 16 * 1024 * 1024; // R2 wants ≥5 MB parts; 16 MB keeps a worker request well under its body limit
+interface UpState { key: string; uploadId: string; parts: { partNumber: number; etag: string }[]; done?: boolean; }
+const upKey = (clipId: string) => `ply-up-${clipId}`;
+const loadUp = (id: string): UpState | null => { try { return JSON.parse(localStorage.getItem(upKey(id)) || 'null'); } catch { return null; } };
+const saveUp = (id: string, s: UpState) => { try { localStorage.setItem(upKey(id), JSON.stringify(s)); } catch { /* ignore */ } };
+
+async function call(path: string, init: RequestInit, signal: AbortSignal, tries = 5): Promise<any> {
+  for (let i = 0; ; i++) {
+    try {
+      const r = await fetch(`${API}${path}`, { ...init, signal, headers: { 'x-ply-key': teamKey(), ...(init.headers ?? {}) } });
+      if (r.status === 401) throw Object.assign(new Error('The team key was not accepted'), { fatal: true });
+      if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error ?? `server said ${r.status}`);
+      return r.status === 204 ? null : r.json();
+    } catch (e) {
+      if (signal.aborted || (e as any).fatal || i >= tries) throw e;
+      await new Promise(res => setTimeout(res, [800, 2000, 5000, 10000, 20000][i]));
+    }
+  }
+}
+
+/** Upload every clip (resuming finished parts), then capture.json, then queue the job. */
 export async function upload(c: Capture, s: Settings, onProgress: (done: number, total: number, label: string) => void, signal: AbortSignal) {
   if (!backendReady) throw new Error('No processing server is connected yet');
-  const total = c.clips.reduce((a, k) => a + k.size, 0); let before = 0; const uploaded: string[] = [];
+  if (!teamKey()) throw Object.assign(new Error('Enter the team key first'), { fatal: true });
+  const total = c.clips.reduce((a, k) => a + k.size, 0); let before = 0; const keys: string[] = [];
   for (const k of c.clips) {
     const blob = await readFile(k.id, k.mime); if (!blob) throw new Error(`${k.name} is missing from this phone`);
-    const url = await new Promise<string>((res, rej) => {
-      const up = new tus.Upload(blob, { endpoint: UPLOAD!, retryDelays: [0, 1500, 4000, 10000, 20000], chunkSize: 8 * 1024 * 1024, metadata: { filename: k.name, filetype: k.mime, capture: c.id },
-        onProgress: (b) => onProgress(before + b, total, k.name), onSuccess: () => res(up.url!), onError: rej });
-      signal.addEventListener('abort', () => { up.abort(); rej(new DOMException('Cancelled', 'AbortError')); });
-      up.findPreviousUploads().then(prev => { if (prev.length) up.resumeFromPreviousUpload(prev[0]); up.start(); });
-    });
-    uploaded.push(url); before += k.size;
+    let st = loadUp(k.id);
+    if (!st?.done) {
+      if (!st) { const r = await call('/v1/uploads', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ captureId: c.id, name: k.name, type: k.mime }) }, signal); st = { ...r, parts: [] }; saveUp(k.id, st!); }
+      const n = Math.max(1, Math.ceil(blob.size / PART));
+      for (let p = 1; p <= n; p++) {
+        if (st!.parts.some(x => x.partNumber === p)) { onProgress(before + Math.min(blob.size, p * PART), total, k.name); continue; }
+        const body = blob.slice((p - 1) * PART, Math.min(blob.size, p * PART));
+        const r = await call(`/v1/uploads/part?key=${encodeURIComponent(st!.key)}&uploadId=${encodeURIComponent(st!.uploadId)}&part=${p}`, { method: 'PUT', body }, signal);
+        st!.parts.push(r); saveUp(k.id, st!); onProgress(before + Math.min(blob.size, p * PART), total, k.name);
+      }
+      await call('/v1/uploads/complete', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ key: st!.key, uploadId: st!.uploadId, parts: st!.parts.sort((a, b) => a.partNumber - b.partNumber) }) }, signal);
+      st!.done = true; saveUp(k.id, st!);
+    }
+    keys.push(st!.key); before += k.size;
   }
-  const res = await fetch(JOBS!, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ capture: JSON.parse(captureJson(c, s)), files: uploaded }), signal });
-  if (!res.ok) throw new Error(`The server refused the job (${res.status})`);
-  return (await res.json()) as { jobId: string; statusUrl?: string };
+  const cj = `captures/${c.id.replace(/[^\w.\-]+/g, '_')}/capture.json`;
+  await call(`/v1/files?key=${encodeURIComponent(cj)}`, { method: 'PUT', headers: { 'content-type': 'application/json' }, body: captureJson(c, s) }, signal);
+  keys.push(cj);
+  const j = await call('/v1/jobs', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ captureId: c.id, name: c.name, settings: s, args: pipelineArgs(s), files: keys }) }, signal);
+  return j as { jobId: string };
 }
+
+export interface Job { id: string; name: string; status: 'queued' | 'running' | 'done' | 'failed'; stage: string | null; progress: number; message: string | null;
+  result: { base: string; files?: Record<string, string>; report?: any } | null; created_at: number; started_at: number | null; finished_at: number | null; updated_at: number; queuePosition: number; }
+export async function getJob(id: string, signal?: AbortSignal): Promise<Job> {
+  const r = await fetch(`${API}/v1/jobs/${encodeURIComponent(id)}`, { signal, cache: 'no-store' }); if (!r.ok) throw new Error(r.status === 404 ? 'No such job' : `server said ${r.status}`); return r.json();
+}
+/** The walkthrough link for a finished job. */
+export const sceneUrl = (jobId: string) => `${API}/v1/scenes/${jobId}/`;
 
 /** No server: hand the files to the phone (share sheet where available, downloads otherwise). */
 export async function saveToDevice(c: Capture, s: Settings) {
