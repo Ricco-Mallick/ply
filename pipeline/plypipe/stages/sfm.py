@@ -14,6 +14,8 @@ Outputs:
 
 from __future__ import annotations
 
+import json
+
 import shutil
 from pathlib import Path
 
@@ -125,8 +127,16 @@ def run_stage(ctx: Ctx) -> dict:
         _extract(pycolmap, db, images, features, device, cam_params)
 
     ctx.log.emit("sfm", "progress", "matching")
+    # several clips: frames from different clips sit next to each other in the numbering, so sequential pairing
+    # would try to join unrelated views and miss the real overlaps; pair exhaustively while that stays affordable
+    exhaustive_max = int(ctx.opt("exhaustive_max", 250))
     try:
-        matcher = _match(pycolmap, db, features, n_images, ctx.opt("matcher", "auto"), int(ctx.opt("exhaustive_max", 250)), device)
+        if json.loads((ctx.out / ".done" / "frames.json").read_text()).get("source") == "videos":
+            exhaustive_max = max(exhaustive_max, 700)
+    except (OSError, ValueError):
+        pass
+    try:
+        matcher = _match(pycolmap, db, features, n_images, ctx.opt("matcher", "auto"), exhaustive_max, device)
     except Exception as e:
         if features != "aliked":
             raise
@@ -134,7 +144,7 @@ def run_stage(ctx: Ctx) -> dict:
         db.unlink(missing_ok=True)
         features = "sift"
         _extract(pycolmap, db, images, features, device, cam_params)
-        matcher = _match(pycolmap, db, features, n_images, ctx.opt("matcher", "auto"), int(ctx.opt("exhaustive_max", 250)), device)
+        matcher = _match(pycolmap, db, features, n_images, ctx.opt("matcher", "auto"), exhaustive_max, device)
 
     mapper = ctx.opt("mapper", "global")
     ctx.log.emit("sfm", "progress", f"{mapper} mapping")

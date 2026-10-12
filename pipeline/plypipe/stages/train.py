@@ -34,6 +34,9 @@ def run_stage(ctx: Ctx) -> dict:
            "--result", str(result), "--preset", preset]
     if ctx.opt("ppisp") is False:
         cmd.append("--no-ppisp")
+    for k, flag in (("iterations", "--iterations"), ("sh_degree", "--sh-degree"), ("cap_max", "--cap-max")):
+        if ctx.opt(k) is not None:
+            cmd += [flag, str(ctx.opt(k))]
     if ctx.opt("antialiased"):
         cmd.append("--antialiased")
     pkg_root = Path(__file__).resolve().parents[2]

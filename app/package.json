@@ -7,24 +7,31 @@
     "dev": "vite",
     "build": "tsc --noEmit && vite build",
     "preview": "vite preview",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "dev:phone": "PLY_PHONE=1 vite"
   },
   "dependencies": {
     "@sparkjsdev/spark": "2.3.1",
     "marked": "18.1.1",
+    "qrcode": "1.5.4",
     "react": "19.3.0",
     "react-dom": "19.3.0",
-    "three": "0.186.1"
+    "three": "0.186.1",
+    "tus-js-client": "4.3.1"
   },
   "devDependencies": {
     "@tailwindcss/vite": "4.3.3",
+    "@types/qrcode": "1.5.6",
     "@types/react": "19.3.0",
     "@types/react-dom": "19.3.0",
     "@types/three": "0.186.0",
+    "@vitejs/plugin-basic-ssl": "2.3.0",
     "@vitejs/plugin-react": "6.1.2",
     "tailwindcss": "4.3.3",
     "typescript": "7.0.2",
     "vite": "8.3.4"
   },
-  "overrides": { "three": "0.186.1" }
+  "overrides": {
+    "three": "0.186.1"
+  }
 }

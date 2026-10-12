@@ -37,3 +37,10 @@ def test_presets(preset):
 def test_ppisp_override():
     cfg, info = train_launcher.build_config(st, "/d", "/r", "standard", False, True)
     assert cfg.post_processing is None and info["ppisp"] is False and cfg.antialiased
+
+
+def test_advanced_overrides_beat_the_preset():
+    """The capture app's Advanced settings arrive as --iterations / --sh-degree / --cap-max."""
+    cfg, info = train_launcher.build_config(st, "/d", "/r", "quick", None, False, iterations=12_000, sh_degree=3, cap_max=900_000)
+    assert cfg.max_steps == 12_000 and cfg.ply_steps == [12_000] and cfg.sh_degree == 3 and cfg.strategy.cap_max == 900_000
+    assert info["maxSteps"] == 12_000 and info["capMax"] == 900_000

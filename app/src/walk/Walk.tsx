@@ -1,17 +1,10 @@
-import { useEffect, useRef, useState, useSyncExternalStore, type ReactNode } from 'react';
+import { useEffect, useRef, useState, useSyncExternalStore } from 'react';
 import { WalkEngine, type Mode } from './engine';
 import { loadManifest, type SceneManifest } from './scene';
-import { attachGlass, type GlassOptions } from '../shared/glass';
+import { Glass } from '../shared/Glass';
 
 const TOUCH = matchMedia('(pointer: coarse)').matches;
 const BASE = import.meta.env.BASE_URL;
-
-/** A liquid-glass panel. */
-function Glass({ as: Tag = 'div', opts, className = '', children, ...rest }: { as?: any; opts?: GlassOptions; className?: string; children?: ReactNode; [k: string]: any }) {
-  const ref = useRef<HTMLElement>(null);
-  useEffect(() => (ref.current ? attachGlass(ref.current, opts) : undefined), []);
-  return <Tag ref={ref} className={`lg ${className}`} {...rest}>{children}</Tag>;
-}
 
 function useEngine(engine: WalkEngine | null) {
   const snap = useRef(0);

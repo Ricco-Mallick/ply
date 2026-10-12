@@ -6,10 +6,11 @@ const docs = import.meta.glob('../../../docs/SOP.md', { query: '?raw', import: '
 const SOP = Object.values(docs)[0] ?? '# Capture guide\n\nThe guide is being written.';
 const BASE = import.meta.env.BASE_URL;
 const KEY = 'ply-capture-checks';
+// the in-browser capture app lives at capture.html; this page is the long-form guide it links to
 
 const slug = (s: string) => s.toLowerCase().replace(/<[^>]+>/g, '').replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '');
 
-export function Capture() {
+export function Guide() {
   const { html, toc, title, lead } = useMemo(() => {
     const md = SOP.replace(/\r/g, '');
     const t = /^#\s+(.+)$/m.exec(md)?.[1] ?? 'Capture guide';
@@ -50,7 +51,7 @@ export function Capture() {
     <div className="cap">
       <header className="cap-top">
         <a className="lg brand pill" href={BASE}><span className="mark" aria-hidden="true" />PLY</a>
-        <a className="cta-ghost" href={`${BASE}walk.html`}>Explore the demo space →</a>
+        <a className="cta-ghost" href={`${BASE}capture.html`}>Open the capture app →</a>
       </header>
 
       <section className="cap-hero">

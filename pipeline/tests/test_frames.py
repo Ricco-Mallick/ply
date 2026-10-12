@@ -52,3 +52,23 @@ def test_video_stage_keeps_sharp_frames(tmp_path):
     assert max(img.shape[:2]) == 400                       # long side capped
     s_kept = np.median([frames.sharpness(cv2.imread(str(p))) for p in kept])
     assert s_kept > 3 * frames.sharpness(checker(0, 4))    # sharp ones were chosen
+
+
+def test_folder_of_clips_numbers_frames_continuously(tmp_path):
+    """The capture app uploads several clips of one space plus capture.json; frames run on straight through."""
+    src = tmp_path / "capture"
+    src.mkdir()
+    for c, n in (("clip-01.mp4", 40), ("clip-02.mp4", 24)):
+        w = cv2.VideoWriter(str(src / c), cv2.VideoWriter_fourcc(*"mp4v"), 10, (640, 480))
+        for i in range(n):
+            w.write(checker(i + n, 0 if i % 4 == 2 else 4))
+        w.release()
+    (src / "capture.json").write_text('{"version": 1}')
+    ctx = Ctx(out=tmp_path / "out", log=Log(tmp_path / "out", quiet=True), opts={"fps": 2.5, "oversample": 4, "long_side": 400})
+    rep = frames.run_stage(ctx, src)
+    kept = sorted((tmp_path / "out" / "frames").glob("*.jpg"))
+    assert rep["source"] == "videos" and [c["file"] for c in rep["clips"]] == ["clip-01.mp4", "clip-02.mp4"]
+    assert rep["kept"] == len(kept) == sum(c["kept"] for c in rep["clips"])
+    assert [p.stem for p in kept] == [f"{i:06d}" for i in range(len(kept))]    # no gaps, no overwrites
+    assert rep["clips"][1]["firstFrame"] == rep["clips"][0]["kept"]
+    assert (tmp_path / "out" / "capture.json").exists()

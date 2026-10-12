@@ -1,6 +1,6 @@
 import { createRoot } from 'react-dom/client';
 import '../shared/tokens.css';
 import './capture.css';
-import { Capture } from './Capture';
+import { App } from './App';
 
-createRoot(document.getElementById('root')!).render(<Capture />);
+createRoot(document.getElementById('root')!).render(<App />);

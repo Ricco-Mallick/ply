@@ -27,8 +27,13 @@ PRESETS = {
 }
 
 
-def build_config(st, data: str, result: str, preset: str, ppisp: bool | None, antialiased: bool):
+def build_config(st, data: str, result: str, preset: str, ppisp: bool | None, antialiased: bool,
+                 iterations: int | None = None, sh_degree: int | None = None, cap_max: int | None = None):
     p = dict(PRESETS[preset])
+    # the capture app's advanced settings: explicit values win over the preset
+    for k, v in (("max_steps", iterations), ("sh_degree", sh_degree), ("cap_max", cap_max)):
+        if v is not None:
+            p[k] = v
     use_ppisp = p["ppisp"] if ppisp is None else ppisp
     steps = p["max_steps"]
     cfg = st.Config(
@@ -69,13 +74,17 @@ def main(argv: list[str] | None = None) -> int:
     g.add_argument("--ppisp", dest="ppisp", action="store_true", default=None)
     g.add_argument("--no-ppisp", dest="ppisp", action="store_false")
     ap.add_argument("--antialiased", action="store_true")
+    ap.add_argument("--iterations", type=int)
+    ap.add_argument("--sh-degree", type=int)
+    ap.add_argument("--cap-max", type=int)
     a = ap.parse_args(argv)
 
     sys.path.insert(0, os.path.abspath(a.examples))
     os.chdir(a.examples)  # simple_trainer imports sibling modules (datasets, utils, gsplat_viewer)
     import simple_trainer as st  # noqa: E402
 
-    cfg, summary = build_config(st, os.path.abspath(a.data), os.path.abspath(a.result), a.preset, a.ppisp, a.antialiased)
+    cfg, summary = build_config(st, os.path.abspath(a.data), os.path.abspath(a.result), a.preset, a.ppisp, a.antialiased,
+                                a.iterations, a.sh_degree, a.cap_max)
     cfg.adjust_steps(cfg.steps_scaler)
     os.makedirs(a.result, exist_ok=True)
     with open(os.path.join(a.result, "ply_preset.json"), "w") as f:

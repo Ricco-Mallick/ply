@@ -12,10 +12,18 @@ One command, resumable, JSON-lines progress:
 python -m plypipe run walk.mp4 --out work/lab2 --preset standard
 ```
 
+From the capture app (`app/capture.html`): "Save files to this phone" gives you the clips plus `capture.json` (per-frame
+quality and sensor log). Put them in one folder and pass the folder; the app shows the exact command, including any
+Advanced settings (`--iterations`, `--sh-degree`, `--cap-max`, `--mapper`, `--features`, `--fps`, `--height-cam`):
+
+```bash
+python -m plypipe run captures/lab-2/ --out work/lab-2 --preset standard --height-cam 1.45
+```
+
 | Stage | Needs | What it does |
 |---|---|---|
-| `frames` | ffmpeg, OpenCV | Samples `--fps` (2.5) frames/s, oversampled ×4; keeps the sharpest of each window (variance of Laplacian), drops very blurry ones without opening gaps; long side ≤ 1600 px. A folder of photos also works. |
-| `sfm` | pycolmap 4.2.1 (GPU wheel) | One shared SIMPLE_RADIAL camera; ALIKED + LightGlue (falls back to SIFT); exhaustive pairs up to 250 frames, sequential + quadratic overlap above; **global SfM** (`--mapper incremental` as plan B); undistort to PINHOLE. Flags camera-path discontinuities (a folded model can still have a low reprojection error). |
+| `frames` | ffmpeg, OpenCV | Samples `--fps` (2.5) frames/s, oversampled ×4; keeps the sharpest of each window (variance of Laplacian), drops very blurry ones without opening gaps; long side ≤ 1600 px. A folder of clips (one space, name order) is numbered straight through and keeps `capture.json`; a folder of photos also works. |
+| `sfm` | pycolmap 4.2.1 (GPU wheel) | One shared SIMPLE_RADIAL camera; ALIKED + LightGlue (falls back to SIFT); exhaustive pairs up to 250 frames (700 for multi-clip captures), sequential + quadratic overlap above; **global SfM** (`--mapper incremental` as plan B); undistort to PINHOLE. Flags camera-path discontinuities (a folded model can still have a low reprojection error). |
 | `align` | numpy | Gravity from the cameras' up vectors → floor = lowest plane covering ≥ 50 % of the best horizontal area (beats textured table tops) → walls on X/Z (Manhattan histogram sweep) → metric scale from `--height-cam` (1.45 m). Writes gsplat's `data/` already in the scene frame. |
 | `occupancy` | numpy, OpenCV | 10 cm grid: blocked = points 0.2–1.8 m above the floor, free = floor points ∪ the walked path, closed over 30 cm gaps. The walked line is never blocked. |
 | `train` | torch 2.11 cu128, gsplat @ `512d366` | gsplat `simple_trainer`, MCMC strategy, PPISP appearance (exposure/vignetting compensation), trained **in the scene frame** (`normalize_world_space=False`), so the PLY needs no transform. |

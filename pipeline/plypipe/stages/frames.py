@@ -19,6 +19,7 @@ import numpy as np
 from plypipe.util import Ctx, need, run
 
 IMAGE_EXT = {".jpg", ".jpeg", ".png", ".webp", ".heic", ".tif", ".tiff"}
+VIDEO_EXT = {".mp4", ".mov", ".webm", ".mkv", ".m4v"}
 
 
 def sharpness(img: np.ndarray) -> float:
@@ -82,7 +83,7 @@ def run_stage(ctx: Ctx, src: Path) -> dict:
         shutil.rmtree(out)
     out.mkdir(parents=True)
 
-    if src.is_dir():
+    if src.is_dir() and not any(p.suffix.lower() in VIDEO_EXT for p in src.iterdir()):
         files = sorted(p for p in src.iterdir() if p.suffix.lower() in IMAGE_EXT)
         if not files:
             raise ValueError(f"no images in {src}")
@@ -103,6 +104,26 @@ def run_stage(ctx: Ctx, src: Path) -> dict:
         return {"source": "images", "input": len(files), "kept": kept, "dropped": len(files) - kept,
                 "sharpnessMedian": float(np.median(scores)) if scores else 0.0}
 
+    videos = sorted(p for p in src.iterdir() if p.suffix.lower() in VIDEO_EXT) if src.is_dir() else [src]
+    if not videos:
+        raise ValueError(f"no videos in {src}")
+    # the capture app ships capture.json (quality + sensor log) next to the clips; keep it with the job
+    if src.is_dir() and (src / "capture.json").exists():
+        shutil.copy2(src / "capture.json", ctx.out / "capture.json")
+    clips, kept = [], 0
+    for v in videos:
+        st = _video_frames(ctx, v, out, kept, fps, oversample, long_side, max_frames / len(videos) if max_frames else None)
+        clips.append({"file": v.name, "firstFrame": kept, **st})
+        kept += st["kept"]
+    if len(clips) == 1:
+        return {"source": "video", **{k: v for k, v in clips[0].items() if k not in ("file", "firstFrame")}}
+    return {"source": "videos", "clips": clips, "kept": kept, "dropped": sum(c["dropped"] for c in clips),
+            "sharpnessMedian": float(np.median([c["sharpnessMedian"] for c in clips]))}
+
+
+def _video_frames(ctx: Ctx, src: Path, out: Path, start: int, fps: float, oversample: int, long_side: int,
+                  max_frames: float | None) -> dict:
+    """Sharpest frame per window of one video, written to out/ numbered from `start`."""
     need("ffmpeg", "Install ffmpeg (apt install ffmpeg) or put a static build on PATH.")
     duration = probe_duration(src)
     if max_frames and duration:
@@ -122,10 +143,10 @@ def run_stage(ctx: Ctx, src: Path) -> dict:
         img = cv2.imread(str(p), cv2.IMREAD_GRAYSCALE)
         scores.append(sharpness(img))
         if i % 200 == 0:
-            ctx.log.emit("frames", "progress", f"scored {i}/{len(files)}", done=i, total=len(files))
+            ctx.log.emit("frames", "progress", f"{src.name}: scored {i}/{len(files)}", done=i, total=len(files))
     keep = select_sharpest(scores, oversample)
     for n, i in enumerate(keep):
-        shutil.move(str(files[i]), out / f"{n:06d}.jpg")
+        shutil.move(str(files[i]), out / f"{start + n:06d}.jpg")
     shutil.rmtree(raw)
     return {"source": "video", "durationSec": duration, "fps": fps, "oversample": oversample,
             "extracted": len(files), "windows": -(-len(files) // oversample), "kept": len(keep),
