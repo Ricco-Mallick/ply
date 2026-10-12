@@ -1,0 +1,72 @@
+/* Capture guide: a long-read page. Serif headings, Manrope body, a sticky contents rail with the pre-flight progress. */
+body { background: radial-gradient(1200px 600px at 80% -10%, rgba(255, 107, 0, .10), transparent 60%), var(--bg); }
+.pill { border-radius: 999px; }
+.cap { max-width: 1180px; margin: 0 auto; padding: calc(18px + env(safe-area-inset-top, 0px)) 24px 80px; }
+.cap-top { display: flex; justify-content: space-between; align-items: center; gap: 12px; }
+.brand { display: inline-flex; align-items: center; gap: 10px; height: 40px; padding: 0 16px 0 14px; color: var(--fg); text-decoration: none; font: 500 13px/1 var(--font-wide); letter-spacing: .34em; }
+.brand .mark { width: 16px; height: 16px; border: 1.5px solid var(--fg); border-radius: 3px; position: relative; }
+.brand .mark::after { content: ""; position: absolute; left: 2.5px; right: 2.5px; top: 50%; height: 1.5px; margin-top: -.75px; background: var(--accent); }
+.cta-ghost { color: var(--fg); text-decoration: none; font: 400 10px/1 var(--font-wide); letter-spacing: .16em; text-transform: uppercase; padding: 14px 0; border-bottom: 1px solid var(--line-2); }
+.cta-ghost:hover { border-color: var(--accent); }
+
+.cap-hero { padding: clamp(48px, 9vw, 110px) 0 36px; border-bottom: 1px solid var(--line); }
+.eyebrow { color: var(--accent); }
+.cap-hero h1 { margin: 16px 0 18px; font: 400 clamp(44px, 7.5vw, 92px)/.98 var(--font-display); letter-spacing: -.02em; max-width: 14ch; }
+.lead { font-size: clamp(16px, 1.6vw, 19px); line-height: 1.6; color: var(--body); max-width: 60ch; margin: 0; }
+.pattern { margin: 40px 0 0; }
+.pattern svg { width: 100%; max-width: 720px; height: auto; display: block; }
+.mono-svg text { font: 700 10px var(--font-mono); letter-spacing: .06em; fill: var(--muted); }
+.pattern figcaption { color: var(--muted); margin-top: 10px; }
+.loop1, .loop2, .door { stroke-dashoffset: 0; }
+@media (prefers-reduced-motion: no-preference) {
+  .loop1 { stroke-dasharray: 900; animation: draw 3.2s var(--ease-out) both; }
+  .door { stroke-dasharray: 140; animation: draw 1.4s 1.6s var(--ease-out) both; }
+  @keyframes draw { from { stroke-dashoffset: 900; } to { stroke-dashoffset: 0; } }
+}
+
+.cap-body { display: grid; grid-template-columns: 240px minmax(0, 1fr); gap: 56px; padding-top: 40px; }
+.toc { position: sticky; top: 24px; align-self: start; }
+.toc-h { color: var(--muted); margin-bottom: 14px; }
+.toc ol { list-style: none; margin: 0; padding: 0; counter-reset: s; }
+.toc li { counter-increment: s; }
+.toc a { display: block; padding: 7px 0 7px 14px; border-left: 1px solid var(--line); color: var(--muted); text-decoration: none; font-size: 14px; line-height: 1.35; }
+.toc a::before { content: counter(s, decimal-leading-zero) "  "; font: 400 10.5px var(--font-mono); color: var(--dim); }
+.toc a:hover { color: var(--fg); }
+.toc a.on { color: var(--fg); border-left: 2px solid var(--accent); padding-left: 13px; }
+.progress { margin-top: 26px; padding-top: 18px; border-top: 1px solid var(--line); }
+.progress .mono { color: var(--fg); }
+.pbar { height: 3px; background: rgba(255, 255, 255, .12); margin: 10px 0; overflow: hidden; border-radius: 2px; }
+.pbar i { display: block; height: 100%; background: var(--accent); transform-origin: left; transition: transform .35s var(--ease-out); }
+.reset { background: none; border: 0; color: var(--muted); padding: 0; cursor: pointer; text-decoration: underline; text-underline-offset: 3px; }
+
+.prose { max-width: 70ch; font-size: 16.5px; line-height: 1.7; color: var(--body); }
+.prose h2 { font: 400 clamp(30px, 3.4vw, 42px)/1.05 var(--font-display); letter-spacing: -.012em; color: var(--fg); margin: 64px 0 18px; scroll-margin-top: 24px; }
+.prose h2:first-child { margin-top: 0; }
+.prose h3 { font: 700 13px/1.3 var(--font-body); letter-spacing: .08em; text-transform: uppercase; color: var(--amber); margin: 34px 0 10px; }
+.prose p { margin: 0 0 16px; }
+.prose strong { color: var(--fg); font-weight: 800; }
+.prose a { color: var(--amber); }
+.prose ul, .prose ol { padding-left: 1.2em; margin: 0 0 18px; }
+.prose li { margin: 6px 0; }
+.prose li::marker { color: var(--accent); }
+.prose code { font: 400 .88em var(--font-mono); background: rgba(255, 255, 255, .07); padding: 2px 6px; border-radius: 5px; color: var(--fg); }
+.prose blockquote { margin: 22px 0; padding: 14px 18px; border-left: 3px solid var(--accent); background: rgba(255, 107, 0, .07); border-radius: 0 10px 10px 0; color: var(--fg); }
+.prose blockquote p:last-child { margin: 0; }
+.prose table { width: 100%; border-collapse: collapse; margin: 18px 0 24px; font-size: 14.5px; display: block; overflow-x: auto; }
+.prose th { text-align: left; font: 700 11px/1.3 var(--font-mono); letter-spacing: .06em; text-transform: uppercase; color: var(--muted); padding: 10px 12px; border-bottom: 1px solid var(--line-2); }
+.prose td { padding: 10px 12px; border-bottom: 1px solid var(--line); vertical-align: top; }
+.prose hr { border: 0; border-top: 1px solid var(--line); margin: 40px 0; }
+.prose li.task { list-style: none; margin-left: -1.2em; display: flex; gap: 10px; align-items: flex-start; }
+.prose li.task input { appearance: none; flex: 0 0 auto; width: 20px; height: 20px; margin: 3px 0 0; border: 1.5px solid var(--line-2); border-radius: 6px; cursor: pointer; display: grid; place-items: center; transition: background .2s, border-color .2s; }
+.prose li.task input::after { content: ""; width: 10px; height: 6px; border: 2px solid #0B1220; border-top: 0; border-right: 0; transform: rotate(-45deg) translate(1px, -1px) scale(0); transition: transform .2s var(--ease-out); }
+.prose li.task input:checked { background: var(--accent); border-color: var(--accent); }
+.prose li.task input:checked::after { transform: rotate(-45deg) translate(1px, -1px) scale(1); }
+
+@media (max-width: 860px) {
+  .cap-body { grid-template-columns: 1fr; gap: 24px; }
+  .toc { position: static; }
+  .toc ol { display: flex; gap: 6px; overflow-x: auto; padding-bottom: 6px; }
+  .toc a { border: 1px solid var(--line); border-radius: 999px; padding: 8px 12px; white-space: nowrap; }
+  .toc a.on { border: 1px solid var(--accent); padding: 8px 12px; }
+  .toc a::before { content: none; }
+}

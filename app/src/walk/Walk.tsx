@@ -107,7 +107,7 @@ function Minimap({ engine, manifest }: { engine: WalkEngine; manifest: SceneMani
   const cv = useRef<HTMLCanvasElement>(null); const [img, setImg] = useState<HTMLCanvasElement | null>(null);
   useEffect(() => {
     const g = engine.grid; if (!g) return; const { width: w, height: h } = g.meta; const c = document.createElement('canvas'); c.width = w; c.height = h; const x = c.getContext('2d')!; const d = x.createImageData(w, h);
-    for (let i = 0; i < w * h; i++) { const b = g.data[i]; d.data.set(b ? [7, 11, 20, 120] : [236, 241, 250, 225], i * 4); // walkable bright, blocked dark } x.putImageData(d, 0, 0); setImg(c);
+    for (let i = 0; i < w * h; i++) { const b = g.data[i]; d.data.set(b ? [7, 11, 20, 120] : [236, 241, 250, 225], i * 4); /* walkable bright, blocked dark */ } x.putImageData(d, 0, 0); setImg(c);
   }, [engine.grid, manifest]);
   useEffect(() => {
     if (!img) return; let raf = 0; const S = 168;

@@ -72,6 +72,26 @@ export async function loadManifest(): Promise<{ manifest: SceneManifest; base: U
   const href = q ? (q.endsWith('.json') ? q : q.replace(/\/?$/, '/scene.json')) : `${import.meta.env.BASE_URL}scenes/demo/scene.json`;
   const url = new URL(href, location.href);
   const res = await fetch(url); if (!res.ok) throw new Error(`Could not load scene (${res.status})`);
-  const manifest = await res.json() as SceneManifest;
-  return { manifest, base: url };
+  const raw = await res.json();
+  return { manifest: await normalise(raw, url), base: url };
+}
+
+/** Pipeline output (pipeline/README.md, scene.json v1) -> the viewer's manifest. Hand-written manifests pass through. */
+async function normalise(raw: any, base: URL): Promise<SceneManifest> {
+  if (typeof raw.splat === 'string') return raw as SceneManifest;
+  const phone = matchMedia('(max-width: 720px), (pointer: coarse)').matches;
+  const m: SceneManifest = {
+    name: raw.name ?? decodeURIComponent(base.pathname.split('/').filter(Boolean).slice(-2, -1)[0] ?? 'Captured space'),
+    splat: phone && raw.splat?.lite ? raw.splat.lite : raw.splat?.file ?? 'scene.spz',
+    floorY: raw.floorY ?? 0, eyeHeight: raw.spawn?.position?.[1] ?? 1.6, bounds: raw.bounds, cameraPath: raw.cameraPath,
+  };
+  if (raw.spawn?.position) {
+    const [x, , z] = raw.spawn.position, l = raw.spawn.lookAt;
+    m.start = { position: [x, m.floorY!, z], yaw: l ? Math.atan2(-(l[0] - x), -(l[2] - z)) : 0 }; // yaw 0 looks down -z
+  }
+  if (raw.occupancy?.meta) {
+    const o = await (await fetch(new URL(raw.occupancy.meta, base))).json();
+    m.occupancy = { image: raw.occupancy.image ?? o.image, origin: o.origin, cell: o.cellSize, width: o.width, height: o.height };
+  }
+  return m;
 }

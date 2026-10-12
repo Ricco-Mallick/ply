@@ -1,0 +1,31 @@
+{
+  "version": 1,
+  "image": "occupancy.png",
+  "cellSize": 0.1,
+  "origin": [
+    -2.5143836919,
+    -3.5144046187
+  ],
+  "width": 51,
+  "height": 71,
+  "colAxis": "+x",
+  "rowAxis": "+z",
+  "values": {
+    "free": 255,
+    "blocked": 0,
+    "unknown": 127
+  },
+  "obstacleBand": [
+    0.2,
+    1.8
+  ],
+  "floorBand": [
+    -0.08,
+    0.08
+  ],
+  "stats": {
+    "free": 2018,
+    "blocked": 533,
+    "unknown": 1070
+  }
+}

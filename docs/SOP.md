@@ -25,11 +25,11 @@ Duration: a small room takes 1–2 min, a 4-room floor 5–8 min. The pipeline k
 
 ## 1. Before you press record (pre-flight)
 
-1. **Phone:** battery > 50 %, free storage > 5 GB (4K30 HEVC is about 350 MB/min), lens wiped with a microfibre cloth.
-2. **Space:** every light on; blinds half-closed against direct sun; doors you will walk through propped open; chairs pushed in; cables off the floor.
-3. **People:** ask everyone to leave the area, or to stand still out of the walking path for the whole take. A moving person becomes a ghost ("floater") in the twin.
-4. **Marker:** stick the A4 Ply QR marker (printed at 100 %, no scaling) on a wall at the entrance, about 1.2 m high. It gives a known size (A4 = 297 mm) to check scale against, and it is the anchor AR navigation uses later.
-5. **Settings** (§2), then a **5-second test clip**: play it back paused at a turn. If the frame is smeared, slow down or raise the light; if it flickers or shows bands, fix the shutter (§2.3).
+- [ ] **Phone:** battery > 50 %, free storage > 5 GB (4K30 HEVC is about 350 MB/min), lens wiped with a microfibre cloth.
+- [ ] **Space:** every light on; blinds half-closed against direct sun; doors you will walk through propped open; chairs pushed in; cables off the floor.
+- [ ] **People:** ask everyone to leave the area, or to stand still out of the walking path for the whole take. A moving person becomes a ghost ("floater") in the twin.
+- [ ] **Marker:** stick the A4 Ply QR marker (printed at 100 %, no scaling) on a wall at the entrance, about 1.2 m high. It gives a known size (A4 = 297 mm) to check scale against, and it is the anchor AR navigation uses later.
+- [ ] **Settings** (§2), then a **5-second test clip**: play it back paused at a turn. If the frame is smeared, slow down or raise the light; if it flickers or shows bands, fix the shutter (§2.3).
 
 ## 2. Camera settings
 
