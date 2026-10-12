@@ -6,7 +6,7 @@
    Combined with the gyro turn rate into a grade per sample: good / ok / bad. */
 
 export type Grade = 0 | 1 | 2; // 0 good, 1 ok, 2 bad
-export interface Quality { t: number; sharp: number; sharpRel: number; luma: number; clipped: number; flow: number; turn: number; grade: Grade; issue: Issue | null; }
+export interface Quality { t: number; sharp: number; sharpRel: number; luma: number; lumaMed: number; clipped: number; flow: number; turn: number; grade: Grade; issue: Issue | null; }
 export type Issue = 'blur' | 'fast' | 'turn' | 'dark' | 'bright' | 'tilt';
 
 const W = 160;
@@ -31,6 +31,9 @@ export class Analyzer {
     }
     for (let i = 0; i < g.length; i++) { lsum += g[i]; if (g[i] > 250 || g[i] < 4) clip++; }
     const sharp = sum2 / n - (sum / n) ** 2, luma = lsum / g.length, clipped = clip / g.length;
+    // median brightness ignoring blown highlights: what exposure metering should aim at (a lamp in view shouldn't darken the room)
+    const hist = new Uint32Array(64); let m = 0; for (let i = 0; i < g.length; i++) if (g[i] < 248) { hist[g[i] >> 2]++; m++; }
+    let acc = 0, lumaMed = luma; for (let b = 0; b < 64; b++) { acc += hist[b]; if (acc >= m / 2) { lumaMed = b * 4 + 2; break; } }
     // global shift: try offsets on a coarse grid, keep the one with the lowest mean absolute difference
     let flow = 0;
     if (this.prev && t > this.prevT) {
@@ -45,7 +48,7 @@ export class Analyzer {
     this.sharpHist.push(sharp); if (this.sharpHist.length > 150) this.sharpHist.shift();
     const med = [...this.sharpHist].sort((a, b) => a - b)[Math.floor(this.sharpHist.length / 2)] || sharp;
     const sharpRel = sharp / Math.max(med, 1e-6);
-    return { t, sharp, sharpRel, luma, clipped, flow, turn, ...grade(sharp, sharpRel, luma, clipped, flow, turn, pitch) };
+    return { t, sharp, sharpRel, luma, lumaMed, clipped, flow, turn, ...grade(sharp, sharpRel, luma, clipped, flow, turn, pitch) };
   }
   reset() { this.prev = null; this.sharpHist = []; }
 }

@@ -86,7 +86,7 @@ main h1 em { font-style: italic; color: var(--amber); }
 .live .icon { width: 44px; height: 44px; border: 1px solid var(--lg-edge); display: grid; place-items: center; flex: 0 0 auto; }
 .rec-chip { display: inline-flex; align-items: center; gap: 10px; height: 44px; padding: 0 16px; }
 .rec-dot { width: 10px; height: 10px; border-radius: 50%; background: rgba(255, 255, 255, .5); } .rec-dot.on { background: #FF3B30; animation: pulse 1s infinite; }
-.lock-chip { margin-left: auto; height: 44px; padding: 0 14px; font-size: 9.5px; border: 1px solid var(--lg-edge); max-width: 46vw; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.lock-chip { display: none; margin-left: auto; height: 44px; padding: 0 14px; font-size: 9.5px; border: 1px solid var(--lg-edge); max-width: 46vw; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .tip-wrap { position: absolute; z-index: 3; top: calc(70px + env(safe-area-inset-top, 0px)); left: 0; right: 0; display: flex; flex-direction: column; align-items: center; gap: 8px; pointer-events: none; padding: 0 16px; }
 .tip { padding: 11px 18px; font-weight: 700; font-size: 15px; text-align: center; animation: cardin .3s var(--ease-out); }
 .tip.g0 { border-color: rgba(61, 220, 151, .6); } .tip.g1 { border-color: rgba(255, 184, 77, .8); color: #FFE2B5; } .tip.g2 { border-color: rgba(255, 90, 78, .9); color: #FFD3CE; background: rgba(80, 16, 12, .35); }
@@ -186,3 +186,29 @@ main h1 em { font-style: italic; color: var(--amber); }
 .stages li.fail { color: #FF8A80; } .stages li.fail .st-dot { background: #FF5A4E; border-color: #FF5A4E; }
 .st-p { font-size: 10.5px; color: var(--amber); }
 a.btn { text-decoration: none; }
+
+/* live: lens + exposure controls, tap to focus */
+.tapzone { position: absolute; inset: 0; z-index: 1; }
+.focus-ring { position: absolute; z-index: 2; width: 74px; height: 74px; margin: -37px 0 0 -37px; border: 2px solid #FFD973; border-radius: 12px; pointer-events: none; animation: ringin .5s var(--ease-out) both, ringout .6s 1.6s forwards; }
+.focus-ring.locked { border-color: var(--accent); animation: ringin .5s var(--ease-out) both; }
+@keyframes ringin { from { transform: scale(1.5); opacity: 0; } } @keyframes ringout { to { opacity: 0; } }
+.quick { display: flex; justify-content: center; gap: 8px; margin-bottom: 12px; }
+.qbtn { height: 38px; padding: 0 16px; border: 1px solid var(--lg-edge); font: 400 9.5px/1 var(--font-wide); letter-spacing: .16em; text-transform: uppercase; color: var(--fg); }
+.qbtn.hot { border-color: var(--accent); color: var(--amber); }
+.qbtn:disabled { opacity: .45; }
+.sheet { position: absolute; z-index: 5; left: 10px; right: 10px; bottom: calc(220px + env(safe-area-inset-bottom, 0px)); max-width: 520px; margin: 0 auto; border-radius: 22px; padding: 14px 16px 16px; animation: cardin .3s var(--ease-out); background: rgba(10, 14, 20, .72); }
+.sheet-h { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; }
+.sheet-h button { background: none; border: 0; color: var(--amber); padding: 8px 0 8px 12px; }
+.sheet-p { font-size: 14px; line-height: 1.5; color: var(--body); margin: 6px 0 12px; } .sheet-p b { color: var(--fg); }
+.lens-list { display: grid; gap: 6px; }
+.lens-list button { display: flex; flex-direction: column; gap: 3px; align-items: flex-start; text-align: left; padding: 11px 14px; border-radius: 12px; border: 1px solid var(--line); background: rgba(255, 255, 255, .04); }
+.lens-list button.on { border-color: var(--accent); background: rgba(255, 107, 0, .16); }
+.lens-list b { font-size: 15px; } .lens-list .mono { font-size: 9.5px; color: var(--muted); text-transform: none; }
+.zooms, .seg2 { display: flex; gap: 6px; margin-top: 10px; }
+.zooms button, .seg2 button { flex: 1; height: 42px; border-radius: 12px; border: 1px solid var(--line-2); background: rgba(255, 255, 255, .04); font: 700 14px var(--font-mono); }
+.zooms button.on, .seg2 button.on { background: var(--accent); color: #0B1220; border-color: var(--accent); }
+.seg2 button { font: 400 10px/1 var(--font-wide); letter-spacing: .16em; text-transform: uppercase; }
+.seg2 button:disabled, .zooms button:disabled { opacity: .4; }
+.ev { display: grid; gap: 8px; margin-top: 6px; } .ev .mono { font-size: 10px; color: var(--body); }
+.ev input { width: 100%; accent-color: var(--accent); height: 28px; }
+.meter { font-size: 9.5px; margin: 10px 0 0; }

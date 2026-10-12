@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { Glass } from '../../shared/Glass';
-import { openCamera, type CamInfo } from '../lib/camera';
+import { openCamera, preferredLens, type CamInfo } from '../lib/camera';
 import { requestMotionPermission } from '../lib/sensors';
 import { persist, storageLeft } from '../lib/store';
 import { fmtBytes } from './viz';
@@ -29,7 +29,10 @@ export function Permissions({ onReady, onBack }: { onReady: (g: Granted) => void
     setMot(motionOk ? 'ok' : m === 'denied' ? 'denied' : 'unavailable');
     const p = await persist(); setSto(p ? 'ok' : 'auto'); setLeft(await storageLeft());
     try {
-      const g = await openCamera(); setCam('ok');
+      let g = await openCamera(); setCam('ok');
+      // default to the main sensor (some phones hand out the ultra-wide for "environment")
+      const better = await preferredLens(g.info.deviceId);
+      if (better) { g.stream.getTracks().forEach(t => t.stop()); g = await openCamera(better); }
       setTimeout(() => onReady({ ...g, motion: motionOk }), 450);
     } catch (e) { const n = (e as Error).name; setCam('denied'); setErr(FIX[n] ?? `The camera could not start (${(e as Error).message}).`); }
   };

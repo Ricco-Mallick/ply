@@ -10,7 +10,7 @@ bucket_name = "ply-data"
 [[d1_databases]]
 binding = "DB"
 database_name = "ply-jobs"
-database_id = "REPLACE_WITH_D1_ID"
+database_id = "7ff84f46-d1c4-41be-bb91-2a2224ba02f1"
 
 [vars]
 # origins allowed to call the write endpoints from a browser

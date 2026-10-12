@@ -15,7 +15,7 @@ export class Session {
   private rec: MediaRecorder | null = null; private sink: Awaited<ReturnType<typeof openSink>> | null = null; private clipId = '';
   quality: Quality[] = []; log: SensorSample[] = []; private t0 = 0; private timer = 0; private wake: any = null;
   private subs = new Set<() => void>(); private tipHold = 0; private mime = '';
-  constructor(public video: HTMLVideoElement, public stream: MediaStream, public info: CamInfo, public lock: LockReport | null) { this.sensors.start(); this.loop(); }
+  constructor(public video: HTMLVideoElement, public stream: MediaStream, public info: CamInfo, public lock: LockReport | null) { /* stream/info change when the lens is switched */ this.sensors.start(); this.loop(); }
 
   on(f: () => void) { this.subs.add(f); return () => { this.subs.delete(f); }; }
   private emit() { this.subs.forEach(f => f()); }
