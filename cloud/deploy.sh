@@ -11,12 +11,13 @@ B2OUT=$(python3 b2_setup.py) || exit 1
 eval "$B2OUT"
 source .b2
 sed -i -e "s#^S3_ENDPOINT = .*#S3_ENDPOINT = \"$S3_ENDPOINT\"#" -e "s#^S3_REGION = .*#S3_REGION = \"$S3_REGION\"#" -e "s#^S3_BUCKET = .*#S3_BUCKET = \"$S3_BUCKET\"#" wrangler.toml
-printf '%s' "$B2_KEY_ID" | $W secret put S3_KEY_ID >/dev/null
-printf '%s' "$B2_APP_KEY" | $W secret put S3_SECRET >/dev/null
 $W d1 execute ply-jobs --remote --file schema.sql -y >/dev/null
-printf '%s' "$APP_KEY" | $W secret put APP_KEY >/dev/null
-printf '%s' "$WORKER_TOKEN" | $W secret put WORKER_TOKEN >/dev/null
+# deploy first: `secret put` on a Worker that doesn't exist yet stops at an interactive prompt.
+# (a brand-new account also needs a workers.dev subdomain: PUT /accounts/<id>/workers/subdomain, done once for ricco-ply)
 URL=$($W deploy 2>&1 | grep -o 'https://[a-z0-9.-]*workers\.dev' | head -1)
+for kv in "APP_KEY=$APP_KEY" "WORKER_TOKEN=$WORKER_TOKEN" "S3_KEY_ID=$B2_KEY_ID" "S3_SECRET=$B2_APP_KEY"; do
+  printf '%s' "${kv#*=}" | $W secret put "${kv%%=*}" >/dev/null
+done
 echo "API: $URL"; curl -fsS "$URL/" && echo
 
 # website -> API, then redeploy Pages

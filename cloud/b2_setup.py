@@ -66,7 +66,7 @@ def main() -> None:
     else:
         name = name or f"ply-data-{secrets.token_hex(4)}"  # bucket names are global across B2
         call(base + "/b2_create_bucket", token, {"accountId": account, "bucketName": name, "bucketType": "allPrivate", "corsRules": CORS,
-                                                  "lifecycleRules": [{"fileNamePrefix": "captures/", "daysFromUploadingToHidden": 30, "daysFromHidingToDeleting": 1}]})
+                                                  "lifecycleRules": [{"fileNamePrefix": "captures/", "daysFromUploadingToHiding": 30, "daysFromHidingToDeleting": 1}]})
         with cfg_path.open("a") as f:
             f.write(f"B2_BUCKET={name}\n")
     print(f"S3_ENDPOINT={s3}\nS3_REGION={region}\nS3_BUCKET={name}")

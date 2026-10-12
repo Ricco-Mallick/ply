@@ -9,9 +9,9 @@ database_id = "7ff84f46-d1c4-41be-bb91-2a2224ba02f1"
 
 [vars]
 # S3-compatible bucket (Backblaze B2): captures/<captureId>/<clip> and scenes/<jobId>/<file>; filled in by deploy.sh
-S3_ENDPOINT = "https://s3.us-west-004.backblazeb2.com"
-S3_REGION = "us-west-004"
-S3_BUCKET = "ply-data"
+S3_ENDPOINT = "https://s3.eu-central-003.backblazeb2.com"
+S3_REGION = "eu-central-003"
+S3_BUCKET = "ply-data-bb426385"
 # origins allowed to call the write endpoints from a browser
 ALLOWED_ORIGINS = "https://ricco.codes,http://localhost:5199,https://localhost:5199"
 
