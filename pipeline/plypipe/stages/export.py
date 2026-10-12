@@ -1,0 +1,85 @@
+"""export: scene.ply -> scene.spz (full) + scene_lite.spz (SH0 only, for phones).
+
+Uses @playcanvas/splat-transform (pinned) through npx. The PLY is already in the scene frame
+(training ran on the aligned model), so no axis change is applied. Gaussians with NaN/Inf are
+removed and everything outside the room box (scene bounds + 1 m, y in [-0.5, top + 0.5]) is
+cropped, which drops most floaters for free.
+
+If a PLY from elsewhere (trained on the unaligned model) is given via --ply, pass --apply-align
+and the stage applies scene.json's transform with splat-transform's translate/rotate/scale.
+"""
+
+from __future__ import annotations
+
+import math
+import shutil
+from pathlib import Path
+
+import numpy as np
+
+from plypipe.util import Ctx, need, read_scene, run, update_scene
+
+SPLAT_TRANSFORM = "@playcanvas/splat-transform@3.10.1"
+
+
+# splat-transform runs its actions (-r/-s/-t/-B) in PlayCanvas's engine frame, which is the PLY
+# frame turned 180 deg about Z: engine = D @ ply with D = diag(-1, -1, 1). Measured against the
+# real tool in tests/test_export.py. Its SPZ writer stores positions unconverted (spz
+# CoordinateSystem.UNSPECIFIED), so the SPZ keeps the PLY's scene frame (+Y up, three.js-style).
+D = np.diag([-1.0, -1.0, 1.0])
+
+
+def _euler_for_splat_transform(R: np.ndarray) -> tuple[float, float, float]:
+    """Degrees (a, b, c) such that `-r a,b,c` applies R = Rz(c) @ Ry(b) @ Rx(a) in the engine frame."""
+    b = -math.asin(max(-1.0, min(1.0, R[2, 0])))
+    if abs(R[2, 0]) < 0.99999:
+        a = math.atan2(R[2, 1], R[2, 2])
+        c = math.atan2(R[1, 0], R[0, 0])
+    else:  # gimbal lock: fold everything into a
+        a = math.atan2(-R[1, 2], R[1, 1])
+        c = 0.0
+    return math.degrees(a), math.degrees(b), math.degrees(c)
+
+
+def align_actions(T: np.ndarray) -> list[str]:
+    """splat-transform actions applying p' = s R p + t to PLY-frame data (rotate, scale, translate)."""
+    sR = T[:3, :3]
+    s = float(np.cbrt(np.linalg.det(sR)))
+    R_e = D @ (sR / s) @ D
+    t_e = D @ T[:3, 3]
+    ax, ay, az = _euler_for_splat_transform(R_e)
+    return ["-r", f"{ax:.6f},{ay:.6f},{az:.6f}", "-s", f"{s:.8f}", "-t", f"{t_e[0]:.6f},{t_e[1]:.6f},{t_e[2]:.6f}"]
+
+
+def crop_box(scene: dict) -> str | None:
+    """Room box (scene bounds + 1 m sideways, y from -0.5 to top + 0.5) in splat-transform's frame."""
+    b = scene.get("bounds")
+    if not b:
+        return None
+    mn, mx = b["min"], b["max"]
+    lo = np.array([mn[0] - 1.0, -0.5, mn[2] - 1.0])
+    hi = np.array([mx[0] + 1.0, max(mx[1], 2.5) + 0.5, mx[2] + 1.0])
+    e_lo, e_hi = np.minimum(D @ lo, D @ hi), np.maximum(D @ lo, D @ hi)
+    return ",".join(f"{v:.3f}" for v in (*e_lo, *e_hi))
+
+
+def run_stage(ctx: Ctx) -> dict:
+    need("npx", "Install Node.js >= 20 (splat-transform runs through npx).")
+    ply = Path(ctx.opt("ply") or ctx.out / "scene.ply")
+    if not ply.exists():
+        raise FileNotFoundError(f"{ply} missing: run the train stage or pass --ply")
+    scene = read_scene(ctx)
+    base = ["npx", "-y", SPLAT_TRANSFORM, "-w", str(ply)]
+    if ctx.opt("apply_align"):
+        base += align_actions(np.array(scene["transform"]))
+    base += ["-N"]
+    box = crop_box(scene) if not ctx.opt("no_crop") else None
+    if box:
+        base += ["-B", box]
+    full = ctx.out / "scene.spz"
+    lite = ctx.out / "scene_lite.spz"
+    run(base + [str(full)], ctx, "export")
+    run(base + ["-H", "0", str(lite)], ctx, "export")
+    update_scene(ctx, {"splat": {"file": "scene.spz", "lite": "scene_lite.spz", "format": "spz"}})
+    return {"spz": full.name, "spzMB": round(full.stat().st_size / 2**20, 2),
+            "lite": lite.name, "liteMB": round(lite.stat().st_size / 2**20, 2), "cropBox": box}

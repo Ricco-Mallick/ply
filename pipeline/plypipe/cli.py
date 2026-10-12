@@ -1,0 +1,125 @@
+"""plypipe CLI.
+
+    python -m plypipe run <video|frames_dir> --out work/<scene> [options]
+
+Stages run in order: frames, sfm, align, occupancy, train, export. A finished stage leaves
+<out>/.done/<stage>.json and is skipped on the next run, so a crashed or pre-empted job
+(Kaggle, RunPod spot) resumes where it stopped. --force <stage> re-runs that stage and every
+stage after it. --only / --until restrict the range (e.g. --until occupancy on a CPU box).
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import sys
+import time
+import traceback
+from pathlib import Path
+
+from plypipe import STAGES, __version__
+from plypipe.log import Log
+from plypipe.util import Ctx, clear_from, is_done, mark_done
+
+
+def _stage_fn(name: str):
+    if name == "frames":
+        from plypipe.stages import frames
+        return frames.run_stage
+    if name == "sfm":
+        from plypipe.stages import sfm
+        return sfm.run_stage
+    if name == "align":
+        from plypipe.stages import align
+        return align.run_stage
+    if name == "occupancy":
+        from plypipe.stages import occupancy
+        return occupancy.run_stage
+    if name == "train":
+        from plypipe.stages import train
+        return train.run_stage
+    if name == "export":
+        from plypipe.stages import export
+        return export.run_stage
+    raise KeyError(name)
+
+
+def build_parser() -> argparse.ArgumentParser:
+    ap = argparse.ArgumentParser(prog="plypipe", description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument("--version", action="version", version=__version__)
+    sub = ap.add_subparsers(dest="cmd", required=True)
+    r = sub.add_parser("run", help="run the pipeline (resumable)")
+    r.add_argument("input", type=Path, help="video file or a folder of images")
+    r.add_argument("--out", type=Path, required=True)
+    r.add_argument("--only", choices=STAGES, help="run just this stage")
+    r.add_argument("--from", dest="from_stage", choices=STAGES, help="start at this stage")
+    r.add_argument("--until", choices=STAGES, help="stop after this stage")
+    r.add_argument("--force", choices=STAGES, help="re-run this stage and all later ones")
+    r.add_argument("--quiet", action="store_true", help="log only to <out>/log.jsonl")
+    g = r.add_argument_group("frames")
+    g.add_argument("--fps", type=float, default=2.5, help="kept frames per second of video (default 2.5)")
+    g.add_argument("--oversample", type=int, default=4, help="candidates per kept frame for the sharpness pick")
+    g.add_argument("--max-frames", type=int, help="cap on kept frames (lowers fps for long videos)")
+    g.add_argument("--long-side", type=int, default=1600)
+    g = r.add_argument_group("sfm")
+    g.add_argument("--features", choices=["aliked", "sift"], default="aliked")
+    g.add_argument("--matcher", choices=["auto", "sequential", "exhaustive"], default="auto")
+    g.add_argument("--exhaustive-max", type=int, default=250, help="auto: exhaustive up to this many frames")
+    g.add_argument("--device", choices=["auto", "cuda", "cpu"], default="auto")
+    g.add_argument("--mapper", choices=["global", "incremental"], default="global",
+                   help="global SfM (fast, default) or incremental (slower, more robust on rotation-heavy captures)")
+    g.add_argument("--focal-35mm", type=float,
+                   help="35 mm-equivalent focal of the lens used (phone spec, e.g. 24 for the S24 FE main camera; "
+                        "~26 with video stabilisation crop). Starts SfM from the right intrinsics.")
+    g = r.add_argument_group("align / occupancy")
+    g.add_argument("--height-cam", type=float, default=1.45,
+                   help="median phone height above the floor in metres (sets scale); 0 = keep SfM units")
+    g.add_argument("--cell", type=float, default=0.1, help="occupancy cell size in metres")
+    g = r.add_argument_group("train / export")
+    g.add_argument("--preset", choices=["quick", "standard", "high"], default="standard")
+    g.add_argument("--no-ppisp", dest="ppisp", action="store_false", default=None)
+    g.add_argument("--antialiased", action="store_true")
+    g.add_argument("--gsplat-dir", type=Path, help="gsplat checkout (default $PLY_GSPLAT_DIR or /opt/gsplat)")
+    g.add_argument("--ply", type=Path, help="export this PLY instead of <out>/scene.ply")
+    g.add_argument("--apply-align", action="store_true", help="export: transform an unaligned PLY into the scene frame")
+    g.add_argument("--no-crop", action="store_true")
+    return ap
+
+
+def main(argv: list[str] | None = None) -> int:
+    a = build_parser().parse_args(argv)
+    out: Path = a.out
+    out.mkdir(parents=True, exist_ok=True)
+    log = Log(out, quiet=a.quiet)
+    opts = {k: v for k, v in vars(a).items() if k not in ("cmd", "input", "out")}
+    if opts.get("gsplat_dir"):
+        opts["gsplat_dir"] = str(opts["gsplat_dir"])
+    ctx = Ctx(out=out, log=log, opts=opts)
+
+    order = list(STAGES)
+    lo = order.index(a.only or a.from_stage or "frames")
+    hi = order.index(a.only or a.until or "export")
+    if a.force:
+        clear_from(ctx, order[order.index(a.force):])
+    (out / "job.json").write_text(json.dumps({"input": str(a.input), "opts": opts, "version": __version__}, indent=2, default=str))
+
+    for name in order[lo:hi + 1]:
+        if is_done(ctx, name):
+            log.emit(name, "skip", "already done")
+            continue
+        log.emit(name, "start")
+        t0 = time.time()
+        try:
+            fn = _stage_fn(name)
+            report = fn(ctx, a.input) if name == "frames" else fn(ctx)
+        except Exception as e:  # report and stop; the next run resumes here
+            log.emit(name, "error", str(e), trace=traceback.format_exc()[-2000:])
+            return 1
+        report["seconds"] = round(time.time() - t0, 1)
+        mark_done(ctx, name, report)
+        log.emit(name, "done", **report)
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

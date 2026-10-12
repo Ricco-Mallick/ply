@@ -1,0 +1,28 @@
+[build-system]
+requires = ["setuptools>=69"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "plypipe"
+version = "0.1.0"
+description = "Ply capture pipeline: phone video -> COLMAP -> gsplat -> SPZ + floor/occupancy for the web walkthrough"
+requires-python = ">=3.10"
+# CPU stages (frames, align, occupancy) need only these.
+dependencies = ["numpy>=1.26", "opencv-python-headless>=4.9"]
+
+[project.optional-dependencies]
+# SfM on a CUDA 12 machine (Kaggle T4, RunPod). Prebuilt wheels, no COLMAP build needed.
+sfm = ["pycolmap-cuda12==4.2.1"]
+# CPU-only SfM fallback (slow, SIFT only is realistic).
+sfm-cpu = ["pycolmap==4.2.1"]
+test = ["pytest>=8"]
+
+[project.scripts]
+plypipe = "plypipe.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["plypipe*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = ["slow: end-to-end tests that run real SfM on CPU"]

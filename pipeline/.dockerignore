@@ -1,0 +1,5 @@
+.venv
+tests
+work
+**/__pycache__
+kaggle
