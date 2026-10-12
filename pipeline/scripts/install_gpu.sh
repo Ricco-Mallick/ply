@@ -58,6 +58,9 @@ else
   fi
 fi
 
+# CI (.github/workflows/wheels.yml): only the CUDA wheels are wanted; the rest needs the target machine
+if [ -n "${PLY_WHEELS_ONLY:-}" ]; then log "wheels only: built $(ls "$PLY_SAVE_WHEELS" | tr '\n' ' ')"; exit 0; fi
+
 log "gsplat runtime + example requirements"
 # examples/requirements.txt pins torch 2.9.1 and pulls nvidia-ncore (only for the NCore dataset
 # backend); both are filtered out so pip cannot replace the cu128 torch installed above.
