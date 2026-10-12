@@ -20,7 +20,7 @@ export function Submit({ capture, onRename, onBack, onQueued }: { capture: Captu
     abort.current = new AbortController(); setBusy('Uploading');
     setTeamKey(key);
     try { const j = await upload(capture, s, (d, t, l) => { setPct(d / t); setBusy(`Uploading ${l}`); }, abort.current.signal); setBusy(null); onQueued(j.jobId); return; }
-    catch (e) { setMsg({ ok: false, t: (e as Error).name === 'AbortError' ? 'Upload paused. Tap again to resume where it stopped.' : `${(e as Error).message}. Tap again to resume.` }); }
+    catch (e) { const m = (e as Error).message; setMsg({ ok: false, t: (e as Error).name === 'AbortError' ? 'Upload paused. Tap again to resume where it stopped.' : /team key/i.test(m) ? `${m}. Check the Team key field above and tap again.` : `${m}. Tap again to resume.` }); }
     setBusy(null);
   };
 
