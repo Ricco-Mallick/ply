@@ -44,6 +44,10 @@ git -C "$GSPLAT_DIR" checkout -q FETCH_HEAD
 git -C "$GSPLAT_DIR" submodule update -q --init --recursive --depth 1
 
 CUDA_PKGS=("$GSPLAT_DIR" "$FUSED_SSIM" "$FUSED_BILAGRID" "$PPISP")
+# CI builds each package in its own job (PLY_ONLY_PKG=gsplat|fused-ssim|fused-bilagrid|ppisp) so they compile in parallel
+case "${PLY_ONLY_PKG:-}" in
+  gsplat) CUDA_PKGS=("$GSPLAT_DIR");; fused-ssim) CUDA_PKGS=("$FUSED_SSIM");; fused-bilagrid) CUDA_PKGS=("$FUSED_BILAGRID");; ppisp) CUDA_PKGS=("$PPISP");;
+esac
 if [ -n "${PLY_WHEELS:-}" ] && ls "$PLY_WHEELS"/gsplat-*.whl >/dev/null 2>&1; then
   log "installing prebuilt CUDA wheels from $PLY_WHEELS"
   $PIP install -q --no-deps "$PLY_WHEELS"/*.whl

@@ -1,7 +1,8 @@
 # Prebuilt CUDA wheels (gsplat @ pinned SHA, fused-ssim, fused-bilagrid, ppisp) for the GPU workers.
 # Compiling CUDA needs nvcc + torch, not a GPU, so it runs here instead of burning Kaggle GPU quota (6 h/week):
 # Kaggle's 4-core build took over an hour. Matches the Kaggle image: Python 3.13, torch 2.11.0+cu128.
-# Arches: 7.5 (Kaggle T4), 8.6 (RTX 30xx / A10), 8.9 (RTX 4090 / L4 / L40S on RunPod).
+# Arches: 7.5 (Kaggle T4) by default; add 8.6 (RTX 30xx / A10) and 8.9 (RTX 4090 / L4 / L40S on RunPod) for the finale.
+# Each package builds in its own job, so the wait is the slowest one (gsplat), not the sum.
 name: wheels
 on:
   workflow_dispatch:
@@ -11,11 +12,15 @@ on:
         default: '3.13'
       arch:
         description: TORCH_CUDA_ARCH_LIST
-        default: '7.5;8.6;8.9'
+        default: '7.5'
 permissions:
   contents: read
 jobs:
   build:
+    strategy:
+      fail-fast: false
+      matrix:
+        pkg: [gsplat, fused-ssim, fused-bilagrid, ppisp]
     runs-on: ubuntu-22.04   # glibc 2.35: the wheels then load on Kaggle's and RunPod's Ubuntu 22.04+ images
     timeout-minutes: 300
     steps:
@@ -39,6 +44,7 @@ jobs:
           PLY_GSPLAT_DIR: ${{ runner.temp }}/gsplat
           PLY_SAVE_WHEELS: ${{ github.workspace }}/wheels
           PLY_WHEELS_ONLY: '1'
+          PLY_ONLY_PKG: ${{ matrix.pkg }}
         run: |
           nproc; nvcc --version | tail -1
           export MAX_JOBS=$(nproc)
@@ -46,6 +52,6 @@ jobs:
           ls -la wheels
       - uses: actions/upload-artifact@v4
         with:
-          name: ply-wheels-py${{ inputs.python }}
+          name: ply-wheels-${{ matrix.pkg }}-py${{ inputs.python }}
           path: wheels/*.whl
           retention-days: 30
