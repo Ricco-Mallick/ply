@@ -31,6 +31,8 @@ WEIGHTS = {"frames": .05, "sfm": .20, "align": .02, "occupancy": .02, "train": .
 ORDER = list(WEIGHTS)
 RESULTS = ["scene.spz", "scene_lite.spz", "scene.json", "occupancy.png", "occupancy.json", "report.json"]
 PART = 32 * 1024 * 1024
+# Cloudflare rejects the default "Python-urllib" user agent with 403 before the request reaches the API
+UA = {"user-agent": "ply-worker/1.0 (+https://ricco.codes/ply)"}
 
 
 class Api:
@@ -39,7 +41,7 @@ class Api:
 
     def req(self, method: str, path: str, body: bytes | dict | None = None, ctype: str | None = None, tries: int = 5):
         data = json.dumps(body).encode() if isinstance(body, dict) else body
-        headers = {"authorization": f"Bearer {self.token}"}
+        headers = {"authorization": f"Bearer {self.token}", **UA}
         if isinstance(body, dict):
             headers["content-type"] = "application/json"
         elif ctype:
@@ -63,7 +65,7 @@ class Api:
         _, info = self.req("GET", "/v1/worker/file?" + urllib.parse.urlencode({"key": key}))
         for i in range(4):
             try:
-                with urllib.request.urlopen(info["url"], timeout=600) as resp, dest.open("wb") as f:
+                with urllib.request.urlopen(urllib.request.Request(info["url"], headers=UA), timeout=600) as resp, dest.open("wb") as f:
                     shutil.copyfileobj(resp, f, 8 * 1024 * 1024)
                 return
             except (urllib.error.URLError, TimeoutError, ConnectionError):
@@ -85,7 +87,7 @@ class Api:
                 chunk = f.read(PART)
                 for t in range(5):  # straight to the bucket; keep its ETag for the complete call
                     try:
-                        with urllib.request.urlopen(urllib.request.Request(signed["urls"][str(i)], data=chunk, method="PUT"), timeout=600) as r:
+                        with urllib.request.urlopen(urllib.request.Request(signed["urls"][str(i)], data=chunk, method="PUT", headers=UA), timeout=600) as r:
                             parts.append({"partNumber": i, "etag": r.headers["ETag"]})
                         break
                     except (urllib.error.URLError, TimeoutError, ConnectionError):
