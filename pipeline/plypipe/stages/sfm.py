@@ -26,8 +26,8 @@ def _pycolmap():
     try:
         import pycolmap  # noqa: F401
     except ImportError as e:  # pragma: no cover - needs the GPU env
-        raise RuntimeError("pycolmap is not installed. On a CUDA 12 machine: pip install 'pycolmap-cuda12==4.2.1' "
-                           "(CPU-only: pip install 'pycolmap==4.2.1').") from e
+        raise RuntimeError(f"pycolmap could not be imported ({type(e).__name__}: {e}). On a CUDA 12 machine: "
+                           "pip install 'pycolmap-cuda12==4.2.1' (CPU-only: pip install 'pycolmap==4.2.1').") from e
     return pycolmap
 
 
