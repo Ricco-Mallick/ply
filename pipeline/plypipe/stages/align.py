@@ -44,6 +44,8 @@ def run_stage(ctx: Ctx) -> dict:
     if out_sparse.exists():
         shutil.rmtree(out_sparse)
     colmap_txt.write_model(aligned, out_sparse)
+    # binary too: gsplat <= 1.5.x reads models via rmbrualla's pycolmap, whose text reader is broken on Python 3
+    colmap_txt.write_model_bin(aligned, out_sparse)
     img_link = ctx.data_dir / "images"
     if img_link.is_symlink() or img_link.exists():
         if img_link.is_symlink() or img_link.is_file():

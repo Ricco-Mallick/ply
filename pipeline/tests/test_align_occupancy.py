@@ -84,3 +84,23 @@ def test_occupancy_blocks_furniture_and_walls_frees_path(aligned):
     assert val(3.0 + 1.6, 2.0) == occupancy.FREE
     assert rep["blocked"] > 0 and rep["free"] > 0
     assert scene["occupancy"] == {"image": "occupancy.png", "meta": "occupancy.json"}
+
+
+def test_binary_model_matches_text(aligned):
+    """gsplat 1.5.x reads the classic COLMAP binary (its text reader is broken); counts and the first pose must match."""
+    import struct
+    out = aligned[0]
+    sp = out / "data" / "sparse" / "0"
+    m = colmap_txt.read_model(sp)
+    with (sp / "images.bin").open("rb") as f:
+        n = struct.unpack("<Q", f.read(8))[0]
+        image_id, *qt = struct.unpack("<I4d3d", f.read(4 + 7 * 8))
+    with (sp / "points3D.bin").open("rb") as f:
+        npts = struct.unpack("<Q", f.read(8))[0]
+    with (sp / "cameras.bin").open("rb") as f:
+        ncam, (cid, model_id, w, h) = struct.unpack("<Q", f.read(8))[0], struct.unpack("<iiQQ", f.read(24))
+    assert ncam == 1 and model_id == 1 and w > 0 and h > 0          # PINHOLE after undistortion
+    assert n > 0 and npts > 0
+    assert n == len(m.images) and npts == m.num_points
+    first = m.images[0]
+    assert image_id == first.image_id and np.allclose(qt[:4], first.qvec) and np.allclose(qt[4:], first.tvec)

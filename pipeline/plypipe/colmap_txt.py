@@ -131,6 +131,48 @@ def write_model(model: Model, d: str | Path) -> None:
             f.write(f"{pid} {p[0]:.9g} {p[1]:.9g} {p[2]:.9g} {tail}\n")
 
 
+CAMERA_MODEL_IDS = {"SIMPLE_PINHOLE": 0, "PINHOLE": 1, "SIMPLE_RADIAL": 2, "RADIAL": 3, "OPENCV": 4, "OPENCV_FISHEYE": 5,
+                    "FULL_OPENCV": 6, "FOV": 7, "SIMPLE_RADIAL_FISHEYE": 8, "RADIAL_FISHEYE": 9, "THIN_PRISM_FISHEYE": 10}
+
+
+def write_model_bin(model: Model, d: str | Path) -> None:
+    """The same model in COLMAP's classic binary layout (cameras.bin, images.bin, points3D.bin).
+
+    gsplat <= 1.5.x loads models through rmbrualla's pycolmap, whose text reader is broken on Python 3 but whose
+    binary reader works; it prefers .bin when present.
+    """
+    import struct
+
+    d = Path(d)
+    d.mkdir(parents=True, exist_ok=True)
+    cams = [ln.split() for ln in model.cameras_lines if ln.strip() and not ln.startswith("#")]
+    with (d / "cameras.bin").open("wb") as f:
+        f.write(struct.pack("<Q", len(cams)))
+        for c in cams:
+            params = [float(x) for x in c[4:]]
+            f.write(struct.pack("<iiQQ", int(c[0]), CAMERA_MODEL_IDS[c[1]], int(c[2]), int(c[3])))
+            f.write(struct.pack(f"<{len(params)}d", *params))
+    with (d / "images.bin").open("wb") as f:
+        f.write(struct.pack("<Q", len(model.images)))
+        for im in model.images:
+            vals = im.points2d_line.split()
+            pts = [(float(vals[i]), float(vals[i + 1]), int(vals[i + 2])) for i in range(0, len(vals) - 2, 3)]
+            f.write(struct.pack("<I4d3dI", im.image_id, *map(float, im.qvec), *map(float, im.tvec), im.camera_id))
+            f.write(im.name.encode() + b"\x00")
+            f.write(struct.pack("<Q", len(pts)))
+            for x, y, pid in pts:
+                f.write(struct.pack("<ddq", x, y, pid))
+    with (d / "points3D.bin").open("wb") as f:
+        f.write(struct.pack("<Q", model.num_points))
+        for pid, p, tail in zip(model.point_ids, model.xyz, model.point_tails):
+            t = tail.split()
+            track = [(int(t[i]), int(t[i + 1])) for i in range(4, len(t) - 1, 2)]
+            f.write(struct.pack("<Q3d3Bd", int(pid), *map(float, p), int(t[0]), int(t[1]), int(t[2]), float(t[3])))
+            f.write(struct.pack("<Q", len(track)))
+            for img, idx in track:
+                f.write(struct.pack("<ii", img, idx))
+
+
 def transformed(model: Model, T: np.ndarray) -> Model:
     """Return a copy of the model with the world mapped by the similarity T."""
     images = []
