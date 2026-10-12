@@ -41,7 +41,8 @@ def run_stage(ctx: Ctx) -> dict:
     if ctx.opt("antialiased"):
         cmd.append("--antialiased")
     pkg_root = Path(__file__).resolve().parents[2]
-    env = {"PYTHONPATH": os.pathsep.join([str(pkg_root), os.environ.get("PYTHONPATH", "")])}
+    # MPLBACKEND: notebooks (Kaggle) export an inline backend that a separate training venv can't load
+    env = {"PYTHONPATH": os.pathsep.join([str(pkg_root), os.environ.get("PYTHONPATH", "")]), "MPLBACKEND": "Agg"}
     run(cmd, ctx, "train", env=env, progress_every=50)
     plys = sorted((result / "ply").glob("point_cloud_*.ply"), key=lambda p: int(p.stem.rsplit("_", 1)[1]))
     if not plys:
