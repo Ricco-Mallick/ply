@@ -1,0 +1,13 @@
+node_modules/
+dist/
+.DS_Store
+*.log
+.env
+.env.*
+__pycache__/
+*.pyc
+.venv/
+work/
+*.spz
+*.ply
+!pipeline/tests/data/*.ply

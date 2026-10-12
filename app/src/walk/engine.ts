@@ -1,0 +1,126 @@
+/* Walkthrough engine: three.js + Spark splat renderer, a walk/fly controller with WASD, mouse look, touch joystick,
+   and collision against the pipeline's occupancy grid. The React HUD reads `state` and calls the methods. */
+import * as THREE from 'three';
+import { SparkRenderer, SplatMesh } from '@sparkjsdev/spark';
+import { OccupancyGrid, type SceneManifest } from './scene';
+import { glassFrame, setGlassSource } from '../shared/glass';
+
+export type Mode = 'walk' | 'fly';
+export interface EngineState { progress: number; loaded: boolean; error: string | null; mode: Mode; locked: boolean; moved: boolean; pos: THREE.Vector3; yaw: number; speed: number; }
+
+const RADIUS = .22, WALK = 1.4, RUN = 2.6, FLY = 2.2;
+const RM = matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+export class WalkEngine {
+  renderer: THREE.WebGLRenderer; scene = new THREE.Scene(); camera: THREE.PerspectiveCamera; spark: SparkRenderer; splat: SplatMesh | null = null;
+  grid: OccupancyGrid | null = null; floorY = 0; eye = 1.55;
+  state: EngineState = { progress: 0, loaded: false, error: null, mode: 'walk', locked: false, moved: false, pos: new THREE.Vector3(), yaw: 0, speed: 1 };
+  pitch = 0; vel = new THREE.Vector3(); keys = new Set<string>(); joy = { x: 0, y: 0 }; bob = 0; flyUp = 0;
+  listeners = new Set<() => void>(); raf = 0; last = performance.now(); drag: { x: number; y: number; id: number } | null = null;
+
+  constructor(public canvas: HTMLCanvasElement) {
+    this.renderer = new THREE.WebGLRenderer({ canvas, antialias: false, powerPreference: 'high-performance' });
+    this.renderer.setPixelRatio(Math.min(devicePixelRatio, 1.5)); this.renderer.setSize(innerWidth, innerHeight, false);
+    this.scene.background = new THREE.Color('#070B14');
+    this.camera = new THREE.PerspectiveCamera(70, innerWidth / innerHeight, .03, 500); this.camera.rotation.order = 'YXZ';
+    this.spark = new SparkRenderer({ renderer: this.renderer }); this.scene.add(this.spark);
+    setGlassSource(canvas);
+    this.bind(); this.loop();
+  }
+
+  on(fn: () => void) { this.listeners.add(fn); return () => { this.listeners.delete(fn); }; }
+  emit() { this.listeners.forEach(f => f()); }
+
+  async load(m: SceneManifest, base: URL) {
+    this.floorY = m.floorY ?? 0; this.eye = m.eyeHeight ?? 1.55;
+    const p = m.start?.position ?? [0, 0, 0]; this.state.pos.set(p[0], this.floorY, p[2]); this.state.yaw = m.start?.yaw ?? 0;
+    if (m.occupancy) { try { this.grid = (await OccupancyGrid.load(base, m.occupancy)).grid; } catch { this.grid = null; } }
+    const url = new URL(m.splat, base).href;
+    this.splat = new SplatMesh({ url, lod: true, onProgress: (e: ProgressEvent) => { if (e.lengthComputable) { this.state.progress = e.loaded / e.total; this.emit(); } } });
+    if (m.splatQuaternion) this.splat.quaternion.set(...m.splatQuaternion);
+    if (m.splatPosition) this.splat.position.set(...m.splatPosition);
+    this.scene.add(this.splat);
+    try { await this.splat.initialized; this.state.loaded = true; this.state.progress = 1; } catch (e) { this.state.error = (e as Error).message || 'The scene failed to load'; this.emit(); return; }
+    if (!this.grid || m.floorY === undefined) this.deriveFromSplat(m);
+    if (this.grid && !this.grid.clear(this.state.pos.x, this.state.pos.z, RADIUS)) this.unstick();
+    this.emit();
+  }
+
+  /** No grid or no floor in the manifest: work them out from the splat centres (world space). */
+  deriveFromSplat(m: SceneManifest) {
+    const sp = this.splat!; sp.updateMatrixWorld(true); const v = new THREE.Vector3(), pts: number[] = [];
+    // with LOD on, Spark keeps the splats in the LOD tree, not the mesh's packed array
+    const src: { numSplats: number; forEachSplat: SplatMesh['forEachSplat'] } = (sp as any).splats?.lodSplats?.numSplats ? (sp as any).splats.lodSplats : sp;
+    src.forEachSplat((_i, c, _s, _q, o) => { if (o > .25) { v.copy(c).applyMatrix4(sp.matrixWorld); pts.push(v.x, v.y, v.z); } });
+    if (!pts.length) return;
+    const arr = new Float32Array(pts);
+    if (m.floorY === undefined) { this.floorY = OccupancyGrid.estimateFloor(arr); this.state.pos.y = this.floorY; }
+    if (!this.grid) this.grid = OccupancyGrid.fromPoints(arr, this.floorY);
+  }
+  setMode(mode: Mode) {
+    this.state.mode = mode;
+    if (mode === 'walk') { this.state.pos.y = this.floorY; if (this.grid && !this.grid.clear(this.state.pos.x, this.state.pos.z, RADIUS)) this.unstick(); }
+    else this.state.pos.y = this.floorY + Math.max(0, this.camera.position.y - this.floorY - this.eye);
+    this.emit();
+  }
+  /** Nearest free cell, if a mode switch or a bad start put us inside a wall. */
+  unstick() {
+    const g = this.grid!, p = this.state.pos;
+    for (let r = .1; r < 6; r += .1) for (let k = 0; k < 16; k++) { const a = k * Math.PI / 8, x = p.x + Math.cos(a) * r, z = p.z + Math.sin(a) * r; if (g.clear(x, z, RADIUS)) { p.x = x; p.z = z; return; } }
+  }
+  lock() { if (matchMedia('(pointer: fine)').matches) this.canvas.requestPointerLock?.(); }
+
+  bind() {
+    const kd = (e: KeyboardEvent) => {
+      if ((e.target as HTMLElement)?.closest?.('input,textarea')) return;
+      const k = e.code; this.keys.add(k);
+      if (k === 'KeyF') this.setMode(this.state.mode === 'walk' ? 'fly' : 'walk');
+      if (['Space', 'ArrowUp', 'ArrowDown'].includes(k)) e.preventDefault();
+    };
+    const ku = (e: KeyboardEvent) => this.keys.delete(e.code);
+    addEventListener('keydown', kd); addEventListener('keyup', ku); addEventListener('blur', () => this.keys.clear());
+    document.addEventListener('pointerlockchange', () => { this.state.locked = document.pointerLockElement === this.canvas; this.emit(); });
+    addEventListener('mousemove', e => { if (this.state.locked) this.look(e.movementX, e.movementY, .0022); });
+    // drag to look when the pointer is not locked (trackpads, touch on the right half)
+    this.canvas.addEventListener('pointerdown', e => { if (this.state.locked) return; if (e.pointerType === 'touch' && e.clientX < innerWidth * .45) return; this.drag = { x: e.clientX, y: e.clientY, id: e.pointerId }; this.canvas.setPointerCapture(e.pointerId); });
+    this.canvas.addEventListener('pointermove', e => { if (!this.drag || e.pointerId !== this.drag.id) return; this.look(e.clientX - this.drag.x, e.clientY - this.drag.y, e.pointerType === 'touch' ? .005 : .004); this.drag.x = e.clientX; this.drag.y = e.clientY; });
+    const end = (e: PointerEvent) => { if (this.drag && e.pointerId === this.drag.id) this.drag = null; };
+    this.canvas.addEventListener('pointerup', end); this.canvas.addEventListener('pointercancel', end);
+    this.canvas.addEventListener('wheel', e => { e.preventDefault(); this.state.speed = Math.min(4, Math.max(.25, this.state.speed * (e.deltaY < 0 ? 1.12 : 1 / 1.12))); this.emit(); }, { passive: false });
+    addEventListener('resize', () => { this.renderer.setSize(innerWidth, innerHeight, false); this.camera.aspect = innerWidth / innerHeight; this.camera.updateProjectionMatrix(); });
+  }
+  look(dx: number, dy: number, s: number) { this.state.yaw -= dx * s; this.pitch = Math.max(-1.45, Math.min(1.45, this.pitch - dy * s)); this.touched(); }
+  touched() { if (!this.state.moved) { this.state.moved = true; this.emit(); } }
+
+  step(dt: number) {
+    const k = this.keys, s = this.state;
+    const f = (k.has('KeyW') || k.has('ArrowUp') ? 1 : 0) - (k.has('KeyS') || k.has('ArrowDown') ? 1 : 0) - this.joy.y;
+    const r = (k.has('KeyD') || k.has('ArrowRight') ? 1 : 0) - (k.has('KeyA') || k.has('ArrowLeft') ? 1 : 0) + this.joy.x;
+    const run = k.has('ShiftLeft') || k.has('ShiftRight');
+    const up = s.mode === 'fly' ? (k.has('Space') || k.has('KeyE') ? 1 : 0) - (k.has('KeyC') || k.has('KeyQ') ? 1 : 0) : 0;
+    const base = (s.mode === 'walk' ? (run ? RUN : WALK) : FLY * (run ? 2.2 : 1)) * s.speed;
+    // move relative to where we look (fly follows pitch; walk stays on the floor)
+    const fw = new THREE.Vector3(-Math.sin(s.yaw), 0, -Math.cos(s.yaw)), rt = new THREE.Vector3(Math.cos(s.yaw), 0, -Math.sin(s.yaw));
+    if (s.mode === 'fly') fw.set(-Math.sin(s.yaw) * Math.cos(this.pitch), Math.sin(this.pitch), -Math.cos(s.yaw) * Math.cos(this.pitch));
+    const want = fw.multiplyScalar(f).add(rt.multiplyScalar(r)); if (want.lengthSq() > 1) want.normalize(); want.multiplyScalar(base); want.y += up * base;
+    if (f || r || up) this.touched();
+    const a = 1 - Math.exp(-dt * (want.lengthSq() > 0 ? 10 : 7)); this.vel.lerp(want, a);
+    const p = s.pos, dx = this.vel.x * dt, dz = this.vel.z * dt;
+    if (s.mode === 'walk' && this.grid) { // axis-separated so we slide along walls
+      if (this.grid.clear(p.x + dx, p.z, RADIUS)) p.x += dx; else this.vel.x = 0;
+      if (this.grid.clear(p.x, p.z + dz, RADIUS)) p.z += dz; else this.vel.z = 0;
+    } else { p.x += dx; p.z += dz; }
+    if (s.mode === 'fly') p.y += this.vel.y * dt; else p.y = this.floorY;
+    const spd = Math.hypot(this.vel.x, this.vel.z); this.bob += spd * dt * 6.5;
+    const bobY = s.mode === 'walk' && !RM ? Math.sin(this.bob) * .018 * Math.min(1, spd / WALK) : 0;
+    this.camera.position.set(p.x, (s.mode === 'walk' ? this.floorY + this.eye : p.y + this.eye) + bobY, p.z);
+    this.camera.rotation.set(this.pitch, s.yaw, 0);
+  }
+
+  loop = () => {
+    this.raf = requestAnimationFrame(this.loop); const now = performance.now(), dt = Math.min(.05, (now - this.last) / 1000); this.last = now;
+    if (document.hidden) return;
+    this.step(dt); this.renderer.render(this.scene, this.camera); glassFrame(dt);
+  };
+  dispose() { cancelAnimationFrame(this.raf); this.splat?.dispose(); this.renderer.dispose(); }
+}

@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>Ply · Walk a building once. Navigate it forever.</title>
+  <meta name="description" content="One phone walkthrough becomes a photoreal 3D twin with searchable rooms and walking directions around real obstacles.">
+  <meta name="theme-color" content="#070B14">
+</head>
+<body>
+<canvas id="gl" aria-label="Ply story film: capture, reconstruct, twin, explore, label, navigate, arrive"></canvas>
+
+<header><div class="logo" id="logo"><span class="mark" aria-hidden="true"></span>PLY</div>
+  <button class="audio mono lg" id="audio" aria-pressed="false"><span class="eq" aria-hidden="true"><b></b><b></b><b></b><b></b></span><span id="audio-l">Audio</span></button></header>
+
+<div class="hero" id="hero"><div>
+  <h1 id="title" aria-label="Walk a building once. Navigate it forever."></h1>
+  <p>One phone walkthrough becomes a photoreal 3D twin with searchable rooms and walking directions around real obstacles.</p>
+  <div class="cta-wrap"><button class="cta" id="cta" aria-label="Initiate capture"><i></i><i></i><i></i><i></i><span id="cta-l"></span></button></div>
+  <div class="sub-gate"><div class="mono" style="display:flex;gap:8px;align-items:center"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M3 14v-2a9 9 0 0 1 18 0v2"/><rect x="3" y="14" width="4" height="7" rx="1.5"/><rect x="17" y="14" width="4" height="7" rx="1.5"/></svg>Experience with headphones</div>
+    <button class="quiet" id="silent">Enter without sound</button></div>
+</div></div>
+
+<section class="chap" data-w="0.015,0.125"><div class="mono"><span class="idx">01</span> / Capture</div><h2 data-t="Walk it once"></h2><p>Every frame you keep becomes a camera in space. Ply coaches you live until every wall, corner and doorway is covered.</p></section>
+<section class="chap" data-w="0.145,0.255"><div class="mono"><span class="idx">02</span> / Reconstruct</div><h2 data-t="Photons to splats"></h2><p>Cameras are solved, then millions of gaussians are trained to reproduce what the phone saw. Exposure flicker is corrected on the way.</p></section>
+<section class="chap" data-w="0.295,0.435"><div class="mono"><span class="idx">03</span> / Twin</div><h2 data-t="The blueprint, replaced"></h2><p>Floors are levelled, walls found and the walkable area extracted. Every distance is in real metres.</p></section>
+<section class="chap" data-w="0.445,0.535"><div class="mono"><span class="idx">04</span> / Explore</div><h2 data-t="Drag to look around"></h2><p>This is the room, not a render. Walk it in the browser with WASD. No install.</p></section>
+<section class="chap" data-w="0.575,0.695"><div class="mono"><span class="idx">05</span> / Label</div><h2 data-t="It knows the room"></h2><p>AI finds rooms, doors and objects and reads the signs on the doors. People confirm, the twin learns the place.</p></section>
+<section class="chap" data-w="0.705,0.825"><div class="mono"><span class="idx">06</span> / Navigate</div><h2 data-t="Around everything"></h2><p>Search any room or object. The route stays on the floor and bends around tables, seats and walls.</p></section>
+<section class="chap" data-w="0.835,0.915"><div class="mono"><span class="idx">07</span> / Arrive</div><h2 data-t="Then walk it for real"></h2><p>Scan the marker at the entrance. Arrows appear on the real floor and update as you walk.</p></section>
+
+<div class="hud lg" id="hud" aria-hidden="true"><div id="hudtx"></div></div>
+<div id="anchors" aria-hidden="true"></div>
+<div class="search lg" id="search" aria-hidden="true"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg><span id="q"></span><span class="caret"></span><kbd>⌘K</kbd></div>
+
+<div class="dimblur" id="dimblur"></div><div class="band t" id="bt"></div><div class="band b" id="bb"></div>
+<div class="ending"><div class="eline" id="e1">This floor <b>was mapped in 24 minutes.</b></div><div class="eline" id="e2">From one walk <b>with one phone.</b></div>
+  <div class="final" id="final"><div class="big">PLY</div><div class="line2">Now <b>map your own.</b></div><div class="row"><a class="btn" href="./capture.html">Start a capture</a><a class="btn ghost lg" href="./walk.html">Explore the demo space</a></div><div class="mono" style="color:var(--muted)">[ Team Ply · Namma Space · Techfest 2026 ]</div></div></div>
+<button class="replay" id="replay">Replay experience</button>
+
+<div class="icap" id="icap" aria-live="polite"><span class="dot"></span><span id="icap-t"></span></div>
+<div class="cue" id="cue" aria-hidden="true"><span>Scroll to walk through</span><i></i></div>
+<div class="crops" aria-hidden="true"><i></i><i></i><i></i><i></i></div>
+<div class="foot mono" id="foot"><span id="readout">000 · Capture</span><span class="coords">19.1334° N · 72.9133° E · LHC · Floor 01</span></div>
+<div class="pline" id="pline"><i id="pbar"></i></div>
+
+<div class="loader" id="loader"><div class="lband t"></div><div class="lband b"></div><div class="lword" id="lword"><span>P</span><span>L</span><span>Y</span></div><div class="lpct" id="lpct">0%</div></div>
+<div class="cursor" id="cursor" aria-hidden="true"><span class="dot"></span><span class="orb" id="orb"><svg viewBox="0 0 120 120"><circle cx="60" cy="60" r="58" fill="none" stroke="rgba(255,255,255,.85)" stroke-width="1.5" stroke-dasharray="136.6 45.5"/></svg></span><span class="hint" id="hint"></span></div>
+<div class="err" id="err"><div><div class="mono" style="color:var(--accent)">WebGL unavailable</div><p>This concept needs WebGL 2. Open it in a recent Chrome, Edge, Firefox or Safari.</p></div></div>
+<p class="sr">Scroll, swipe, or use the arrow keys to move through the story.</p>
+<script type="module" src="/src/landing/landing.js"></script>
+</body>
+</html>

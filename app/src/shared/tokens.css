@@ -1,0 +1,41 @@
+/* Ply design tokens, shared by the landing, the walkthrough and the capture guide.
+   Palette: Blueprint (navy + Ply orange). Type: Instrument Serif headlines, Unbounded brand/eyebrows/buttons,
+   Manrope body, Space Mono data. Glass: port of the portfolio's liquid glass (see glass.ts). */
+@import url('https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=Unbounded:wght@300..700&family=Manrope:wght@400..800&family=Space+Mono:wght@400;700&display=swap');
+
+:root {
+  color-scheme: dark;
+  --bg: #070B14; --ink: #0B1220; --fg: #F3F4F6; --muted: #B4BCCB; --dim: #8590A3; --body: #E2E5EA;
+  --line: rgba(237, 239, 242, .14); --line-2: rgba(237, 239, 242, .4);
+  --accent: #FF6B00; --amber: #FFB84D; --glow: #FFD973;
+  --font-display: "Instrument Serif", Georgia, serif; --font-body: "Manrope", system-ui, sans-serif;
+  --font-mono: "Space Mono", ui-monospace, monospace; --font-wide: "Unbounded", system-ui, sans-serif;
+  --ease-out: cubic-bezier(.16, 1, .3, 1); --ease-io: cubic-bezier(.65, 0, .35, 1);
+  --lg-tint: rgba(10, 14, 20, .14); --lg-blur: 14px; --lg-edge: rgba(255, 255, 255, .16);
+}
+html, body { height: 100%; }
+body { margin: 0; background: var(--bg); color: var(--fg); font: 400 15px/1.6 var(--font-body); -webkit-font-smoothing: antialiased; }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+.mono { font-family: var(--font-mono); font-size: 11.5px; letter-spacing: .06em; text-transform: uppercase; }
+.wide { font-family: var(--font-wide); font-size: 10px; letter-spacing: .2em; text-transform: uppercase; }
+.sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
+
+/* ---- liquid glass ----
+   CSS layer = the fallback (and the only layer on phones); .glass-gl = WebGL refraction drawn over it on desktop;
+   .glass-spec = light that follows the pointer; .glass-rim = hairline lit on the side facing the light. */
+.lg { position: relative; isolation: isolate; overflow: hidden;
+  background: linear-gradient(180deg, rgba(8, 11, 16, 0) 0%, rgba(8, 11, 16, .12) 100%), var(--lg-tint);
+  backdrop-filter: blur(var(--lg-blur)) saturate(1.6) brightness(.94); -webkit-backdrop-filter: blur(var(--lg-blur)) saturate(1.6) brightness(.94);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .28), inset 0 -18px 36px -18px rgba(255, 255, 255, .14), 0 30px 80px -20px rgba(0, 0, 0, .6);
+  border: 1px solid var(--lg-edge); }
+.lg.has-gl { background: linear-gradient(180deg, rgba(8, 11, 16, 0) 0%, rgba(8, 11, 16, .08) 100%); backdrop-filter: blur(5px) saturate(1.5); -webkit-backdrop-filter: blur(5px) saturate(1.5); }
+.lg > .glass-gl { position: absolute; inset: 0; width: 100%; height: 100%; display: block; z-index: 0; pointer-events: none; }
+.lg > .glass-spec { position: absolute; inset: 0; z-index: 0; pointer-events: none; border-radius: inherit;
+  background: radial-gradient(ellipse 62% 78% at calc(var(--gx, .5) * 100%) calc(var(--gy, .4) * 100%), rgba(255, 255, 255, calc(.04 + .17 * var(--gh, 0))) 0%, rgba(255, 255, 255, calc(.015 + .05 * var(--gh, 0))) 38%, rgba(255, 255, 255, 0) 100%); }
+.lg > .glass-rim { position: absolute; inset: 0; z-index: 0; pointer-events: none; border-radius: inherit; padding: 1.5px; opacity: var(--gr, .5);
+  background: conic-gradient(from calc(var(--la, -135) * 1deg - 60deg), rgba(255, 255, 255, 0) 0deg, rgba(255, 255, 255, .9) 60deg, rgba(255, 255, 255, 0) 120deg, rgba(255, 255, 255, 0) 200deg, rgba(255, 255, 255, .32) 240deg, rgba(255, 255, 255, 0) 280deg, rgba(255, 255, 255, 0) 360deg);
+  -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0); -webkit-mask-composite: xor; mask: linear-gradient(#000 0 0) content-box exclude, linear-gradient(#000 0 0); }
+.lg > :not(.glass-gl):not(.glass-spec):not(.glass-rim) { position: relative; z-index: 1; }
+@media (prefers-reduced-transparency: reduce) { .lg, .lg.has-gl { background: rgba(10, 14, 20, .8); backdrop-filter: none; -webkit-backdrop-filter: none; } .lg > .glass-gl { display: none; } }
+@media (prefers-contrast: more) { .lg, .lg.has-gl { background: rgba(10, 14, 20, .6); border-color: rgba(255, 255, 255, .5); } }
+@media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation-duration: .001ms !important; transition-duration: .001ms !important; } }
