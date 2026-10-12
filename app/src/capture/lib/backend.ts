@@ -1,5 +1,5 @@
 /* Getting a capture to the processing pipeline (cloud/src/index.ts is the other side).
-   With VITE_API set, clips go to R2 as resumable multipart uploads through the Ply API worker and a job is queued for
+   With VITE_API set, clips go straight to the bucket as resumable multipart uploads (the Ply API signs each part) and a job is queued for
    the GPU worker. The team key gates writes; it is entered once and kept on the device (or arrives as ?key=).
    Without VITE_API the app says so plainly and packages everything for the phone instead. */
 import type { Capture } from './store';
@@ -45,7 +45,7 @@ export function captureJson(c: Capture, s: Settings) {
       sensorFields: ['tMs', 'headingDeg', 'pitchDeg', 'rollDeg', 'turnDegPerS', 'accelMS2'], path: k.path })) }, null, 1);
 }
 
-const PART = 16 * 1024 * 1024; // R2 wants ≥5 MB parts; 16 MB keeps a worker request well under its body limit
+const PART = 16 * 1024 * 1024; // S3 wants ≥5 MB parts; 16 MB keeps a dropped part cheap to redo on a phone connection
 interface UpState { key: string; uploadId: string; parts: { partNumber: number; etag: string }[]; done?: boolean; }
 const upKey = (clipId: string) => `ply-up-${clipId}`;
 const loadUp = (id: string): UpState | null => { try { return JSON.parse(localStorage.getItem(upKey(id)) || 'null'); } catch { return null; } };
@@ -65,6 +65,18 @@ async function call(path: string, init: RequestInit, signal: AbortSignal, tries 
   }
 }
 
+/** One part straight to storage; the bucket's ETag header is what completing the upload needs. */
+async function putPart(url: string, body: Blob, signal: AbortSignal) {
+  for (let i = 0; ; i++) {
+    try {
+      const r = await fetch(url, { method: 'PUT', body, signal });
+      if (!r.ok) throw new Error(`storage said ${r.status}`);
+      const etag = r.headers.get('etag'); if (!etag) throw Object.assign(new Error('storage hid the part ETag (bucket CORS must expose ETag)'), { fatal: true });
+      return etag;
+    } catch (e) { if (signal.aborted || (e as any).fatal || i >= 5) throw e; await new Promise(res => setTimeout(res, [800, 2000, 5000, 10000, 20000][i])); }
+  }
+}
+
 /** Upload every clip (resuming finished parts), then capture.json, then queue the job. */
 export async function upload(c: Capture, s: Settings, onProgress: (done: number, total: number, label: string) => void, signal: AbortSignal) {
   if (!backendReady) throw new Error('No processing server is connected yet');
@@ -76,11 +88,17 @@ export async function upload(c: Capture, s: Settings, onProgress: (done: number,
     if (!st?.done) {
       if (!st) { const r = await call('/v1/uploads', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ captureId: c.id, name: k.name, type: k.mime }) }, signal); st = { ...r, parts: [] }; saveUp(k.id, st!); }
       const n = Math.max(1, Math.ceil(blob.size / PART));
-      for (let p = 1; p <= n; p++) {
-        if (st!.parts.some(x => x.partNumber === p)) { onProgress(before + Math.min(blob.size, p * PART), total, k.name); continue; }
-        const body = blob.slice((p - 1) * PART, Math.min(blob.size, p * PART));
-        const r = await call(`/v1/uploads/part?key=${encodeURIComponent(st!.key)}&uploadId=${encodeURIComponent(st!.uploadId)}&part=${p}`, { method: 'PUT', body }, signal);
-        st!.parts.push(r); saveUp(k.id, st!); onProgress(before + Math.min(blob.size, p * PART), total, k.name);
+      const todo = Array.from({ length: n }, (_, i) => i + 1).filter(p => !st!.parts.some(x => x.partNumber === p));
+      let done = blob.size - todo.reduce((a, p) => a + Math.min(PART, blob.size - (p - 1) * PART), 0); onProgress(before + done, total, k.name);
+      // signed links come in batches (they expire after a few hours, so a resumed upload asks for fresh ones)
+      for (let i = 0; i < todo.length; i += 20) {
+        const batch = todo.slice(i, i + 20);
+        const { urls } = await call('/v1/uploads/sign', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ key: st!.key, uploadId: st!.uploadId, parts: batch }) }, signal);
+        for (const p of batch) {
+          const body = blob.slice((p - 1) * PART, Math.min(blob.size, p * PART));
+          const etag = await putPart(urls[p], body, signal);
+          st!.parts.push({ partNumber: p, etag }); saveUp(k.id, st!); done += body.size; onProgress(before + done, total, k.name);
+        }
       }
       await call('/v1/uploads/complete', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ key: st!.key, uploadId: st!.uploadId, parts: st!.parts.sort((a, b) => a.partNumber - b.partNumber) }) }, signal);
       st!.done = true; saveUp(k.id, st!);

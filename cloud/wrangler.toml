@@ -2,18 +2,17 @@ name = "ply-api"
 main = "src/index.ts"
 compatibility_date = "2026-09-01"
 
-# R2: captures/<captureId>/<clip> (private) and scenes/<jobId>/<file> (public, read by the viewer)
-[[r2_buckets]]
-binding = "BUCKET"
-bucket_name = "ply-data"
-
 [[d1_databases]]
 binding = "DB"
 database_name = "ply-jobs"
 database_id = "7ff84f46-d1c4-41be-bb91-2a2224ba02f1"
 
 [vars]
+# S3-compatible bucket (Backblaze B2): captures/<captureId>/<clip> and scenes/<jobId>/<file>; filled in by deploy.sh
+S3_ENDPOINT = "https://s3.us-west-004.backblazeb2.com"
+S3_REGION = "us-west-004"
+S3_BUCKET = "ply-data"
 # origins allowed to call the write endpoints from a browser
 ALLOWED_ORIGINS = "https://ricco.codes,http://localhost:5199,https://localhost:5199"
 
-# secrets (wrangler secret put): APP_KEY (capture app uploads/jobs), WORKER_TOKEN (GPU worker)
+# secrets (wrangler secret put): APP_KEY (capture app uploads/jobs), WORKER_TOKEN (GPU worker), S3_KEY_ID, S3_SECRET

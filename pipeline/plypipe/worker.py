@@ -58,11 +58,18 @@ class Api:
             time.sleep([1, 3, 8, 20, 40][min(i, 4)])
 
     def download(self, key: str, dest: Path):
+        """The API hands out a signed link; the bytes come straight from the bucket (no auth header on that request)."""
         dest.parent.mkdir(parents=True, exist_ok=True)
-        q = urllib.parse.urlencode({"key": key})
-        r = urllib.request.Request(f"{self.base}/v1/worker/file?{q}", headers={"authorization": f"Bearer {self.token}"})
-        with urllib.request.urlopen(r, timeout=600) as resp, dest.open("wb") as f:
-            shutil.copyfileobj(resp, f, 8 * 1024 * 1024)
+        _, info = self.req("GET", "/v1/worker/file?" + urllib.parse.urlencode({"key": key}))
+        for i in range(4):
+            try:
+                with urllib.request.urlopen(info["url"], timeout=600) as resp, dest.open("wb") as f:
+                    shutil.copyfileobj(resp, f, 8 * 1024 * 1024)
+                return
+            except (urllib.error.URLError, TimeoutError, ConnectionError):
+                if i == 3:
+                    raise
+                time.sleep(3 * (i + 1))
 
     def upload(self, key: str, path: Path, ctype: str):
         size = path.stat().st_size
@@ -70,13 +77,21 @@ class Api:
             self.req("PUT", "/v1/files?" + urllib.parse.urlencode({"key": key}), path.read_bytes(), ctype)
             return
         _, up = self.req("POST", "/v1/uploads", {"key": key, "type": ctype})
+        n = -(-size // PART)
+        _, signed = self.req("POST", "/v1/uploads/sign", {"key": up["key"], "uploadId": up["uploadId"], "parts": list(range(1, n + 1))})
         parts = []
         with path.open("rb") as f:
-            n = 1
-            while chunk := f.read(PART):
-                q = urllib.parse.urlencode({"key": up["key"], "uploadId": up["uploadId"], "part": n})
-                parts.append(self.req("PUT", f"/v1/uploads/part?{q}", chunk, "application/octet-stream")[1])
-                n += 1
+            for i in range(1, n + 1):
+                chunk = f.read(PART)
+                for t in range(5):  # straight to the bucket; keep its ETag for the complete call
+                    try:
+                        with urllib.request.urlopen(urllib.request.Request(signed["urls"][str(i)], data=chunk, method="PUT"), timeout=600) as r:
+                            parts.append({"partNumber": i, "etag": r.headers["ETag"]})
+                        break
+                    except (urllib.error.URLError, TimeoutError, ConnectionError):
+                        if t == 4:
+                            raise
+                        time.sleep(3 * (t + 1))
         self.req("POST", "/v1/uploads/complete", {"key": up["key"], "uploadId": up["uploadId"], "parts": parts})
 
 

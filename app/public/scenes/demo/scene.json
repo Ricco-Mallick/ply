@@ -1,37 +1,12 @@
 {
   "name": "Demo room",
-  "note": "Stand-in until our pipeline produces a real capture. Public sample splat (painted bedroom, World Labs / Spark examples).",
-  "splat": "https://storage.googleapis.com/forge-dev-public/painted_bedroom.spz",
+  "note": "Captured with Aholo (Z-up, rotated to Y-up here); stand-in until our own pipeline output.",
+  "splat": "https://holo-cos.aholo3d.cn/3dgs/2026/8/27/3dgs-common/3FO4F7LP8JKH/a6a051d09bba433d898d3524f3ae81c4_point_cloud_compressed.spz",
   "splatQuaternion": [
-    1,
+    -0.7071068,
     0,
     0,
-    0
+    0.7071068
   ],
-  "splatPosition": [
-    0,
-    0,
-    0
-  ],
-  "eyeHeight": 1.55,
-  "start": {
-    "position": [
-      0,
-      0,
-      -0.4
-    ],
-    "yaw": 0
-  },
-  "bounds": {
-    "min": [
-      -4,
-      -1.5,
-      -4
-    ],
-    "max": [
-      4,
-      3,
-      4
-    ]
-  }
+  "eyeHeight": 1.55
 }

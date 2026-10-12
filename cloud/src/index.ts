@@ -1,9 +1,11 @@
-/* Ply API: one Cloudflare Worker for uploads (R2 multipart, resumable), the job queue (D1) and serving results.
+/* Ply API: one Cloudflare Worker for uploads, the job queue (D1) and serving results.
+ * Storage is any S3-compatible bucket (Backblaze B2 by default: free 10 GB, no card). Bytes never pass through the
+ * Worker on the way in: it signs short-lived URLs and the phone / GPU worker PUT parts straight to the bucket.
  *
  *  Capture app (header X-Ply-Key: APP_KEY)
  *    POST /v1/uploads            {captureId, name, type}        -> {key, uploadId}       start a multipart upload
- *    PUT  /v1/uploads/part       ?key&uploadId&part=N  <bytes>   -> {partNumber, etag}
- *    POST /v1/uploads/complete   {key, uploadId, parts}          -> {key, size}
+ *    POST /v1/uploads/sign       {key, uploadId, parts:[N…]}     -> {urls: {N: url}}     PUT each part there; keep the ETag header
+ *    POST /v1/uploads/complete   {key, uploadId, parts}          -> {key}
  *    PUT  /v1/files              ?key  <bytes>  (≤ 50 MB)        -> {key}                capture.json and other small files
  *    POST /v1/jobs               {captureId, name, settings, args, files} -> {jobId}
  *  Anyone
@@ -12,11 +14,16 @@
  *  GPU worker (Authorization: Bearer WORKER_TOKEN)
  *    POST /v1/worker/claim       {worker}                        -> next job or 204       stale running jobs (no heartbeat 20 min) are re-queued
  *    POST /v1/worker/jobs/:id    {status?, stage?, progress?, message?, result?}          heartbeat + progress
- *    GET  /v1/worker/file        ?key                            -> the object (inputs)
+ *    GET  /v1/worker/file        ?key                            -> {url} signed download link (inputs)
  *    (and the upload routes above, which accept any key under scenes/<jobId>/ for results)
  */
 
-interface Env { BUCKET: any; DB: any; APP_KEY: string; WORKER_TOKEN: string; ALLOWED_ORIGINS: string; }
+import { completeMultipart, createMultipart, presign, signedFetch, type S3Conf } from './s3';
+
+interface Env { DB: any; APP_KEY: string; WORKER_TOKEN: string; ALLOWED_ORIGINS: string;
+  S3_ENDPOINT: string; S3_REGION: string; S3_BUCKET: string; S3_KEY_ID: string; S3_SECRET: string; }
+const s3 = (e: Env): S3Conf => ({ endpoint: e.S3_ENDPOINT, region: e.S3_REGION, bucket: e.S3_BUCKET, keyId: e.S3_KEY_ID, secret: e.S3_SECRET });
+const SIGN_TTL = 6 * 3600;
 
 const STALE_MS = 20 * 60 * 1000;
 const json = (data: unknown, status = 200, h: Record<string, string> = {}) => new Response(JSON.stringify(data), { status, headers: { 'content-type': 'application/json', ...h } });
@@ -74,27 +81,30 @@ async function route(req: Request, env: Env): Promise<Response> {
     const b = await req.json() as any;
     const key = r === 'app' ? `captures/${safeName(b.captureId)}/${safeName(b.name)}` : String(b.key ?? '');
     if (!keyAllowed(key, r)) return json({ error: 'key not allowed' }, 403);
-    const up = await env.BUCKET.createMultipartUpload(key, { httpMetadata: { contentType: b.type || 'application/octet-stream' } });
-    return json({ key, uploadId: up.uploadId });
+    const uploadId = await createMultipart(s3(env), key, b.type || 'application/octet-stream');
+    return json({ key, uploadId });
   }
-  if (p === '/v1/uploads/part' && req.method === 'PUT') {
-    const key = q.get('key') ?? '', uploadId = q.get('uploadId') ?? '', part = Number(q.get('part'));
-    if (!keyAllowed(key, r)) return json({ error: 'not allowed' }, r ? 403 : 401);
-    if (!(part >= 1 && part <= 10000) || !req.body) return json({ error: 'bad part' }, 400);
-    const done = await env.BUCKET.resumeMultipartUpload(key, uploadId).uploadPart(part, req.body);
-    return json({ partNumber: done.partNumber, etag: done.etag });
+  if (p === '/v1/uploads/sign' && req.method === 'POST') {
+    const b = await req.json() as any;
+    if (!keyAllowed(b.key, r)) return json({ error: 'not allowed' }, r ? 403 : 401);
+    const parts: number[] = (b.parts ?? []).map(Number).filter((n: number) => n >= 1 && n <= 10000).slice(0, 200);
+    const urls: Record<number, string> = {};
+    for (const n of parts) urls[n] = await presign(s3(env), 'PUT', b.key, { partNumber: String(n), uploadId: String(b.uploadId) }, SIGN_TTL);
+    return json({ urls });
   }
   if (p === '/v1/uploads/complete' && req.method === 'POST') {
     const b = await req.json() as any;
     if (!keyAllowed(b.key, r)) return json({ error: 'not allowed' }, r ? 403 : 401);
-    const obj = await env.BUCKET.resumeMultipartUpload(b.key, b.uploadId).complete(b.parts);
-    return json({ key: b.key, size: obj.size });
+    await completeMultipart(s3(env), b.key, String(b.uploadId), (b.parts ?? []).map((x: any) => ({ partNumber: Number(x.partNumber), etag: String(x.etag) })));
+    return json({ key: b.key });
   }
   if (p === '/v1/files' && req.method === 'PUT') {
     const key = q.get('key') ?? '';
     if (!keyAllowed(key, r)) return json({ error: 'not allowed' }, r ? 403 : 401);
-    if (Number(req.headers.get('content-length') ?? 0) > 50e6) return json({ error: 'too large: use a multipart upload' }, 413);
-    await env.BUCKET.put(key, req.body, { httpMetadata: { contentType: req.headers.get('content-type') ?? 'application/octet-stream' } });
+    const body = await req.arrayBuffer();
+    if (body.byteLength > 25e6) return json({ error: 'too large: use a multipart upload' }, 413);
+    const res = await signedFetch(s3(env), 'PUT', key, {}, body, { 'content-type': req.headers.get('content-type') ?? 'application/octet-stream' });
+    if (!res.ok) return json({ error: `storage refused the file (${res.status})` }, 502);
     return json({ key });
   }
 
@@ -132,20 +142,18 @@ async function route(req: Request, env: Env): Promise<Response> {
       await env.DB.prepare(`UPDATE jobs SET ${sets.join(',')} WHERE id=?`).bind(...vals, m[1]).run();
       return json({ ok: true });
     }
-    if (p === '/v1/worker/file' && req.method === 'GET') return serve(env, q.get('key') ?? '', req, 'no-store');
+    if (p === '/v1/worker/file' && req.method === 'GET') return json({ url: await presign(s3(env), 'GET', q.get('key') ?? '', {}, SIGN_TTL) });
   }
   return json({ error: 'not found' }, 404);
 }
 
-/** Stream an R2 object with Range support (the viewer and ffmpeg both seek). */
+/** Results for the viewer: fetched from the bucket with a signed URL and streamed through, Range passed along. */
 async function serve(env: Env, key: string, req: Request, cache: string) {
-  const range = req.headers.get('range'); let opts: any = {};
-  const mr = range?.match(/bytes=(\d*)-(\d*)/);
-  if (mr) { const s = mr[1] ? Number(mr[1]) : undefined, e = mr[2] ? Number(mr[2]) : undefined; opts.range = s !== undefined ? { offset: s, ...(e !== undefined ? { length: e - s + 1 } : {}) } : { suffix: e }; }
-  const obj = req.method === 'HEAD' ? await env.BUCKET.head(key) : await env.BUCKET.get(key, opts);
-  if (!obj) return json({ error: 'not found' }, 404);
-  const h = new Headers({ 'content-type': obj.httpMetadata?.contentType ?? 'application/octet-stream', 'cache-control': cache, 'accept-ranges': 'bytes', etag: obj.httpEtag });
-  if (req.method === 'HEAD') { h.set('content-length', String(obj.size)); return new Response(null, { headers: h }); }
-  if (opts.range && obj.range) { const off = obj.range.offset ?? (obj.size - obj.range.suffix), len = obj.range.length ?? (obj.size - off); h.set('content-range', `bytes ${off}-${off + len - 1}/${obj.size}`); h.set('content-length', String(len)); return new Response(obj.body, { status: 206, headers: h }); }
-  h.set('content-length', String(obj.size)); return new Response(obj.body, { headers: h });
+  const url = await presign(s3(env), req.method === 'HEAD' ? 'HEAD' : 'GET', key, {}, 600);
+  const range = req.headers.get('range');
+  const up = await fetch(url, { method: req.method, headers: range ? { range } : {} });
+  if (up.status === 404 || up.status === 403) return json({ error: 'not found' }, 404);
+  const h = new Headers({ 'cache-control': cache, 'accept-ranges': 'bytes' });
+  for (const k of ['content-type', 'content-length', 'content-range', 'etag', 'last-modified']) { const v = up.headers.get(k); if (v) h.set(k, v); }
+  return new Response(up.body, { status: up.status, headers: h });
 }

@@ -42,6 +42,8 @@ export class WalkEngine {
     this.scene.add(this.splat);
     try { await this.splat.initialized; this.state.loaded = true; this.state.progress = 1; } catch (e) { this.state.error = (e as Error).message || 'The scene failed to load'; this.emit(); return; }
     if (!this.grid || m.floorY === undefined) this.deriveFromSplat(m);
+    // no start in the manifest: begin in the middle of the walkable floor
+    if (!m.start && this.grid) this.openSpawn();
     if (this.grid && !this.grid.clear(this.state.pos.x, this.state.pos.z, RADIUS)) this.unstick();
     this.emit();
   }
@@ -56,6 +58,25 @@ export class WalkEngine {
     const arr = new Float32Array(pts);
     if (m.floorY === undefined) { this.floorY = OccupancyGrid.estimateFloor(arr); this.state.pos.y = this.floorY; }
     if (!this.grid) this.grid = OccupancyGrid.fromPoints(arr, this.floorY);
+  }
+  /** Spawn where the floor is most open (largest distance to any obstacle), facing the longest clear sightline. */
+  openSpawn() {
+    const g = this.grid!, { width: w, height: h, cell, origin } = g.meta, d = new Float32Array(w * h);
+    // two-pass chamfer distance transform over the blocked cells
+    for (let i = 0; i < w * h; i++) d[i] = g.data[i] ? 0 : 1e6;
+    const pass = (y0: number, y1: number, dy: number, x0: number, x1: number, dx: number) => {
+      for (let y = y0; y !== y1; y += dy) for (let x = x0; x !== x1; x += dx) {
+        const i = y * w + x; if (!d[i]) continue;
+        const nb = [[-dx, 0, 1], [0, -dy, 1], [-dx, -dy, 1.414], [dx, -dy, 1.414]];
+        for (const [ox, oy, c] of nb) { const X = x + ox, Y = y + oy; if (X >= 0 && Y >= 0 && X < w && Y < h) d[i] = Math.min(d[i], d[Y * w + X] + c); }
+      }
+    };
+    pass(0, h, 1, 0, w, 1); pass(h - 1, -1, -1, w - 1, -1, -1);
+    let best = -1, bi = 0; for (let i = 0; i < w * h; i++) if (d[i] < 1e6 && d[i] > best) { best = d[i]; bi = i; }
+    const x = origin[0] + (bi % w + .5) * cell, z = origin[1] + (Math.floor(bi / w) + .5) * cell;
+    let yaw = 0, far = 0;
+    for (let k = 0; k < 24; k++) { const a = k / 24 * Math.PI * 2, sx = -Math.sin(a), sz = -Math.cos(a); let r = 0; while (r < 30 && !g.blocked(x + sx * r, z + sz * r)) r += cell; if (r > far) { far = r; yaw = a; } }
+    this.state.pos.x = x; this.state.pos.z = z; this.state.yaw = yaw;
   }
   setMode(mode: Mode) {
     this.state.mode = mode;

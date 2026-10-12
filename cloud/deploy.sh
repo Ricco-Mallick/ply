@@ -1,12 +1,18 @@
 #!/usr/bin/env bash
 # One-shot setup of the Ply API (Cloudflare) + GPU worker (Kaggle). Safe to re-run.
-# Needs: `npx wrangler login` done, R2 enabled in the Cloudflare dashboard, ~/.kaggle token, gh with Ricco-Mallick.
+# Needs: `npx wrangler login` done, cloud/.b2 with a Backblaze B2 key (no card needed), ~/.kaggle token, gh with Ricco-Mallick.
 set -euo pipefail
 cd "$(dirname "$0")"
 W="npx --yes wrangler@4.149.0"; export WRANGLER_SEND_METRICS=false
 source .secrets   # APP_KEY, WORKER_TOKEN (generated locally, gitignored)
 
-$W r2 bucket create ply-data 2>&1 | grep -v -i telemetry || true          # "already exists" is fine
+# storage: private B2 bucket with CORS for direct part uploads; the Worker gets its S3 endpoint + key
+B2OUT=$(python3 b2_setup.py) || exit 1
+eval "$B2OUT"
+source .b2
+sed -i -e "s#^S3_ENDPOINT = .*#S3_ENDPOINT = \"$S3_ENDPOINT\"#" -e "s#^S3_REGION = .*#S3_REGION = \"$S3_REGION\"#" -e "s#^S3_BUCKET = .*#S3_BUCKET = \"$S3_BUCKET\"#" wrangler.toml
+printf '%s' "$B2_KEY_ID" | $W secret put S3_KEY_ID >/dev/null
+printf '%s' "$B2_APP_KEY" | $W secret put S3_SECRET >/dev/null
 $W d1 execute ply-jobs --remote --file schema.sql -y >/dev/null
 printf '%s' "$APP_KEY" | $W secret put APP_KEY >/dev/null
 printf '%s' "$WORKER_TOKEN" | $W secret put WORKER_TOKEN >/dev/null
