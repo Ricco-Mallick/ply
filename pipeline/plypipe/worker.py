@@ -138,8 +138,18 @@ def run_job(api: Api, job: dict, work: Path, extra: list[str]) -> None:
     t = threading.Thread(target=beat, daemon=True)
     t.start()
     try:
+        # inputs are cached per storage key for the whole session: retries and requeues don't download the clips
+        # again (B2's free tier caps downloads at 1 GB/day)
+        cache = work / "_inputs"
         for k in job["files"]:
-            api.download(k, inp / Path(k).name)
+            cached = cache / k
+            if not cached.exists() or cached.stat().st_size == 0:
+                api.download(k, cached.with_suffix(cached.suffix + ".part"))
+                cached.with_suffix(cached.suffix + ".part").rename(cached)
+            inp.mkdir(parents=True, exist_ok=True)
+            dest = inp / Path(k).name
+            if not dest.exists():
+                os.link(cached, dest) if hasattr(os, "link") else shutil.copy2(cached, dest)
         # PLY_PIPELINE_CMD swaps the pipeline for a stand-in (tests: the worker plumbing without a GPU)
         runner = os.environ.get("PLY_PIPELINE_CMD", f"{sys.executable} -m plypipe").split()
         def pipeline(args: list[str]):
