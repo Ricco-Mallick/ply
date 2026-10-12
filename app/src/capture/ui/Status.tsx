@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Glass } from '../../shared/Glass';
-import { getJob, sceneUrl, type Job } from '../lib/backend';
+import { getHealth, getJob, sceneUrl, type Health, type Job } from '../lib/backend';
 
 const BASE = import.meta.env.BASE_URL;
 const STAGES: [string, string][] = [['frames', 'Picking sharp frames'], ['sfm', 'Solving camera positions'], ['align', 'Levelling the floor, real scale'], ['occupancy', 'Mapping walkable floor'], ['train', 'Training gaussian splats'], ['export', 'Compressing for the web']];
@@ -13,11 +13,11 @@ const ago = (t: number) => { const s = Math.max(0, (Date.now() - t) / 1000); ret
 
 /** Live status of one processing job. Polls every few seconds; the page can be closed and reopened by link. */
 export function Status({ jobId, onHome }: { jobId: string; onHome: () => void }) {
-  const [job, setJob] = useState<Job | null>(null); const [err, setErr] = useState<string | null>(null); const [copied, setCopied] = useState(false);
+  const [job, setJob] = useState<Job | null>(null); const [health, setHealth] = useState<Health | null>(null); const [err, setErr] = useState<string | null>(null); const [copied, setCopied] = useState(false);
   useEffect(() => {
     let t = 0; const ac = new AbortController();
     const poll = async () => {
-      try { const j = await getJob(jobId, ac.signal); setJob(j); setErr(null); if (j.status === 'done' || j.status === 'failed') return; }
+      try { const j = await getJob(jobId, ac.signal); setJob(j); setErr(null); if (j.status === 'queued') setHealth(await getHealth(ac.signal)); if (j.status === 'done' || j.status === 'failed') return; }
       catch (e) { if (ac.signal.aborted) return; setErr((e as Error).message); }
       t = window.setTimeout(poll, document.hidden ? 15000 : 4000);
     };
@@ -36,6 +36,7 @@ export function Status({ jobId, onHome }: { jobId: string; onHome: () => void })
       <div className="wide eyebrow">{job?.name ?? 'Processing'}</div>
       <h1>{head}</h1>
       {job?.status === 'queued' && <p className="lead">Number {job.queuePosition} in the queue. The GPU worker picks jobs up in order; you can close this page and come back with the link below.</p>}
+      {job?.status === 'queued' && health && <p className={`gpu-chip mono ${health.workersOnline ? 'on' : ''}`}><span aria-hidden="true" />{health.workersOnline ? `GPU worker online${health.workers.some(w => w.busy) ? ' · busy with another job' : ' · starting yours shortly'}` : 'No GPU worker running right now · the job waits safely until one starts'}</p>}
       {job?.status === 'running' && <p className="lead">Started {ago(job.started_at ?? job.created_at)} ago. {job.message ?? ''}</p>}
       {job?.status === 'failed' && <p className="lead bad-t">{job.message ?? 'The pipeline stopped with an error.'} Try the Incremental camera solver or SIFT matching in Advanced settings, or recapture the red stretches.</p>}
       {job?.status === 'done' && <p className="lead">Finished in {job.started_at && job.finished_at ? ago(Date.now() - (job.finished_at - job.started_at)) : '—'}. Walk it in the browser, share the link, or open it on the big screen.</p>}

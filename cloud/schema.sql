@@ -18,3 +18,10 @@ CREATE TABLE IF NOT EXISTS jobs (
   finished_at INTEGER
 );
 CREATE INDEX IF NOT EXISTS jobs_queue ON jobs (status, created_at);
+
+-- GPU workers check in on every poll; the status page shows whether one is online
+CREATE TABLE IF NOT EXISTS workers (
+  name TEXT PRIMARY KEY,
+  last_seen INTEGER NOT NULL,
+  busy_job TEXT
+);

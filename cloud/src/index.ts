@@ -10,6 +10,7 @@
  *    POST /v1/jobs               {captureId, name, settings, args, files} -> {jobId}
  *  Anyone
  *    GET  /v1/jobs/:id                                           -> status, stage, progress, result
+ *    GET  /v1/health                                             -> GPU workers online, queue length
  *    GET  /v1/scenes/:jobId/:file                                -> results (Range supported) for the viewer
  *  GPU worker (Authorization: Bearer WORKER_TOKEN)
  *    POST /v1/worker/claim       {worker}                        -> next job or 204       stale running jobs (no heartbeat 20 min) are re-queued
@@ -64,6 +65,11 @@ async function route(req: Request, env: Env): Promise<Response> {
   const url = new URL(req.url), p = url.pathname, q = url.searchParams, r = role(req, env), now = Date.now();
 
   if (p === '/' || p === '/v1') return json({ ok: true, service: 'ply-api' });
+  if (p === '/v1/health' && req.method === 'GET') {
+    const w = await env.DB.prepare('SELECT name,last_seen,busy_job FROM workers WHERE last_seen > ? ORDER BY last_seen DESC').bind(now - 90_000).all();
+    const q = await env.DB.prepare("SELECT COUNT(*) n FROM jobs WHERE status='queued'").first();
+    return json({ ok: true, workersOnline: w.results.length, workers: w.results.map((x: any) => ({ name: x.name, busy: !!x.busy_job, seenSecondsAgo: Math.round((now - x.last_seen) / 1000) })), queued: q.n }, 200, { 'cache-control': 'no-store' });
+  }
 
   // ---- public reads ----
   let m = p.match(/^\/v1\/jobs\/([\w-]+)$/);
@@ -125,9 +131,11 @@ async function route(req: Request, env: Env): Promise<Response> {
     if (r !== 'worker') return json({ error: 'worker token required' }, 401);
     if (p === '/v1/worker/claim' && req.method === 'POST') {
       const b = await req.json().catch(() => ({})) as any;
+      const wname = String(b.worker ?? 'worker').slice(0, 60);
       const row = await env.DB.prepare(`UPDATE jobs SET status='running', worker=?, stage=NULL, progress=0, message='claimed', started_at=?, updated_at=?
         WHERE id = (SELECT id FROM jobs WHERE status='queued' OR (status='running' AND updated_at < ?) ORDER BY created_at LIMIT 1) RETURNING *`)
         .bind(String(b.worker ?? 'worker').slice(0, 60), now, now, now - STALE_MS).first();
+      await env.DB.prepare('INSERT INTO workers (name,last_seen,busy_job) VALUES (?,?,?) ON CONFLICT(name) DO UPDATE SET last_seen=excluded.last_seen, busy_job=excluded.busy_job').bind(wname, now, row?.id ?? null).run();
       if (!row) return new Response(null, { status: 204 });
       return json({ ...row, settings: JSON.parse(row.settings), args: JSON.parse(row.args), files: JSON.parse(row.files) });
     }
@@ -140,6 +148,7 @@ async function route(req: Request, env: Env): Promise<Response> {
       if (b.message !== undefined) { sets.push('message=?'); vals.push(String(b.message).slice(0, 500)); }
       if (b.result !== undefined) { sets.push('result=?'); vals.push(JSON.stringify(b.result)); }
       await env.DB.prepare(`UPDATE jobs SET ${sets.join(',')} WHERE id=?`).bind(...vals, m[1]).run();
+      await env.DB.prepare('UPDATE workers SET last_seen=? WHERE busy_job=?').bind(now, m[1]).run();
       return json({ ok: true });
     }
     if (p === '/v1/worker/file' && req.method === 'GET') return json({ url: await presign(s3(env), 'GET', q.get('key') ?? '', {}, SIGN_TTL) });
