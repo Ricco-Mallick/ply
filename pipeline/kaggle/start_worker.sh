@@ -24,8 +24,7 @@ ds() {  # create or new-version a private dataset from a folder
   echo "dataset $OWNER/$name ready"
 }
 mkdir -p "$T/code" "$T/cfg" "$T/kernel"
-(cd "$ROOT" && git archive HEAD pipeline) | tar -x -C "$T/code"
-mv "$T/code/pipeline"/* "$T/code/" && rmdir "$T/code/pipeline"
+(cd "$ROOT" && git archive HEAD pipeline) | tar -x -C "$T/code" --strip-components=1
 ds ply-pipeline "$T/code"
 printf '{"api": "%s", "token": "%s"}\n' "$API" "$WORKER_TOKEN" > "$T/cfg/config.json"
 ds ply-worker-config "$T/cfg"
