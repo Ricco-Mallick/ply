@@ -4,9 +4,9 @@ import { getHealth, getJob, sceneUrl, type Health, type Job } from '../lib/backe
 import { LiveTheatre } from './LiveTheatre';
 
 const BASE = import.meta.env.BASE_URL;
-const STAGES: [string, string][] = [['frames', 'Picking sharp frames'], ['sfm', 'Solving camera positions'], ['align', 'Levelling the floor, real scale'], ['occupancy', 'Mapping walkable floor'], ['train', 'Training gaussian splats'], ['export', 'Compressing for the web']];
+const STAGES: [string, string][] = [['frames', 'Picking sharp frames'], ['sfm', 'Solving camera positions'], ['align', 'Levelling the floor, real scale'], ['occupancy', 'Mapping walkable floor'], ['label', 'Finding objects (AI)'], ['train', 'Training gaussian splats'], ['export', 'Compressing for the web']];
 // same shares of wall time as the worker's WEIGHTS (pipeline/plypipe/worker.py): turns overall progress into each stage's own
-const WEIGHTS: Record<string, number> = { frames: .05, sfm: .20, align: .02, occupancy: .02, train: .66, export: .05 };
+const WEIGHTS: Record<string, number> = { frames: .05, sfm: .20, align: .02, occupancy: .02, label: .04, train: .62, export: .05 };
 export function stagePct(j: Pick<Job, 'stage' | 'progress'>) {
   if (!j.stage || !(j.stage in WEIGHTS)) return 0;
   let start = 0; for (const [k] of STAGES) { if (k === j.stage) break; start += WEIGHTS[k]; }

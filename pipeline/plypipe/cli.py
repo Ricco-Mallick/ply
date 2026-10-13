@@ -35,6 +35,9 @@ def _stage_fn(name: str):
     if name == "occupancy":
         from plypipe.stages import occupancy
         return occupancy.run_stage
+    if name == "label":
+        from plypipe.stages import label
+        return label.run_stage
     if name == "train":
         from plypipe.stages import train
         return train.run_stage
@@ -61,6 +64,10 @@ def build_parser() -> argparse.ArgumentParser:
     g.add_argument("--oversample", type=int, default=4, help="candidates per kept frame for the sharpness pick")
     g.add_argument("--max-frames", type=int, help="cap on kept frames (lowers fps for long videos)")
     g.add_argument("--long-side", type=int, default=1600)
+    g = r.add_argument_group("label")
+    g.add_argument("--no-labels", action="store_true", help="skip the SAM 3 object labelling")
+    g.add_argument("--label-frames", type=int, default=120, help="frames SAM 3 looks at (spread over the capture)")
+    g.add_argument("--label-threshold", type=float, default=0.5)
     g = r.add_argument_group("sfm")
     g.add_argument("--features", choices=["aliked", "sift"], default="aliked")
     g.add_argument("--matcher", choices=["auto", "sequential", "exhaustive"], default="auto")

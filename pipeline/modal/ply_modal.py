@@ -32,9 +32,10 @@ image = (
 )
 app = modal.App("ply", image=image)
 secret = modal.Secret.from_name("ply-worker")
+hf = modal.Secret.from_name("ply-hf")  # HF_TOKEN: gated facebook/sam3 weights for the label stage
 
 
-@app.function(gpu=GPU, cpu=4, memory=16384, timeout=3 * 3600, max_containers=1, secrets=[secret])  # L4 + 4 cores + 16 GB = ~$1.12/h
+@app.function(gpu=GPU, cpu=4, memory=16384, timeout=3 * 3600, max_containers=1, secrets=[secret, hf])  # L4 + 4 cores + 16 GB = ~$1.12/h
 def work():
     """Claim and run jobs until the queue has been empty for 3 minutes."""
     env = dict(os.environ, PYTHONPATH="/root/pipeline", PLY_WORKER_NAME=f"modal-{GPU.lower()}", PLY_WORK_DIR="/tmp/work",

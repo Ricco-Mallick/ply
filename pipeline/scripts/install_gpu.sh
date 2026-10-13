@@ -75,6 +75,8 @@ $PIP install -q -r /tmp/ply-gsplat-reqs.txt "$NERFVIEW" jaxtyping nvtx "rich>=12
 # (the examples ask for CPU 'pycolmap' too; pycolmap-cuda12 provides the same module with CUDA SIFT/matching)
 log "pycolmap-cuda12 4.2.1 + plypipe"
 $PIP install -q "pycolmap-cuda12==4.2.1" "opencv-python-headless>=4.9"
+# SAM 3 object labelling (stages/label.py): transformers 5 has Sam3Model; weights are fetched at run time with HF_TOKEN
+$PIP install -q "transformers==5.19.0" "accelerate>=1.1.0" pillow
 # Modal mounts the pipeline code at run time (PLY_SKIP_PLYPIPE=1) so code changes don't rebuild the image
 [ -n "${PLY_SKIP_PLYPIPE:-}" ] || $PIP install -q -e "$HERE"
 

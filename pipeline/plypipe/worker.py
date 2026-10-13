@@ -32,9 +32,9 @@ from plypipe.live import Live
 from plypipe.progress import SfmProgress
 
 # rough share of wall time per stage on a T4, for one overall progress number
-WEIGHTS = {"frames": .05, "sfm": .20, "align": .02, "occupancy": .02, "train": .66, "export": .05}
+WEIGHTS = {"frames": .05, "sfm": .20, "align": .02, "occupancy": .02, "label": .04, "train": .62, "export": .05}
 ORDER = list(WEIGHTS)
-RESULTS = ["scene.spz", "scene_lite.spz", "scene.json", "occupancy.png", "occupancy.json", "report.json"]
+RESULTS = ["scene.spz", "scene_lite.spz", "scene.json", "occupancy.png", "occupancy.json", "places.json", "report.json"]
 PART = 32 * 1024 * 1024
 # stop-loss: a stage that runs past its limit is killed and the job fails with a clear message (minutes;
 # PLY_STAGE_LIMITS="sfm=30,train=60" overrides). Generous for a T4; they exist to cap a stuck run, not to race.
