@@ -23,6 +23,7 @@ export default defineConfig({
         walk: resolve(__dirname, 'walk.html'),
         guide: resolve(__dirname, 'guide.html'),
         lab: resolve(__dirname, 'lab.html'),
+        'ar-test': resolve(__dirname, 'ar-test.html'),
       },
     },
   },
