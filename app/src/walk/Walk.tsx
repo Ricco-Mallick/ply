@@ -4,6 +4,8 @@ import { loadManifest, type SceneManifest } from './scene';
 import { Glass } from '../shared/Glass';
 import { Tour, autoTour, SHOT_NAMES } from './tour';
 import { PlacesLayer } from './Places';
+import { ArLauncher } from './ArUi';
+import type { Navigator, Place } from '../lab/places';
 
 const TOUCH = matchMedia('(pointer: coarse)').matches;
 const BASE = import.meta.env.BASE_URL;
@@ -21,6 +23,7 @@ export function Walk() {
   const [help, setHelp] = useState(true);
   const [loadErr, setLoadErr] = useState<string | null>(null);
   const [base, setBase] = useState<URL | null>(null); const [mapX, setMapX] = useState<MapExtras>({});
+  const [arData, setArData] = useState<{ places: Place[]; nav: Navigator | null }>({ places: [], nav: null });
   useEngine(engine);
   // cinematic tour: the pipeline's keyframes, or ones made from the walkable floor
   const [tour, setTour] = useState<Tour | null>(null); const [, tourTick] = useState(0); const [views, setViews] = useState(false);
@@ -55,6 +58,8 @@ export function Walk() {
           {tour && entered && <Glass as="button" className={`tour-btn pill ${tour.playing ? 'on' : ''}`} opts={{ shader: false, press: true }} onClick={() => { if (tour.playing) tour.stop(); else { setViews(false); document.exitPointerLock?.(); tour.play(); } }}>{tour.playing ? '■ Stop tour' : '▶ Tour'}</Glass>}
           {tour && entered && <div className="views-wrap"><Glass as="button" className="tour-btn pill" opts={{ shader: false, press: true }} aria-expanded={views} onClick={() => setViews(v => !v)}>Views</Glass>
             {views && <Glass className="views-menu" opts={{ radius: 14, shader: false }}>{tour.keys.map((_, i) => <button key={i} onClick={() => { setViews(false); document.exitPointerLock?.(); tour.goTo(i); }}><span className="mono">{String(i + 1).padStart(2, '0')}</span>{SHOT_NAMES[i] ?? `View ${i + 1}`}</button>)}</Glass>}</div>}
+          {entered && engine && manifest && base && <ArLauncher places={arData.places.filter(p => p.pinned).map(p => ({ id: p.id, name: p.name, x: p.p[0], z: p.p[2] }))} nav={arData.nav}
+            splatUrl={new URL(manifest.splat, base).href} bounds={manifest.bounds ?? null} floorY={engine.floorY} />}
           <Glass as="button" className="icon pill" opts={{ shader: false, press: true }} aria-label="Controls" aria-pressed={help} onClick={() => setHelp(h => !h)}>?</Glass>
           <Glass as="button" className="icon pill" opts={{ shader: false, press: true }} aria-label="Fullscreen" onClick={() => document.fullscreenElement ? document.exitFullscreen() : document.documentElement.requestFullscreen?.()}>⤢</Glass>
         </div>
@@ -74,7 +79,7 @@ export function Walk() {
       </Glass>
 
       {TOUCH && entered && engine && <Joystick engine={engine} />}
-      {engine && <PlacesLayer engine={engine} base={base} entered={entered} onMap={setMapX} />}
+      {engine && <PlacesLayer engine={engine} base={base} entered={entered} onMap={setMapX} onData={setArData} />}
       {engine && <Minimap engine={engine} manifest={manifest} extras={mapX} />}
 
       <div className={`gate ${entered ? 'gone' : ''}`}>

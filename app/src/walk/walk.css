@@ -55,3 +55,19 @@ button { font: inherit; color: inherit; cursor: pointer; }
 .walk-search kbd { margin-left: 14px; }
 @media (max-width: 760px) { .walk-search { top: auto; bottom: calc(160px + env(safe-area-inset-bottom, 0px)); } .walk-search kbd { display: none; } }
 .route-card { z-index: 12; }
+/* ---- AR overlay (DOM overlay over the camera) ---- */
+.arx { position: fixed; inset: 0; z-index: 60; color: #fff; font-family: var(--font-body); touch-action: none; }
+.arx[hidden] { display: none; }
+.arx-top { position: absolute; top: calc(14px + env(safe-area-inset-top, 0px)); left: 12px; right: 12px; display: flex; justify-content: space-between; align-items: center; }
+.arx-pill { display: inline-flex; padding: 8px 12px; border-radius: 999px; background: rgba(0, 0, 0, .5); font-size: 10px; }
+.arx-x { width: 40px; height: 40px; border-radius: 50%; border: 0; background: rgba(0, 0, 0, .5); color: #fff; font-size: 22px; }
+.arx-card { position: absolute; left: 12px; right: 12px; bottom: calc(22px + env(safe-area-inset-bottom, 0px)); display: grid; gap: 10px; padding: 16px; border-radius: 22px; background: rgba(8, 11, 18, .82); }
+.arx-card > .mono { font-size: 10px; color: var(--accent); } .arx-card b { font: 600 17px/1.35 var(--font-body); } .arx-card em { font-style: normal; color: var(--amber); }
+.arx-card .btn, .arx-bottom .btn { height: 48px; margin: 0; }
+.arx-picks { display: flex; flex-wrap: wrap; gap: 6px; } .arx-picks button { padding: 10px 14px; border-radius: 999px; border: 1px solid var(--line-2); background: rgba(255, 255, 255, .06); color: #fff; font: 600 14px/1 var(--font-body); }
+.arx-warn { margin: 0; font-size: 13px; color: var(--amber); }
+.arx-instr { position: absolute; top: calc(66px + env(safe-area-inset-top, 0px)); left: 12px; right: 12px; padding: 14px 16px; border-radius: 20px; background: rgba(255, 107, 0, .94); color: #0B1220; display: grid; gap: 4px; }
+.arx-instr b { font: 700 17px/1.25 var(--font-body); } .arx-instr .mono { font-size: 10px; opacity: .75; }
+.arx-bottom { position: absolute; left: 12px; right: 12px; bottom: calc(22px + env(safe-area-inset-bottom, 0px)); display: flex; gap: 8px; justify-content: center; align-items: center; }
+.ar-err { position: fixed; z-index: 30; left: 50%; top: 70px; transform: translateX(-50%); padding: 10px 14px; border-radius: 12px; background: rgba(242, 85, 90, .92); color: #fff; font-size: 10.5px; max-width: 90vw; }
+.views-menu button:disabled { opacity: .4; }

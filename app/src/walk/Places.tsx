@@ -9,7 +9,7 @@ import { Navigator, pathLength, steps, type Place } from '../lab/places';
 import { Overlay } from '../lab/overlay';
 import { Palette, SearchIco } from '../lab/search';
 
-export function PlacesLayer({ engine, base, entered, onMap }: { engine: WalkEngine; base: URL | null; entered: boolean; onMap: (m: MapExtras) => void }) {
+export function PlacesLayer({ engine, base, entered, onMap, onData }: { engine: WalkEngine; base: URL | null; entered: boolean; onMap: (m: MapExtras) => void; onData?: (d: { places: Place[]; nav: Navigator | null }) => void }) {
   const [places, setPlaces] = useState<Place[] | null>(null);
   const [ov, setOv] = useState<Overlay | null>(null); const [nav, setNav] = useState<Navigator | null>(null);
   const [open, setOpen] = useState(false); const [dest, setDest] = useState<string | null>(null); const [guide, setGuide] = useState(false); const [, tick] = useState(0);
@@ -18,7 +18,7 @@ export function PlacesLayer({ engine, base, entered, onMap }: { engine: WalkEngi
   useEffect(() => {
     if (!engine.state.loaded || !places?.length || ov) return;
     const n = engine.grid ? new Navigator(engine.grid) : null, o = new Overlay(engine, n); o.allPlaces = places;
-    setNav(n); setOv(o); return () => o.dispose();
+    setNav(n); setOv(o); onData?.({ places, nav: n }); return () => o.dispose();
   }, [engine.state.loaded, places]);
   const shown = useMemo(() => (places ?? []).filter(p => p.pinned), [places]);
   useEffect(() => { ov?.setPlaces(shown, 'tag', entered); }, [ov, shown, entered]);
