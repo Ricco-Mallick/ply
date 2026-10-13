@@ -17,6 +17,10 @@ export class WalkEngine {
   state: EngineState = { progress: 0, loaded: false, error: null, mode: 'walk', locked: false, moved: false, pos: new THREE.Vector3(), yaw: 0, speed: 1 };
   pitch = 0; vel = new THREE.Vector3(); keys = new Set<string>(); joy = { x: 0, y: 0 }; bob = 0; flyUp = 0;
   listeners = new Set<() => void>(); raf = 0; last = performance.now(); drag: { x: number; y: number; id: number } | null = null;
+  /** Called every frame before rendering (overlays, animations). */
+  frameHooks = new Set<(dt: number, t: number) => void>();
+  /** Someone else drives the camera (a guided walk, an orbit view): skip the walk controller. */
+  manual = false;
 
   constructor(public canvas: HTMLCanvasElement) {
     this.renderer = new THREE.WebGLRenderer({ canvas, antialias: false, powerPreference: 'high-performance' });
@@ -141,7 +145,9 @@ export class WalkEngine {
   loop = () => {
     this.raf = requestAnimationFrame(this.loop); const now = performance.now(), dt = Math.min(.05, (now - this.last) / 1000); this.last = now;
     if (document.hidden) return;
-    this.step(dt); this.renderer.render(this.scene, this.camera); glassFrame(dt);
+    if (!this.manual) this.step(dt);
+    for (const f of this.frameHooks) f(dt, now / 1000);
+    this.renderer.render(this.scene, this.camera); glassFrame(dt);
   };
   dispose() { cancelAnimationFrame(this.raf); this.splat?.dispose(); this.renderer.dispose(); }
 }
