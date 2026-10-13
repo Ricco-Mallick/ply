@@ -13,6 +13,8 @@ export interface SceneManifest {
   bounds?: { min: [number, number, number]; max: [number, number, number] };
   occupancy?: Occupancy;
   cameraPath?: [number, number, number][];
+  /** cinematic tour keyframes (pipeline tour.py) */
+  tour?: { pos: [number, number, number]; target: [number, number, number]; fov: number; dur: number }[];
 }
 
 /** Grid of blocked cells in the floor plane (x, z). 1 = blocked. */
@@ -83,7 +85,7 @@ async function normalise(raw: any, base: URL): Promise<SceneManifest> {
   const m: SceneManifest = {
     name: raw.name ?? decodeURIComponent(base.pathname.split('/').filter(Boolean).slice(-2, -1)[0] ?? 'Captured space'),
     splat: phone && raw.splat?.lite ? raw.splat.lite : raw.splat?.file ?? 'scene.spz',
-    floorY: raw.floorY ?? 0, eyeHeight: raw.spawn?.position?.[1] ?? 1.6, bounds: raw.bounds, cameraPath: raw.cameraPath,
+    floorY: raw.floorY ?? 0, eyeHeight: raw.spawn?.position?.[1] ?? 1.6, bounds: raw.bounds, cameraPath: raw.cameraPath, tour: raw.tour,
   };
   if (raw.spawn?.position) {
     const [x, , z] = raw.spawn.position, l = raw.spawn.lookAt;

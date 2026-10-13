@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, useSyncExternalStore } from 'react';
 import { WalkEngine, type Mode } from './engine';
 import { loadManifest, type SceneManifest } from './scene';
 import { Glass } from '../shared/Glass';
+import { Tour, autoTour, SHOT_NAMES } from './tour';
 
 const TOUCH = matchMedia('(pointer: coarse)').matches;
 const BASE = import.meta.env.BASE_URL;
@@ -19,6 +20,13 @@ export function Walk() {
   const [help, setHelp] = useState(true);
   const [loadErr, setLoadErr] = useState<string | null>(null);
   useEngine(engine);
+  // cinematic tour: the pipeline's keyframes, or ones made from the walkable floor
+  const [tour, setTour] = useState<Tour | null>(null); const [, tourTick] = useState(0); const [views, setViews] = useState(false);
+  useEffect(() => {
+    if (!engine?.state.loaded || tour) return;
+    const keys = manifest?.tour?.length ? manifest.tour : engine.grid ? autoTour(engine.grid, engine.floorY, engine.eye) : [];
+    if (keys.length > 1) setTour(new Tour(engine, keys, () => tourTick(n => n + 1)));
+  }, [engine?.state.loaded, manifest]);
 
   useEffect(() => {
     const e = new WalkEngine(canvas.current!); setEngine(e); if (import.meta.env.DEV) (window as any).__ply = e;
@@ -42,6 +50,9 @@ export function Walk() {
           <Glass className="seg pill" opts={{ shader: false }} role="radiogroup" aria-label="Movement mode">
             {(['walk', 'fly'] as Mode[]).map(m => <button key={m} role="radio" aria-checked={s?.mode === m} className={s?.mode === m ? 'on' : ''} onClick={() => engine?.setMode(m)}>{m === 'walk' ? 'Walk' : 'Fly'}</button>)}
           </Glass>
+          {tour && entered && <Glass as="button" className={`tour-btn pill ${tour.playing ? 'on' : ''}`} opts={{ shader: false, press: true }} onClick={() => { if (tour.playing) tour.stop(); else { setViews(false); document.exitPointerLock?.(); tour.play(); } }}>{tour.playing ? '■ Stop tour' : '▶ Tour'}</Glass>}
+          {tour && entered && <div className="views-wrap"><Glass as="button" className="tour-btn pill" opts={{ shader: false, press: true }} aria-expanded={views} onClick={() => setViews(v => !v)}>Views</Glass>
+            {views && <Glass className="views-menu" opts={{ radius: 14, shader: false }}>{tour.keys.map((_, i) => <button key={i} onClick={() => { setViews(false); document.exitPointerLock?.(); tour.goTo(i); }}><span className="mono">{String(i + 1).padStart(2, '0')}</span>{SHOT_NAMES[i] ?? `View ${i + 1}`}</button>)}</Glass>}</div>}
           <Glass as="button" className="icon pill" opts={{ shader: false, press: true }} aria-label="Controls" aria-pressed={help} onClick={() => setHelp(h => !h)}>?</Glass>
           <Glass as="button" className="icon pill" opts={{ shader: false, press: true }} aria-label="Fullscreen" onClick={() => document.fullscreenElement ? document.exitFullscreen() : document.documentElement.requestFullscreen?.()}>⤢</Glass>
         </div>

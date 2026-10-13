@@ -13,6 +13,9 @@ on:
       arch:
         description: TORCH_CUDA_ARCH_LIST
         default: '7.5'
+      jobs:
+        description: parallel nvcc jobs (gsplat main needs ~5 GB per job; 2 fits the 16 GB runner)
+        default: '2'
 permissions:
   contents: read
 jobs:
@@ -26,7 +29,9 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Free disk (the CUDA toolkit + torch need ~12 GB)
-        run: sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL && df -h /
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL && df -h /
+          sudo fallocate -l 8G /mnt/swap && sudo chmod 600 /mnt/swap && sudo mkswap /mnt/swap && sudo swapon /mnt/swap && free -g
       - uses: actions/setup-python@v5
         with:
           python-version: ${{ inputs.python }}
@@ -47,7 +52,7 @@ jobs:
           PLY_ONLY_PKG: ${{ matrix.pkg }}
         run: |
           nproc; nvcc --version | tail -1
-          export MAX_JOBS=$(nproc)
+          export MAX_JOBS=${{ inputs.jobs }}
           bash pipeline/scripts/install_gpu.sh
           ls -la wheels
       - uses: actions/upload-artifact@v4
