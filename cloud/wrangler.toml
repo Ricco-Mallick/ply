@@ -16,3 +16,7 @@ S3_BUCKET = "ply-data-bb426385"
 ALLOWED_ORIGINS = "https://ricco.codes,http://localhost:5199,https://localhost:5199"
 
 # secrets (wrangler secret put): APP_KEY (capture app uploads/jobs), WORKER_TOKEN (GPU worker), S3_KEY_ID, S3_SECRET
+
+# safety net for the Modal GPU worker: re-wake it when jobs wait with no worker (see scheduled() in src/index.ts)
+[triggers]
+crons = ["*/10 * * * *"]

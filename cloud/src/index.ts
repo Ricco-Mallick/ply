@@ -23,7 +23,17 @@
 import { completeMultipart, createMultipart, presign, signedFetch, type S3Conf } from './s3';
 
 interface Env { DB: any; APP_KEY: string; WORKER_TOKEN: string; ALLOWED_ORIGINS: string;
-  S3_ENDPOINT: string; S3_REGION: string; S3_BUCKET: string; S3_KEY_ID: string; S3_SECRET: string; }
+  S3_ENDPOINT: string; S3_REGION: string; S3_BUCKET: string; S3_KEY_ID: string; S3_SECRET: string;
+  /** Modal GPU worker (pipeline/modal/ply_modal.py): trigger URL + shared token; unset = Kaggle only */
+  MODAL_TRIGGER?: string; MODAL_TRIGGER_TOKEN?: string; }
+type Ctx = { waitUntil(p: Promise<unknown>): void };
+
+/** Wake the Modal GPU worker (it starts unless one is already up, and stops itself when the queue is empty). */
+async function kickModal(env: Env, why: string) {
+  if (!env.MODAL_TRIGGER || !env.MODAL_TRIGGER_TOKEN) return null;
+  try { const r = await fetch(env.MODAL_TRIGGER, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ token: env.MODAL_TRIGGER_TOKEN, why }) }); return await r.json(); }
+  catch (e) { console.log('modal trigger failed', (e as Error).message); return null; }
+}
 const s3 = (e: Env): S3Conf => ({ endpoint: e.S3_ENDPOINT, region: e.S3_REGION, bucket: e.S3_BUCKET, keyId: e.S3_KEY_ID, secret: e.S3_SECRET });
 const SIGN_TTL = 6 * 3600;
 
@@ -54,15 +64,22 @@ function keyAllowed(key: string, r: Role) {
 }
 
 export default {
-  async fetch(req: Request, env: Env): Promise<Response> {
+  async fetch(req: Request, env: Env, ctx: Ctx): Promise<Response> {
     const c = cors(req, env);
     if (req.method === 'OPTIONS') return new Response(null, { status: 204, headers: c });
-    try { const r = await route(req, env); const h = new Headers(r.headers); for (const [k, v] of Object.entries(c)) h.set(k, v); return new Response(r.body, { status: r.status, headers: h }); }
+    try { const r = await route(req, env, ctx); const h = new Headers(r.headers); for (const [k, v] of Object.entries(c)) h.set(k, v); return new Response(r.body, { status: r.status, headers: h }); }
     catch (e) { return json({ error: (e as Error).message || 'server error' }, 500, c); }
+  },
+  /** Every 10 minutes: jobs waiting over 2 minutes and no worker seen for 90 s -> wake Modal again (a missed trigger). */
+  async scheduled(_e: unknown, env: Env, ctx: Ctx) {
+    const now = Date.now();
+    const waiting = await env.DB.prepare("SELECT COUNT(*) n FROM jobs WHERE status='queued' AND created_at < ? AND capture_id NOT LIKE 'rehearsal-%'").bind(now - 120_000).first();
+    const live = await env.DB.prepare('SELECT COUNT(*) n FROM workers WHERE last_seen > ?').bind(now - 90_000).first();
+    if (waiting.n > 0 && live.n === 0) ctx.waitUntil(kickModal(env, 'cron'));
   },
 };
 
-async function route(req: Request, env: Env): Promise<Response> {
+async function route(req: Request, env: Env, ctx: Ctx): Promise<Response> {
   const url = new URL(req.url), p = url.pathname, q = url.searchParams, r = role(req, env), now = Date.now();
 
   if (p === '/' || p === '/v1') return json({ ok: true, service: 'ply-api' });
@@ -124,12 +141,14 @@ async function route(req: Request, env: Env): Promise<Response> {
     const jobId = id();
     await env.DB.prepare('INSERT INTO jobs (id,name,capture_id,settings,args,files,status,progress,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?)')
       .bind(jobId, String(b.name ?? 'Capture').slice(0, 80), safeName(b.captureId), JSON.stringify(b.settings ?? {}), JSON.stringify((b.args ?? []).map(String)), JSON.stringify(files), 'queued', 0, now, now).run();
+    if (!safeName(b.captureId).startsWith('rehearsal-')) ctx.waitUntil(kickModal(env, `job ${jobId}`)); // rehearsals are for Kaggle CPU
     return json({ jobId }, 201);
   }
 
   // ---- GPU worker ----
   if (p.startsWith('/v1/worker/')) {
     if (r !== 'worker') return json({ error: 'worker token required' }, 401);
+    if (p === '/v1/worker/kick' && req.method === 'POST') return json({ ok: true, modal: await kickModal(env, 'manual') });
     if (p === '/v1/worker/claim' && req.method === 'POST') {
       const b = await req.json().catch(() => ({})) as any;
       const wname = String(b.worker ?? 'worker').slice(0, 60);

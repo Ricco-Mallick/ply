@@ -68,13 +68,15 @@ if [ -n "${PLY_WHEELS_ONLY:-}" ]; then log "wheels only: built $(ls "$PLY_SAVE_W
 log "gsplat runtime + example requirements"
 # examples/requirements.txt pins torch 2.9.1 and pulls nvidia-ncore (only for the NCore dataset
 # backend); both are filtered out so pip cannot replace the cu128 torch installed above.
-grep -v -E '^(torch|torchvision)==|^nvidia-ncore|fused-ssim|fused-bilagrid|^ppisp|nerfview|^#|^$' \
+grep -v -E '^(torch|torchvision)==|^nvidia-ncore|^pycolmap|fused-ssim|fused-bilagrid|^ppisp|nerfview|^#|^$' \
   "$GSPLAT_DIR/examples/requirements.txt" > /tmp/ply-gsplat-reqs.txt
 $PIP install -q -r /tmp/ply-gsplat-reqs.txt "$NERFVIEW" jaxtyping nvtx "rich>=12"
 
+# (the examples ask for CPU 'pycolmap' too; pycolmap-cuda12 provides the same module with CUDA SIFT/matching)
 log "pycolmap-cuda12 4.2.1 + plypipe"
-$PIP install -q "pycolmap-cuda12==4.2.1"
-$PIP install -q -e "$HERE"
+$PIP install -q "pycolmap-cuda12==4.2.1" "opencv-python-headless>=4.9"
+# Modal mounts the pipeline code at run time (PLY_SKIP_PLYPIPE=1) so code changes don't rebuild the image
+[ -n "${PLY_SKIP_PLYPIPE:-}" ] || $PIP install -q -e "$HERE"
 
 log "check"
 $PY - <<'PY'
