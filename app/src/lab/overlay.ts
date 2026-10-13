@@ -271,6 +271,9 @@ export class Overlay {
   // ---------- per frame ----------
   frame = (dt: number, t: number) => {
     const e = this.engine, cam = e.camera, W = innerWidth, H = innerHeight, me = e.state.pos;
+    // draw after the splats: Spark composites the splat layer in the same pass, and depth-less overlays drawn
+    // before it get painted over (this hid the route in some views)
+    this.root.traverse(o => { if (o.renderOrder < 10) o.renderOrder = 10; });
     for (const g of [this.ai, this.measure]) for (const o of g.children) if ((o as LineSegments2).material instanceof LineMaterial) ((o as LineSegments2).material as LineMaterial).resolution.set(W, H);
     if (this.doll) { // orbit the dollhouse
       this.doll.t = Math.min(1, this.doll.t + dt * .8); const k = 1 - (1 - this.doll.t) ** 3, d = this.doll;

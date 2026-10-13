@@ -96,7 +96,10 @@ function Joystick({ engine }: { engine: WalkEngine }) {
 }
 
 /** North-up map of the occupancy grid with the visitor's position and view cone. Hidden when the scene has no grid. */
-function Minimap({ engine, manifest }: { engine: WalkEngine; manifest: SceneManifest | null }) {
+/** Map extras the design lab draws: a route polyline (floor x, z) and place dots. */
+export interface MapExtras { path?: [number, number][] | null; pins?: { x: number; z: number; dest?: boolean }[] }
+export function Minimap({ engine, manifest, extras }: { engine: WalkEngine; manifest: SceneManifest | null; extras?: MapExtras }) {
+  const ex = useRef(extras); ex.current = extras;
   const cv = useRef<HTMLCanvasElement>(null); const [img, setImg] = useState<HTMLCanvasElement | null>(null);
   useEffect(() => {
     const g = engine.grid; if (!g) return; const { width: w, height: h } = g.meta; const c = document.createElement('canvas'); c.width = w; c.height = h; const x = c.getContext('2d')!; const d = x.createImageData(w, h);
@@ -109,6 +112,12 @@ function Minimap({ engine, manifest }: { engine: WalkEngine; manifest: SceneMani
       const { origin, cell, width, height } = engine.grid.meta, sc = Math.min(S / width, S / height) * .92, ox = (S - width * sc) / 2, oy = (S - height * sc) / 2;
       x.imageSmoothingEnabled = false; x.globalAlpha = .9; x.drawImage(img, ox, oy, width * sc, height * sc); x.globalAlpha = 1;
       const p = engine.state.pos, px = ox + (p.x - origin[0]) / cell * sc, py = oy + (p.z - origin[1]) / cell * sc, yaw = engine.state.yaw;
+      const toPx = (wx: number, wz: number) => [ox + (wx - origin[0]) / cell * sc, oy + (wz - origin[1]) / cell * sc] as const;
+      for (const q of ex.current?.pins ?? []) { const [qx, qy] = toPx(q.x, q.z); x.fillStyle = q.dest ? '#FF6B00' : '#0B1220'; x.strokeStyle = q.dest ? '#fff' : 'rgba(11,18,32,.6)'; x.lineWidth = 1; x.beginPath(); x.arc(qx, qy, q.dest ? 4.5 : 2.6, 0, 7); x.fill(); x.stroke(); }
+      const route = ex.current?.path; if (route && route.length > 1) {
+        x.strokeStyle = '#FF6B00'; x.lineWidth = 2.6; x.lineCap = x.lineJoin = 'round'; x.setLineDash([5, 4]); x.lineDashOffset = -performance.now() / 60;
+        x.beginPath(); route.forEach(([wx, wz], i) => { const [qx, qy] = toPx(wx, wz); if (i) x.lineTo(qx, qy); else x.moveTo(qx, qy); }); x.stroke(); x.setLineDash([]);
+      }
       x.fillStyle = 'rgba(255,107,0,.22)'; x.beginPath(); x.moveTo(px, py); x.arc(px, py, 26, -Math.PI / 2 - yaw - .6, -Math.PI / 2 - yaw + .6); x.closePath(); x.fill();
       x.fillStyle = '#FF6B00'; x.beginPath(); x.arc(px, py, 4, 0, 7); x.fill(); x.strokeStyle = '#fff'; x.lineWidth = 1.5; x.stroke(); };
     draw(); return () => cancelAnimationFrame(raf);

@@ -6,6 +6,7 @@ import QRCode from 'qrcode';
 import { WalkEngine } from '../walk/engine';
 import { loadManifest, type SceneManifest } from '../walk/scene';
 import { Glass } from '../shared/Glass';
+import { Minimap } from '../walk/Walk';
 import { placesFor, Navigator, pathLength, steps, type Place, type Category } from './places';
 import { Overlay, classColor, type PinStyle, type RouteStyle, type AiStyle, type ArMode, type ArNav, type ArCap } from './overlay';
 
@@ -79,6 +80,18 @@ export function Lab() {
   }, [ov, nav, o.ar, o.arCap]);
   // AR framing: a phone's camera height and field of view
   useEffect(() => { if (!engine) return; engine.eye = o.ar === 'nav' || o.ar === 'capture' ? 1.4 : (manifest?.eyeHeight ?? 1.55); engine.camera.fov = o.ar === 'nav' || o.ar === 'capture' ? 62 : 70; engine.camera.updateProjectionMatrix(); }, [engine, o.ar, manifest]);
+
+  // a new destination: turn to face the start of the route and look at the floor, so the route is in view
+  const faced = useRef<string | null>(null);
+  useEffect(() => {
+    if (!engine || !path || path.length < 2 || !dest || faced.current === dest || o.ar === 'doll') return; faced.current = dest;
+    const me = engine.state.pos, tgt = path.find(q => Math.hypot(q[0] - me.x, q[1] - me.z) > .6) ?? path[path.length - 1];
+    let want = Math.atan2(-(tgt[0] - me.x), -(tgt[1] - me.z)), t = 0; const y0 = engine.state.yaw, p0 = engine.pitch;
+    while (want - y0 > Math.PI) want -= 2 * Math.PI; while (want - y0 < -Math.PI) want += 2 * Math.PI;
+    const hook = (dt: number) => { t = Math.min(1, t + dt / .9); const k = 1 - (1 - t) ** 3; engine.state.yaw = y0 + (want - y0) * k; engine.pitch = p0 + (-.42 - p0) * k; if (t >= 1) engine.frameHooks.delete(hook); };
+    engine.frameHooks.add(hook); return () => { engine.frameHooks.delete(hook); };
+  }, [engine, path, dest, o.ar]);
+  useEffect(() => { if (!dest) faced.current = null; }, [dest]);
 
   // guided walk along the route ("Take me there")
   useEffect(() => {
@@ -178,6 +191,8 @@ export function Lab() {
       {tool === 'share' && engine && <ShareSheet engine={engine} onClose={() => setTool(null)} />}
       {tool === 'shot' && shot && <Glass className="shot-card" opts={{ radius: 18, shader: false }}><img src={shot} alt="Snapshot of the current view" /><div className="rc-a"><a className="btn" href={shot} download="ply-snapshot.jpg">Save image</a><button className="btn ghost" onClick={() => setTool(null)}>Close</button></div></Glass>}
       {tool === 'shot' && <div className="flash" key={shot} />}
+
+      {!ar && engine && entered && <Minimap engine={engine} manifest={manifest} extras={{ path, pins: places.map(p => ({ x: p.p[0], z: p.p[2], dest: p.id === dest })) }} />}
 
       {/* ---------- AR mock-ups ---------- */}
       {ar && <ArChrome o={o} ov={ov} engine={engine} dest={destPlace} path={path} turns={turnList} onPick={go} places={places} dist={dist} onExit={() => set('ar', 'off')} />}
