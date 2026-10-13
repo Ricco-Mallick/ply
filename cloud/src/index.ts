@@ -136,7 +136,8 @@ async function route(req: Request, env: Env): Promise<Response> {
       const row = await env.DB.prepare(`UPDATE jobs SET status='running', worker=?, stage=NULL, progress=0, message='claimed', started_at=?, updated_at=?
         WHERE id = (SELECT id FROM jobs WHERE (status='queued' OR (status='running' AND updated_at < ?)) AND capture_id LIKE ? ORDER BY created_at LIMIT 1) RETURNING *`)
         .bind(String(b.worker ?? 'worker').slice(0, 60), now, now, now - STALE_MS, `${String(b.prefix ?? '').replace(/[%_]/g, '')}%`).first();
-      await env.DB.prepare('INSERT INTO workers (name,last_seen,busy_job,note) VALUES (?,?,?,NULL) ON CONFLICT(name) DO UPDATE SET last_seen=excluded.last_seen, busy_job=excluded.busy_job, note=NULL').bind(wname, now, row?.id ?? null).run();
+      if (!wname.startsWith('preflight')) // the pre-flight check's token probe is not a worker
+        await env.DB.prepare('INSERT INTO workers (name,last_seen,busy_job,note) VALUES (?,?,?,NULL) ON CONFLICT(name) DO UPDATE SET last_seen=excluded.last_seen, busy_job=excluded.busy_job, note=NULL').bind(wname, now, row?.id ?? null).run();
       if (!row) return new Response(null, { status: 204 });
       return json({ ...row, settings: JSON.parse(row.settings), args: JSON.parse(row.args), files: JSON.parse(row.files) });
     }
