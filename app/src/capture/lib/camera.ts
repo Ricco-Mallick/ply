@@ -25,7 +25,8 @@ export function saveLens(id: string) { try { localStorage.setItem(LENS_KEY, id);
 export async function openCamera(deviceId?: string | null): Promise<{ stream: MediaStream; track: MediaStreamTrack; info: CamInfo }> {
   if (!window.isSecureContext) throw Object.assign(new Error('Camera needs a secure (https) page'), { name: 'InsecureContext' });
   if (!navigator.mediaDevices?.getUserMedia) throw Object.assign(new Error('This browser cannot open the camera'), { name: 'NoMediaDevices' });
-  const size = { width: { ideal: 3840 }, height: { ideal: 2160 }, frameRate: { ideal: 30, max: 30 } };
+  // 1080p, not 4K: the pipeline scales every frame to 1600 px anyway, and encoding 4K live made the preview stutter on phones
+  const size = { width: { ideal: 1920 }, height: { ideal: 1080 }, frameRate: { ideal: 30, max: 30 } };
   let stream: MediaStream;
   try { stream = await navigator.mediaDevices.getUserMedia({ audio: false, video: deviceId ? { deviceId: { exact: deviceId }, ...size } : { facingMode: { ideal: 'environment' }, ...size } }); }
   catch (e) { if (!deviceId || (e as Error).name === 'NotAllowedError') throw e; return openCamera(null); } // a saved lens that vanished: fall back

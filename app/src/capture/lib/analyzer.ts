@@ -12,7 +12,9 @@ export type Issue = 'blur' | 'fast' | 'turn' | 'dark' | 'bright' | 'tilt';
 const W = 160;
 
 export class Analyzer {
-  private c = document.createElement('canvas'); private x = this.c.getContext('2d', { willReadFrequently: true })!;
+  private c = document.createElement('canvas'); // GPU-backed on purpose: willReadFrequently makes the canvas CPU-side, so every sample copied the full camera frame to
+  // the CPU before shrinking it. This way the GPU shrinks it and only the 160 px copy is read back.
+  private x = this.c.getContext('2d')!;
   private prev: Float32Array | null = null; private prevT = 0; private h = 90; private sharpHist: number[] = [];
 
   /** Grey pixels of the current frame at W px wide. */

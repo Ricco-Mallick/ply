@@ -224,3 +224,5 @@ a.btn { text-decoration: none; }
 .job-chip.done i { background: #3DDC97; }
 .job-chip.failed i { background: #F2555A; }
 .job-chip.queued i { background: #8590A3; }
+/* phones: no backdrop blur over the moving camera feed (the GPU re-blurs it every frame under each control); tinted glass instead */
+@media (pointer: coarse) { .live .lg, .live .lg.has-gl { backdrop-filter: none; -webkit-backdrop-filter: none; background: rgba(10, 14, 20, .52); } }
