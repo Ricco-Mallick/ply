@@ -24,7 +24,7 @@ export function Walk() {
   const [tour, setTour] = useState<Tour | null>(null); const [, tourTick] = useState(0); const [views, setViews] = useState(false);
   useEffect(() => {
     if (!engine?.state.loaded || tour) return;
-    const keys = manifest?.tour?.length ? manifest.tour : engine.grid ? autoTour(engine.grid, engine.floorY, engine.eye) : [];
+    const keys = manifest?.tour?.length ? manifest.tour : engine.grid ? autoTour(engine.grid, engine.floorY, engine.eye, engine.state.pos) : [];
     if (keys.length > 1) setTour(new Tour(engine, keys, () => tourTick(n => n + 1)));
   }, [engine?.state.loaded, manifest]);
 
@@ -60,7 +60,7 @@ export function Walk() {
 
       {entered && s?.locked && <div className="cross" aria-hidden="true" />}
 
-      <Glass className={`hint ${help && entered ? 'on' : ''}`} opts={{ radius: 16, vis: () => (help && entered ? 1 : 0) }} aria-hidden={!(help && entered)}>
+      <Glass className={`hint ${help && entered && !tour?.playing ? 'on' : ''}`} opts={{ radius: 16, vis: () => (help && entered && !tour?.playing ? 1 : 0) }} aria-hidden={!(help && entered && !tour?.playing)}>
         {TOUCH ? (
           <ul><li><b>Left thumb</b> move</li><li><b>Drag right side</b> look</li><li><b>Fly</b> switch top right</li></ul>
         ) : (

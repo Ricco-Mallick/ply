@@ -8,14 +8,27 @@ import type { OccupancyGrid } from './scene';
 export interface TourKey { pos: [number, number, number]; target: [number, number, number]; fov: number; dur: number; }
 export const SHOT_NAMES = ['Establishing', 'Push in', 'Walk 1', 'Walk 2', 'Walk 3', 'Walk 4', 'Reveal', 'Overview'];
 
-/** No tour in the manifest: corners of the walkable floor, a loop through it, a high wide. */
-export function autoTour(grid: OccupancyGrid, floorY: number, eye = 1.55): TourKey[] {
-  const { width: w, height: h, cell, origin } = grid.meta; const free: [number, number][] = [];
-  for (let j = 0; j < h; j++) for (let i = 0; i < w; i++) if (!grid.data[j * w + i]) free.push([origin[0] + (i + .5) * cell, origin[1] + (j + .5) * cell]);
+/** No tour in the manifest: corners of the walkable floor around `from` (the room you are in, not the hall beyond a
+    doorway: cells connected to the start, at least 40 cm from obstacles), a loop through it, a high wide. */
+export function autoTour(grid: OccupancyGrid, floorY: number, eye = 1.55, from?: { x: number; z: number }): TourKey[] {
+  const { width: w, height: h, cell, origin } = grid.meta, N = w * h;
+  // clearance in cells (chamfer distance to the nearest blocked cell)
+  const d = new Float32Array(N); for (let i = 0; i < N; i++) d[i] = grid.data[i] ? 0 : 1e6;
+  for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) { const i = y * w + x; if (!d[i]) continue; if (x) d[i] = Math.min(d[i], d[i - 1] + 1); if (y) d[i] = Math.min(d[i], d[i - w] + 1); }
+  for (let y = h - 1; y >= 0; y--) for (let x = w - 1; x >= 0; x--) { const i = y * w + x; if (!d[i]) continue; if (x < w - 1) d[i] = Math.min(d[i], d[i + 1] + 1); if (y < h - 1) d[i] = Math.min(d[i], d[i + w] + 1); }
+  const need = Math.max(2, Math.round(.4 / cell)), ok = (i: number) => d[i] >= need;
+  // flood fill from the start (or the most open cell) through cells with that clearance
+  let s0 = -1;
+  if (from) { const i = Math.floor((from.x - origin[0]) / cell), j = Math.floor((from.z - origin[1]) / cell); if (i >= 0 && j >= 0 && i < w && j < h && ok(j * w + i)) s0 = j * w + i; }
+  if (s0 < 0) { let best = 0; for (let i = 0; i < N; i++) if (d[i] < 1e6 && d[i] > best) { best = d[i]; s0 = i; } }
+  if (s0 < 0) return [];
+  const seen = new Uint8Array(N), q = [s0]; seen[s0] = 1;
+  while (q.length) { const i = q.pop()!, x = i % w, y = (i - x) / w; for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) { const X = x + dx, Y = y + dy, k = Y * w + X; if (X >= 0 && Y >= 0 && X < w && Y < h && !seen[k] && ok(k)) { seen[k] = 1; q.push(k); } } }
+  const free: [number, number][] = []; for (let i = 0; i < N; i++) if (seen[i]) free.push([origin[0] + (i % w + .5) * cell, origin[1] + (Math.floor(i / w) + .5) * cell]);
   if (free.length < 20) return [];
   const pc = (k: 0 | 1, f: number) => { const a = free.map(p => p[k]).sort((x, y) => x - y); return a[Math.floor(f * (a.length - 1))]; };
   const lo = [pc(0, .08), pc(1, .08)], hi = [pc(0, .92), pc(1, .92)], c: [number, number, number] = [(lo[0] + hi[0]) / 2, floorY + 1.1, (lo[1] + hi[1]) / 2];
-  const high = floorY + eye + .7, k = (x: number, z: number, y = high): [number, number, number] => [x, y, z];
+  const high = floorY + eye + .42, k = (x: number, z: number, y = high): [number, number, number] => [x, y, z];
   const walk = [.15, .4, .65, .9].map(f => { const a = f * Math.PI * 2, r = .32; return k(c[0] + Math.cos(a) * (hi[0] - lo[0]) * r, c[2] + Math.sin(a) * (hi[1] - lo[1]) * r, floorY + eye); });
   return [
     { pos: k(lo[0], lo[1]), target: c, fov: 62, dur: 0 }, { pos: k(lo[0] + (c[0] - lo[0]) * .2, lo[1] + (c[2] - lo[1]) * .2), target: c, fov: 58, dur: 5 },

@@ -24,7 +24,7 @@ def build_tour(cams: np.ndarray, bounds: dict, eye: float = 1.55) -> list[dict]:
     lo, hi = np.array(bounds["min"], float), np.array(bounds["max"], float)
     top = float(min(hi[1], 4.0))
     c = np.array([(lo[0] + hi[0]) / 2, 1.1, (lo[2] + hi[2]) / 2])
-    high = min(top - 0.35, max(eye + 0.6, top * 0.75))
+    high = min(top - 0.5, eye + 0.42)  # ~2 m: above furniture, below hanging lamps
     # the two corners of the room farthest apart along its longer diagonal
     corners = [np.array([x, high, z]) for x in (lo[0], hi[0]) for z in (lo[2], hi[2])]
     corners = [_inside(k, lo, hi) for k in corners]
