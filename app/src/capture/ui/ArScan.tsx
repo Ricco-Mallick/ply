@@ -6,7 +6,7 @@ import { newId, saveCloud, type Clip } from '../lib/store';
 import { CloudView } from './CloudView';
 import { fmtTime, fmtBytes } from './viz';
 
-export function ArScan({ scanNo, mode = 'scan', onClip, onClose, onClassic }: { scanNo: number; mode?: 'scan' | 'video'; onClip: (c: Clip) => void; onClose: () => void; onClassic?: () => void }) {
+export function ArScan({ scanNo, mode = 'scan', onClip, onClose }: { scanNo: number; mode?: 'scan' | 'video'; onClip: (c: Clip) => void; onClose: () => void }) {
   const hud = useRef<HTMLDivElement>(null);
   const [cap, setCap] = useState<ArCapture | null>(null); const [phase, setPhase] = useState<'intro' | 'ar' | 'saving' | 'preview'>('intro');
   const [err, setErr] = useState<string | null>(null); const [res, setRes] = useState<{ r: ArResult; clip: Clip } | null>(null);
@@ -30,7 +30,6 @@ export function ArScan({ scanNo, mode = 'scan', onClip, onClose, onClassic }: { 
 
   const s = cap?.stats, total = s ? s.green + s.orange + s.red : 0, pct = (n: number) => (total ? n / total * 100 : 0);
   const tip = !s ? '' : s.tracking === 'starting' ? 'Move the phone slowly side to side so it can find the floor' : s.tracking === 'lost' ? 'Tracking lost: go back to where you were, slowly'
-    : !total ? 'Point at the floor and walls: surfaces appear as dots'
     : !cap?.recording ? 'Tracking. Tap record, then walk slowly around the room' : s.tooFast ? 'Slow down: frames blur when you move fast'
     : s.guide && s.guide.dist < 4 ? 'Head for the red patch and look at it from two sides' : pct(s.green) > 70 ? 'Looking good. Fill any red, then stop' : 'Keep walking slowly, look at every wall and the floor';
 
@@ -48,10 +47,10 @@ export function ArScan({ scanNo, mode = 'scan', onClip, onClose, onClassic }: { 
           {s.guide && cap?.recording && s.guide.dist < 4 && <div className="ah-guide" style={{ transform: `rotate(${-s.guide.angle}rad)` }} aria-hidden="true">↑</div>}
           <div className="ah-bottom">
             <p className={`ah-tip ${s.tooFast ? 'warn' : ''}`}>{tip}</p>
-            <div className="ah-cov" aria-label={`Coverage: ${Math.round(pct(s.green))}% good, ${Math.round(pct(s.orange))}% okay, ${Math.round(pct(s.red))}% not captured yet`}>
+            <div className="ah-cov" aria-label={`Coverage: ${Math.round(pct(s.green))}% good, ${Math.round(pct(s.orange))}% okay, ${Math.round(pct(s.red))}% seen in one frame only`}>
               <i style={{ width: `${pct(s.green)}%`, background: GREEN }} /><i style={{ width: `${pct(s.orange)}%`, background: ORANGE }} /><i style={{ width: `${pct(s.red)}%`, background: RED }} />
             </div>
-            <div className="ah-legend mono"><span><b style={{ background: GREEN }} />good {Math.round(pct(s.green))}%</span><span><b style={{ background: ORANGE }} />once {Math.round(pct(s.orange))}%</span><span><b style={{ background: RED }} />not yet {Math.round(pct(s.red))}%</span></div>
+            <div className="ah-legend mono"><span><b style={{ background: GREEN }} />good {Math.round(pct(s.green))}%</span><span><b style={{ background: ORANGE }} />2 frames {Math.round(pct(s.orange))}%</span><span><b style={{ background: RED }} />1 frame {Math.round(pct(s.red))}%</span></div>
             {cap?.recording
               ? <button className="ah-rec on" onClick={() => cap.stop()} aria-label="Stop scanning"><span /></button>
               : <button className="ah-rec" disabled={s.tracking !== 'ok'} onClick={() => { cap!.recording = true; }} aria-label="Start scanning"><span /></button>}
@@ -63,12 +62,11 @@ export function ArScan({ scanNo, mode = 'scan', onClip, onClose, onClassic }: { 
         <header className="cap-top"><button className="back mono" onClick={onClose}>← Back</button><span className="mono dim">AR scan {scanNo}</span></header>
         <div className="wide eyebrow">{mode === 'video' ? 'Video with live coverage' : 'AR scan'}</div>
         <h1>{mode === 'video' ? <>Film the room,<br /><em>watch it fill in.</em></> : <>Paint the room<br /><em>with your phone.</em></>}</h1>
-        <p className="lead">Floors, walls and tables get painted with dots as the phone finds them: <b style={{ color: GREEN }}>green</b> is captured well, <b style={{ color: ORANGE }}>orange</b> needs another angle, <b style={{ color: RED }}>red</b> is found but not captured yet. Walk slowly until it's mostly green. The phone saves sharp frames with their exact positions, so the twin comes out at real scale with a level floor.</p>
+        <p className="lead">Everything the phone sees gets painted with dots: <b style={{ color: GREEN }}>green</b> is captured well, <b style={{ color: ORANGE }}>orange</b> needs another angle, <b style={{ color: RED }}>red</b> was seen in only one frame. Walk slowly until it's mostly green. The phone saves sharp frames with their exact positions, so the twin comes out at real scale with a level floor.</p>
         <ul className="ar-tips"><li>Start where you can see the floor</li><li>Walk the edge of the room, then a slow loop through the middle</li><li>Look at every wall from two sides</li></ul>
         {err && <p className="msg bad" role="alert">{err}</p>}
         {mode === 'video' && <p className="mono dim">Records 4 frames a second with their exact positions, more than the pipeline keeps from a normal video.</p>}
         <button className="btn big" onClick={start}>{mode === 'video' ? 'Start recording' : 'Start AR'}</button>
-        {onClassic && <button className="link-btn mono" onClick={onClassic}>Classic video instead (choose lens, no coverage)</button>}
       </section>}
 
       {phase === 'saving' && <section className="ar-intro"><div className="wide eyebrow">Saving</div><h1>Packing your frames</h1><div className="bar"><i style={{ transform: 'scaleX(.6)' }} /></div></section>}

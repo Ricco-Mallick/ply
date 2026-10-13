@@ -1,14 +1,14 @@
 /* AR capture (Android Chrome WebXR): Polycam / RealityScan-style live coverage.
    - ARCore tracks the phone (metres, gravity-aligned, floor at y = 0 with 'local-floor').
-   - Coverage is painted on the surfaces ARCore detects (floor, walls, tables): flat dots on each plane, coloured by how
-     many keyframes really saw them and from how many directions (surfaces.ts). Depth only decides what was hidden.
+   - Coverage from depth (coverage.ts): 8 cm cells on the surfaces depth hits, drawn as dots once confirmed, coloured by
+     how many keyframes saw them and from how many directions.
    - Keyframes: the camera image (886x1920 on the S24 FE) is read back when the phone has moved or turned enough and is
      moving slowly enough to be sharp; JPEG + pose + lens go into one tar file streamed to the phone's storage.
    The pipeline reads the tar: frames go straight to SfM and the poses give real scale and a level floor. */
 import * as THREE from 'three';
 import { openSink } from './store';
 import { tarHeader, tarPad } from './tar';
-import { SurfaceMap } from './surfaces';
+import { Coverage } from './coverage';
 
 export const GREEN = '#3DDC97', ORANGE = '#FFB84D', RED = '#F2555A';
 const KF_MOVE = .1, KF_TURN = 7 * Math.PI / 180, KF_GAP = 220, MAX_TURN = 70, MAX_SPEED = .8;
@@ -33,7 +33,7 @@ export function dotsMaterial(size = .042) {
 
 /** One AR capture session. start() needs a user gesture; the overlay element becomes the DOM overlay in AR. */
 export class ArCapture {
-  surf = new SurfaceMap(); keyframes: ArKeyframe[] = []; stats: ArStats = { tracking: 'starting', keyframes: 0, seconds: 0, green: 0, orange: 0, red: 0, voxels: 0, tooFast: false, walked: 0, guide: null, depth: false, camera: null, bytes: 0, thumb: null };
+  cov = new Coverage(dotsMaterial(.05)); keyframes: ArKeyframe[] = []; stats: ArStats = { tracking: 'starting', keyframes: 0, seconds: 0, green: 0, orange: 0, red: 0, voxels: 0, tooFast: false, walked: 0, guide: null, depth: false, camera: null, bytes: 0, thumb: null };
   path: { x: number; z: number; t: number }[] = [];
   private renderer!: THREE.WebGLRenderer; private scene = new THREE.Scene(); private cam = new THREE.PerspectiveCamera();
   private session: any = null; private t0 = 0; private frameNo = 0;
@@ -49,13 +49,13 @@ export class ArCapture {
   async start(overlay: HTMLElement) {
     const xr = (navigator as any).xr;
     this.session = await xr.requestSession('immersive-ar', {
-      requiredFeatures: ['local-floor'], optionalFeatures: ['plane-detection', 'depth-sensing', 'camera-access', 'dom-overlay', 'hit-test'],
+      requiredFeatures: ['local-floor'], optionalFeatures: ['depth-sensing', 'camera-access', 'dom-overlay', 'hit-test'],
       depthSensing: { usagePreference: ['cpu-optimized'], dataFormatPreference: ['luminance-alpha', 'float32'] }, domOverlay: { root: overlay },
     });
     this.stats.depth = this.session.depthUsage === 'cpu-optimized';
     this.renderer = new THREE.WebGLRenderer({ alpha: true, antialias: false }); this.renderer.setPixelRatio(1);
     this.renderer.xr.enabled = true; this.renderer.xr.setReferenceSpaceType('local-floor'); await this.renderer.xr.setSession(this.session);
-    this.scene.add(this.surf.mesh);
+    this.scene.add(this.cov.points);
     this.sink = await openSink(this.id); this.t0 = performance.now();
     this.session.addEventListener('end', () => this.finish());
     this.renderer.setAnimationLoop((t: number, frame: any) => this.onFrame(t, frame));
@@ -82,11 +82,12 @@ export class ArCapture {
         : now - this.lastKf.t > KF_GAP && (this.lastKf.p.distanceTo(p) > KF_MOVE || this.lastKf.q.angleTo(q) > KF_TURN)));
     let kfId = -1;
     if (want && this.grab(view, m)) { kfId = this.keyframes.length - 1; this.lastKf = { p: p.clone(), q: q.clone(), t: now }; }
-    // surfaces: new or grown planes get dots; a keyframe marks the dots it saw (depth tells what was hidden)
-    if (this.frameNo % 10 === 0 || kfId >= 0) this.surf.syncPlanes(frame, ref);
-    if (kfId >= 0) { let d = null; if (this.stats.depth) { try { d = frame.getDepthInformation(view); } catch { /* not ready */ } } this.surf.observe(m, view.projectionMatrix, d, kfId); }
-    if (this.frameNo % 8 === 0) this.surf.flush();
-    const sm = this.surf; this.stats.green = sm.counts[0]; this.stats.orange = sm.counts[1]; this.stats.red = sm.counts[2]; this.stats.voxels = sm.counts[0] + sm.counts[1] + sm.counts[2];
+    // depth into the coverage map: every third frame, and always on keyframes so their views count
+    if (this.stats.depth && this.stats.tracking === 'ok' && (kfId >= 0 || this.frameNo % 3 === 0)) {
+      try { const d = frame.getDepthInformation(view); if (d) this.cov.integrate(d, view.projectionMatrix, m, kfId); } catch { /* depth not ready yet */ }
+    }
+    if (this.frameNo % 4 === 0) this.cov.flush();
+    const sm = this.cov; this.stats.green = sm.counts[0]; this.stats.orange = sm.counts[1]; this.stats.red = sm.counts[2]; this.stats.voxels = sm.counts[0] + sm.counts[1] + sm.counts[2];
     if (this.frameNo % 15 === 0) { const r = sm.nearestRed(p.x, p.z); if (r) { const want = Math.atan2(-(r[0] - p.x), -(r[1] - p.z)), yaw = new THREE.Euler().setFromQuaternion(q, 'YXZ').y; let a = want - yaw; while (a > Math.PI) a -= 2 * Math.PI; while (a < -Math.PI) a += 2 * Math.PI; this.stats.guide = { angle: a, dist: Math.hypot(r[0] - p.x, r[1] - p.z) }; } else this.stats.guide = null; }
     this.renderer.render(this.scene, this.cam);
     if (this.frameNo % 6 === 0) this.emit();
@@ -122,9 +123,9 @@ export class ArCapture {
     if (!this.sink) return; const sink = this.sink; this.sink = null; this.renderer.setAnimationLoop(null);
     while (this.pending > 0) await new Promise(r => setTimeout(r, 50));
     const meta = new TextEncoder().encode(JSON.stringify({ version: 1, kind: 'ply-ar', space: 'local-floor (metres, +y up, floor y=0)', camera: 'OpenGL (x right, y up, looking -z); m = camera-to-world, column-major',
-      device: navigator.userAgent, keyframes: this.keyframes, coverage: { green: this.surf.counts[0], orange: this.surf.counts[1], red: this.surf.counts[2], dots: this.stats.voxels, planes: this.surf.export().planes } }));
+      device: navigator.userAgent, keyframes: this.keyframes, coverage: { green: this.cov.counts[0], orange: this.cov.counts[1], red: this.cov.counts[2], dots: this.stats.voxels, cellM: .08 } }));
     sink.write(new Blob([tarHeader('poses.json', meta.length), meta, tarPad(meta.length), new Uint8Array(1024)])); await sink.close('application/x-tar');
-    const ex = this.surf.export(), c = this.surf.counts; const r: ArResult = { tar: this.id, bytes: this.stats.bytes + meta.length + 2048, keyframes: this.keyframes, seconds: this.stats.seconds,
+    this.cov.flush(); const ex = this.cov.export(), c = this.cov.counts; const r: ArResult = { tar: this.id, bytes: this.stats.bytes + meta.length + 2048, keyframes: this.keyframes, seconds: this.stats.seconds,
       coverage: { green: c[0], orange: c[1], red: c[2], voxels: c[0] + c[1] + c[2] }, points: ex.pts, colors: ex.col, path: this.path, camera: this.stats.camera };
     if (this.stats.thumb) URL.revokeObjectURL(this.stats.thumb); this.stats.thumb = null; this.renderer.dispose(); this.ended?.(r);
   }
