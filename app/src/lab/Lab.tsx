@@ -8,6 +8,7 @@ import { loadManifest, type SceneManifest } from '../walk/scene';
 import { Glass } from '../shared/Glass';
 import { Minimap } from '../walk/Walk';
 import { placesFor, Navigator, pathLength, steps, type Place, type Category } from './places';
+import { Palette, SearchIco, match } from './search';
 import { Overlay, classColor, type PinStyle, type RouteStyle, type AiStyle, type ArMode, type ArNav, type ArCap } from './overlay';
 
 const TOUCH = matchMedia('(pointer: coarse)').matches;
@@ -214,28 +215,6 @@ export function Lab() {
 
 /* ---------------- search: three designs ---------------- */
 const CATS: Category[] = ['Furniture', 'Storage', 'Exits', 'Things'];
-function match(p: Place, q: string) { q = q.trim().toLowerCase(); return !q || p.name.toLowerCase().includes(q) || p.cat.toLowerCase().includes(q) || !!p.ai?.cls.includes(q); }
-
-function Palette({ places, pinned, dist, onPick, onClose }: { places: Place[]; pinned: Place[]; dist: (p: Place) => number; onPick: (id: string) => void; onClose: () => void }) {
-  const [q, setQ] = useState(''); const [i, setI] = useState(0);
-  const pins = pinned.filter(p => match(p, q)).sort((a, b) => dist(a) - dist(b)), ai = places.filter(p => p.ai && !pinned.includes(p) && match(p, q));
-  const all = [...pins, ...ai];
-  return (
-    <div className="pal-wrap" onClick={onClose}>
-      <Glass className="pal" opts={{ radius: 22, shader: false }} onClick={(e: React.MouseEvent) => e.stopPropagation()}>
-        <div className="pal-in"><SearchIco /><input autoFocus placeholder="Search this space: desk, door, chair…" value={q} onChange={e => { setQ(e.target.value); setI(0); }}
-          onKeyDown={e => { if (e.key === 'ArrowDown') { e.preventDefault(); setI(v => Math.min(all.length - 1, v + 1)); } if (e.key === 'ArrowUp') { e.preventDefault(); setI(v => Math.max(0, v - 1)); } if (e.key === 'Enter' && all[i]) onPick(all[i].id); }} /><kbd>esc</kbd></div>
-        {pins.length > 0 && <div className="pal-g mono">Places</div>}
-        {pins.map((p, k) => <button key={p.id} className={`pal-i ${k === i ? 'on' : ''}`} onMouseEnter={() => setI(k)} onClick={() => onPick(p.id)}><span className="pal-ic">{p.cat[0]}</span><span className="pal-n">{p.name}<em>{p.cat}</em></span><span className="mono dim">{dist(p).toFixed(1)} m</span><span className="pal-go">Route ↵</span></button>)}
-        {ai.length > 0 && <div className="pal-g mono">Found by AI</div>}
-        {ai.map((p, k) => <button key={p.id} className={`pal-i ${pins.length + k === i ? 'on' : ''}`} onMouseEnter={() => setI(pins.length + k)} onClick={() => onPick(p.id)}><span className="pal-ic ai" style={{ color: classColor(p.ai!.cls) }}>✦</span><span className="pal-n">{p.name}<em>{p.ai!.cls} · {Math.round(p.ai!.conf * 100)}%</em></span><span className="mono dim">{dist(p).toFixed(1)} m</span><span className="pal-go">Route ↵</span></button>)}
-        {!all.length && <p className="pal-empty">Nothing called “{q}” here yet.</p>}
-        <div className="pal-f mono"><span>↑↓ choose</span><span>↵ route</span><span>esc close</span></div>
-      </Glass>
-    </div>
-  );
-}
-
 function Sheet({ places, dist, onPick }: { places: Place[]; dist: (p: Place) => number; onPick: (id: string) => void }) {
   const [q, setQ] = useState(''); const [cat, setCat] = useState<Category | null>(null); const [open, setOpen] = useState(true);
   const list = places.filter(p => match(p, q) && (!cat || p.cat === cat)).sort((a, b) => dist(a) - dist(b));
@@ -306,7 +285,6 @@ function ArChrome({ o, ov, engine, dest, path, turns, places, dist, onPick, onEx
   );
 }
 
-const SearchIco = () => <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden="true"><circle cx="11" cy="11" r="6.5" /><path d="m16 16 4.5 4.5" /></svg>;
 const RulerIco = () => <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="1.6" aria-hidden="true"><rect x="2.5" y="8" width="19" height="8" rx="1.5" /><path d="M6.5 8v3M10 8v4M13.5 8v3M17 8v4" /></svg>;
 const ShareIco = () => <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="1.6" aria-hidden="true"><path d="M12 15V3m0 0L8 7m4-4 4 4" /><path d="M5 12v7a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-7" /></svg>;
 const CamIco = () => <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="1.6" aria-hidden="true"><path d="M4 8h3l2-3h6l2 3h3v11H4z" /><circle cx="12" cy="13" r="3.5" /></svg>;

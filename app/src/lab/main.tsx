@@ -1,6 +1,7 @@
 import { createRoot } from 'react-dom/client';
 import '../shared/tokens.css';
 import '../walk/walk.css';
+import '../shared/places.css';
 import './lab.css';
 import { Lab } from './Lab';
 

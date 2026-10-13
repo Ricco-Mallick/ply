@@ -3,6 +3,7 @@ import { WalkEngine, type Mode } from './engine';
 import { loadManifest, type SceneManifest } from './scene';
 import { Glass } from '../shared/Glass';
 import { Tour, autoTour, SHOT_NAMES } from './tour';
+import { PlacesLayer } from './Places';
 
 const TOUCH = matchMedia('(pointer: coarse)').matches;
 const BASE = import.meta.env.BASE_URL;
@@ -19,6 +20,7 @@ export function Walk() {
   const [entered, setEntered] = useState(false);
   const [help, setHelp] = useState(true);
   const [loadErr, setLoadErr] = useState<string | null>(null);
+  const [base, setBase] = useState<URL | null>(null); const [mapX, setMapX] = useState<MapExtras>({});
   useEngine(engine);
   // cinematic tour: the pipeline's keyframes, or ones made from the walkable floor
   const [tour, setTour] = useState<Tour | null>(null); const [, tourTick] = useState(0); const [views, setViews] = useState(false);
@@ -30,7 +32,7 @@ export function Walk() {
 
   useEffect(() => {
     const e = new WalkEngine(canvas.current!); setEngine(e); if (import.meta.env.DEV) (window as any).__ply = e;
-    loadManifest().then(({ manifest, base }) => { setManifest(manifest); document.title = `${manifest.name} · Ply`; return e.load(manifest, base); }).catch(err => setLoadErr(err.message));
+    loadManifest().then(({ manifest, base }) => { setManifest(manifest); setBase(base); document.title = `${manifest.name} · Ply`; return e.load(manifest, base); }).catch(err => setLoadErr(err.message));
     return () => e.dispose();
   }, []);
   // the controls hint steps aside once someone is moving, and comes back on ? or H
@@ -72,7 +74,8 @@ export function Walk() {
       </Glass>
 
       {TOUCH && entered && engine && <Joystick engine={engine} />}
-      {engine && <Minimap engine={engine} manifest={manifest} />}
+      {engine && <PlacesLayer engine={engine} base={base} entered={entered} onMap={setMapX} />}
+      {engine && <Minimap engine={engine} manifest={manifest} extras={mapX} />}
 
       <div className={`gate ${entered ? 'gone' : ''}`}>
         <div className="gate-inner">
