@@ -3,7 +3,8 @@ import QRCode from 'qrcode';
 import { Glass } from '../../shared/Glass';
 import { listCaptures, type CaptureSummary } from '../lib/store';
 import { fmtTime } from './viz';
-import { listJobs } from './Status';
+import { listJobs, stageLabel, stagePct, stepText } from './Status';
+import { getJob, type Job } from '../lib/backend';
 
 const BASE = import.meta.env.BASE_URL;
 const PHONE = matchMedia('(pointer: coarse)').matches;
@@ -11,6 +12,7 @@ const PHONE = matchMedia('(pointer: coarse)').matches;
 
 export function Start({ onRecord, onUpload, onOpen, onJob }: { onRecord: () => void; onUpload: (files: File[]) => void; onOpen: (id: string) => void; onJob: (id: string) => void }) {
   const [jobs] = useState(() => listJobs());
+  const live = useLiveJobs(jobs.map(j => j.id));
   const [saved] = useState<CaptureSummary[]>(() => listCaptures());
   const file = useRef<HTMLInputElement>(null);
   const [drag, setDrag] = useState(false);
@@ -41,7 +43,7 @@ export function Start({ onRecord, onUpload, onOpen, onJob }: { onRecord: () => v
       {jobs.length > 0 && (
         <section className="saved">
           <h2 className="wide">Sent for processing</h2>
-          <ul>{jobs.map(j => <li key={j.id}><button onClick={() => onJob(j.id)}><span className="saved-n">{j.name}</span><span className="mono">Job {j.id.slice(0, 8)} · {new Date(j.createdAt).toLocaleString(undefined, { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })}</span></button></li>)}</ul>
+          <ul>{jobs.map(j => <li key={j.id}><button onClick={() => onJob(j.id)}><span className="saved-n">{j.name}</span><span className="mono">Job {j.id.slice(0, 8)} · {new Date(j.createdAt).toLocaleString(undefined, { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })}</span>{live[j.id] && <JobChip job={live[j.id]} />}</button></li>)}</ul>
         </section>
       )}
       {saved.length > 0 && (
@@ -65,4 +67,28 @@ function PhoneQR() {
       <div><div className="wide">Open on your phone</div><p>Scan with the phone camera. Recording needs the rear camera and motion sensors, so the phone does the walking.</p><code className="mono">{url}</code></div>
     </Glass>
   );
+}
+
+/** Live status for the remembered jobs: unfinished ones are re-checked every 5 s while the page is visible. */
+function useLiveJobs(ids: string[]) {
+  const [jobs, setJobs] = useState<Record<string, Job>>({});
+  const key = ids.join(',');
+  useEffect(() => {
+    if (!ids.length) return;
+    const ac = new AbortController(); let t = 0; const done = new Set<string>();
+    const poll = async () => {
+      const got = await Promise.all(ids.filter(id => !done.has(id)).map(id => getJob(id, ac.signal).catch(() => null)));
+      if (ac.signal.aborted) return;
+      setJobs(prev => { const n = { ...prev }; for (const j of got) if (j) { n[j.id] = j; if (j.status === 'done' || j.status === 'failed') done.add(j.id); } return n; });
+      if (done.size < ids.length) t = window.setTimeout(poll, document.hidden ? 20000 : 5000);
+    };
+    poll(); return () => { ac.abort(); clearTimeout(t); };
+  }, [key]);
+  return jobs;
+}
+
+function JobChip({ job }: { job: Job }) {
+  const text = job.status === 'done' ? 'Ready to walk' : job.status === 'failed' ? 'Failed' : job.status === 'queued' ? `Queued · #${job.queuePosition}`
+    : `${stageLabel(job.stage)} · ${stagePct(job)}%${stepText(job.message) ? ` · ${stepText(job.message)}` : ''}`;
+  return <span className={`job-chip mono ${job.status}`}><i aria-hidden="true" />{text}</span>;
 }

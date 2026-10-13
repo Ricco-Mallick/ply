@@ -14,6 +14,8 @@ print(json.dumps({"stage": "sfm", "event": "start", "msg": ""}), flush=True)
 if "--features" not in a:
     print("F1013 01:23:45 feature_extraction.cc:123] Check failed: onnx session", flush=True)
     os.abort()
+print("I20261013 07:20:21.222608 1354 pairing.cc:208] Processing block [2/2, 1/2]", flush=True)
+import time; time.sleep(float(os.environ.get("FAKE_SFM_SLEEP", "0")))
 for st in ["align", "occupancy", "train", "export"]:
     print(json.dumps({"stage": st, "event": "done", "msg": ""}), flush=True)
 (out / "scene.spz").write_bytes(b"spz"); (out / "report.json").write_text("{}")
@@ -60,3 +62,11 @@ def test_failure_message_carries_the_crash_output(tmp_path, monkeypatch):
     assert final["status"] == "failed"
     assert "Check failed: onnx session" in final["message"] and "exited with -6" in final["message"]
     assert "scenes/j1/pipeline.log" in api.uploads
+
+
+def test_sfm_progress_reaches_the_status_page(tmp_path, monkeypatch):
+    """COLMAP's own matching counter moves the job's progress and message while sfm runs."""
+    monkeypatch.setenv("FAKE_SFM_SLEEP", "22")  # long enough for one 20 s heartbeat inside sfm
+    api = run(tmp_path, monkeypatch, FAKE)
+    beat = [p for p in api.posts if isinstance(p, dict) and (p.get("message") or "").startswith("sfm: matching frames")]
+    assert beat and beat[-1]["message"] == "sfm: matching frames · 50%" and beat[-1]["progress"] > 0.05 + 0.2 * 0.3

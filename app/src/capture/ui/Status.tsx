@@ -4,6 +4,16 @@ import { getHealth, getJob, sceneUrl, type Health, type Job } from '../lib/backe
 
 const BASE = import.meta.env.BASE_URL;
 const STAGES: [string, string][] = [['frames', 'Picking sharp frames'], ['sfm', 'Solving camera positions'], ['align', 'Levelling the floor, real scale'], ['occupancy', 'Mapping walkable floor'], ['train', 'Training gaussian splats'], ['export', 'Compressing for the web']];
+// same shares of wall time as the worker's WEIGHTS (pipeline/plypipe/worker.py): turns overall progress into each stage's own
+const WEIGHTS: Record<string, number> = { frames: .05, sfm: .20, align: .02, occupancy: .02, train: .66, export: .05 };
+export function stagePct(j: Pick<Job, 'stage' | 'progress'>) {
+  if (!j.stage || !(j.stage in WEIGHTS)) return 0;
+  let start = 0; for (const [k] of STAGES) { if (k === j.stage) break; start += WEIGHTS[k]; }
+  return Math.max(0, Math.min(100, Math.round((j.progress - start) / WEIGHTS[j.stage] * 100)));
+}
+/** The worker's message without its "stage: " prefix ("sfm: matching frames · 40% · ~6 min left" -> "Matching frames · …"). */
+export const stepText = (m: string | null) => { const t = (m ?? '').replace(/^[a-z]+:\s*/, ''); return t ? t[0].toUpperCase() + t.slice(1) : ''; };
+export const stageLabel = (stage: string | null) => STAGES.find(s => s[0] === stage)?.[1] ?? 'Starting';
 const JOBS = 'ply-jobs';
 export interface JobRef { id: string; name: string; createdAt: number; }
 export function listJobs(): JobRef[] { try { return JSON.parse(localStorage.getItem(JOBS) || '[]'); } catch { return []; } }
@@ -23,6 +33,8 @@ export function Status({ jobId, onHome }: { jobId: string; onHome: () => void })
     };
     poll(); return () => { ac.abort(); clearTimeout(t); };
   }, [jobId]);
+  const [, tick] = useState(0);  // re-render every second so "updated N s ago" and the elapsed time count live
+  useEffect(() => { const i = window.setInterval(() => tick(n => n + 1), 1000); return () => clearInterval(i); }, []);
   useEffect(() => { if (job) document.title = `${job.status === 'done' ? '✓' : job.status === 'failed' ? '✕' : `${Math.round(job.progress * 100)}%`} ${job.name} · Ply`; }, [job?.status, job?.progress]);
 
   const si = job?.stage ? STAGES.findIndex(s => s[0] === job.stage) : -1;
@@ -37,14 +49,15 @@ export function Status({ jobId, onHome }: { jobId: string; onHome: () => void })
       <h1>{head}</h1>
       {job?.status === 'queued' && <p className="lead">Number {job.queuePosition} in the queue. The GPU worker picks jobs up in order; you can close this page and come back with the link below.</p>}
       {job?.status === 'queued' && health && <p className={`gpu-chip mono ${health.workersOnline ? 'on' : health.workersStarting ? 'warm' : ''}`}><span aria-hidden="true" />{health.workersOnline ? `GPU worker online${health.workers.some(w => w.busy) ? ' · busy with another job' : ' · starting yours shortly'}` : health.workersStarting ? `GPU worker starting up · ${(health.workers.find(w => w.starting)?.starting ?? '').replace(/^installing/, 'setting up')}` : 'No GPU worker running right now · the job waits safely until one starts'}</p>}
-      {job?.status === 'running' && <p className="lead">Started {ago(job.started_at ?? job.created_at)} ago. {job.message ?? ''}</p>}
+      {job?.status === 'running' && <p className="lead">Started {ago(job.started_at ?? job.created_at)} ago.</p>}
+      {job?.status === 'running' && <p className={`gpu-chip mono ${Date.now() - job.updated_at < 90_000 ? 'on is-live' : 'warm'}`}><span aria-hidden="true" />{stepText(job.message) || 'Working'} · {Date.now() - job.updated_at < 90_000 ? `live, updated ${ago(job.updated_at)} ago` : `no word from the GPU for ${ago(job.updated_at)}`}</p>}
       {job?.status === 'failed' && <p className="lead bad-t">{job.message ?? 'The pipeline stopped with an error.'} Try the Incremental camera solver or SIFT matching in Advanced settings, or recapture the red stretches.</p>}
       {job?.status === 'done' && <p className="lead">Finished in {job.started_at && job.finished_at ? ago(Date.now() - (job.finished_at - job.started_at)) : '—'}. Walk it in the browser, share the link, or open it on the big screen.</p>}
 
       <Glass className="stages" opts={{ radius: 20, shader: false }}>
         <ol>{STAGES.map(([k, label], i) => {
           const state = job?.status === 'done' ? 'done' : i < si ? 'done' : i === si ? (job?.status === 'failed' ? 'fail' : 'now') : 'todo';
-          return <li key={k} className={state}><span className="st-dot" aria-hidden="true" /><span className="st-l">{label}</span>{state === 'now' && <span className="mono st-p">{Math.round((job?.progress ?? 0) * 100)}%</span>}{state === 'done' && <span className="mono st-p">✓</span>}</li>;
+          return <li key={k} className={state}><span className="st-dot" aria-hidden="true" /><span className="st-l">{label}</span>{state === 'now' && job && <span className="mono st-p">{stagePct(job)}%</span>}{state === 'done' && <span className="mono st-p">✓</span>}</li>;
         })}</ol>
         {job?.status === 'running' && <div className="bar"><i style={{ transform: `scaleX(${job.progress})` }} /></div>}
       </Glass>

@@ -216,3 +216,11 @@ a.btn { text-decoration: none; }
 .gpu-chip span { width: 8px; height: 8px; border-radius: 50%; background: #8590A3; }
 .gpu-chip.on span { background: #3DDC97; box-shadow: 0 0 0 4px rgba(61, 220, 151, .2); }
 .gpu-chip.warm span { background: var(--amber); animation: pulse 1.2s infinite; }
+.gpu-chip.is-live span { animation: pulse 2s infinite; }
+.saved button:has(.job-chip) { flex-wrap: wrap; }
+.job-chip { flex-basis: 100%; display: inline-flex; align-items: center; gap: 7px; margin-top: 6px; font-size: 10px; color: var(--body); }
+.job-chip i { width: 6px; height: 6px; border-radius: 50%; background: var(--amber); flex: none; }
+.job-chip.running i { animation: pulse 1.6s infinite; }
+.job-chip.done i { background: #3DDC97; }
+.job-chip.failed i { background: #F2555A; }
+.job-chip.queued i { background: #8590A3; }

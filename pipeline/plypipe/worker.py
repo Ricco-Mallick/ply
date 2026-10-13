@@ -28,6 +28,8 @@ import urllib.parse
 import urllib.request
 from pathlib import Path
 
+from plypipe.progress import SfmProgress
+
 # rough share of wall time per stage on a T4, for one overall progress number
 WEIGHTS = {"frames": .05, "sfm": .20, "align": .02, "occupancy": .02, "train": .66, "export": .05}
 ORDER = list(WEIGHTS)
@@ -125,6 +127,15 @@ def frac_from(ev: dict) -> float | None:
     return None
 
 
+def eta(t0: float, f: float) -> str:
+    """The " · ~N min left" suffix, from the pace so far, once there is enough of it to mean something."""
+    el = time.time() - t0
+    if f < 0.03 or f >= 0.99 or el < 45:
+        return ""
+    left = el * (1 - f) / f
+    return f" · ~{max(1, round(left / 60))} min left" if left >= 60 else " · under a minute left"
+
+
 def stage_limits() -> dict:
     lim = dict(STAGE_LIMITS_MIN)
     for part in filter(None, os.environ.get("PLY_STAGE_LIMITS", "").split(",")):
@@ -214,6 +225,8 @@ def run_job(api: Api, job: dict, work: Path, extra: list[str]) -> None:
             print("[worker] " + " ".join(cmd), flush=True)
             p = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1)
             last_err, tail = "", collections.deque(maxlen=40)
+            sfm = SfmProgress()  # real progress inside sfm, from COLMAP's own counters
+            step = {"key": None, "t0": time.time()}
 
             def watchdog():  # stop-loss per stage
                 while p.poll() is None:
@@ -233,6 +246,13 @@ def run_job(api: Api, job: dict, work: Path, extra: list[str]) -> None:
                     except ValueError:
                         if line.strip():
                             tail.append(line.rstrip()[:300])
+                        r = sfm.feed(line) if state["stage"] == "sfm" else None
+                        if r:
+                            frac, msg, key, sf = r
+                            if key != step["key"]:
+                                step.update(key=key, t0=time.time())
+                            state["frac"] = max(state["frac"], frac)
+                            state["msg"] = f"sfm: {msg}{'' if key == 'map' else eta(step['t0'], sf)}"[:200]
                         continue
                     st = ev.get("stage")
                     if st in WEIGHTS:
@@ -250,9 +270,13 @@ def run_job(api: Api, job: dict, work: Path, extra: list[str]) -> None:
                                     save_checkpoint(api, jid, out, root, job["args"], st)
                                 except Exception as e:  # a missed checkpoint only costs time on a retry
                                     print(f"[worker] checkpoint after {st} failed: {e}", flush=True)
+                        if st == "sfm" and ev.get("images"):
+                            sfm.n_images = int(ev["images"])
                         f = frac_from(ev) if ev.get("event") == "progress" else None
                         if f is not None:
                             state["frac"] = max(state["frac"], f)
+                            if st == "train":
+                                state["msg"] = f"train: {round(f * 100)}%{eta(state['stage_t0'], f)}"
                         elif ev.get("event") == "progress" and ev.get("msg"):  # named steps inside a stage ("matching", "incremental mapping")
                             state["msg"] = f"{st}: {ev['msg']}"[:200]
                         if ev.get("event") in ("start", "done", "warn"):
