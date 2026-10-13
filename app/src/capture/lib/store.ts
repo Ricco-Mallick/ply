@@ -4,8 +4,10 @@
 import type { Quality } from './analyzer';
 import type { SensorSample } from './sensors';
 
-export interface Clip { id: string; name: string; source: 'camera' | 'upload'; mime: string; size: number; duration: number; width: number; height: number; createdAt: number;
-  quality: Quality[]; sensors: SensorSample[]; path: { x: number; z: number; t: number }[]; lock?: Record<string, unknown>; loopClosed?: boolean; }
+export interface Clip { id: string; name: string; source: 'camera' | 'upload' | 'ar'; mime: string; size: number; duration: number; width: number; height: number; createdAt: number;
+  quality: Quality[]; sensors: SensorSample[]; path: { x: number; z: number; t: number }[]; lock?: Record<string, unknown>; loopClosed?: boolean;
+  /** AR scans: a tar of keyframes + poses instead of a video; the coverage cloud is stored next to it as `${id}.cloud` */
+  ar?: { keyframes: number; coverage: { green: number; orange: number; red: number; voxels: number }; camera: string | null; walked: number }; }
 export interface Capture { id: string; name: string; createdAt: number; clips: Clip[]; }
 
 const INDEX = 'ply-captures';
@@ -29,7 +31,7 @@ export async function loadCapture(id: string): Promise<Capture | null> {
   try { return JSON.parse(await (await (await (d as any).getFileHandle(`${id}.json`)).getFile()).text()); } catch { return null; }
 }
 export async function deleteCapture(c: Capture) {
-  for (const k of c.clips) await removeFile(k.id); await removeFile(`${c.id}.json`); memJson.delete(c.id);
+  for (const k of c.clips) { await removeFile(k.id); if (k.ar) await removeFile(`${k.id}.cloud`); } await removeFile(`${c.id}.json`); memJson.delete(c.id);
   try { localStorage.setItem(INDEX, JSON.stringify(listCaptures().filter(x => x.id !== c.id))); } catch { /* ignore */ }
 }
 
@@ -63,3 +65,14 @@ async function removeFile(id: string) { memFiles.delete(id); const d = await dir
 
 export async function storageLeft() { try { const e = await navigator.storage.estimate(); return (e.quota ?? 0) - (e.usage ?? 0); } catch { return null; } }
 export async function persist() { try { return await navigator.storage.persist?.() ?? false; } catch { return false; } }
+
+/** The AR coverage cloud: float32 xyz then uint8 rgb per voxel, behind a 4-byte count. */
+export async function saveCloud(id: string, pts: Float32Array, col: Float32Array) {
+  const n = pts.length / 3, rgb = new Uint8Array(n * 3); for (let i = 0; i < n * 3; i++) rgb[i] = Math.round(col[i] * 255);
+  await storeUpload(`${id}.cloud`, new File([new Uint32Array([n]), new Float32Array(pts), rgb], `${id}.cloud`));
+}
+export async function loadCloud(id: string) {
+  const b = await readFile(`${id}.cloud`, 'application/octet-stream'); if (!b) return null; const buf = await b.arrayBuffer(), n = new Uint32Array(buf, 0, 1)[0];
+  const pts = new Float32Array(buf, 4, n * 3), rgb = new Uint8Array(buf, 4 + n * 12, n * 3), col = new Float32Array(n * 3); for (let i = 0; i < n * 3; i++) col[i] = rgb[i] / 255;
+  return { pts, col };
+}

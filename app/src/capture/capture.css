@@ -226,3 +226,24 @@ a.btn { text-decoration: none; }
 .job-chip.queued i { background: #8590A3; }
 /* phones: no backdrop blur over the moving camera feed (the GPU re-blurs it every frame under each control); tinted glass instead */
 @media (pointer: coarse) { .live .lg, .live .lg.has-gl { backdrop-filter: none; -webkit-backdrop-filter: none; background: rgba(10, 14, 20, .52); } }
+
+/* ---- AR scan ---- */
+.arscan { min-height: 100dvh; }
+.ar-intro, .ar-preview { max-width: 640px; margin: 0 auto; padding: calc(18px + env(safe-area-inset-top, 0px)) 18px 40px; }
+.ar-intro h1, .ar-preview h1 { font: 400 clamp(38px, 9vw, 58px)/1 var(--font-display); margin: 10px 0 14px; } .ar-intro h1 em, .ar-preview h1 em { color: var(--accent); }
+.ar-tips { margin: 0 0 22px; padding-left: 18px; color: var(--body); line-height: 1.9; }
+.ar-hud { position: fixed; inset: 0; z-index: 50; pointer-events: none; color: #fff; font-family: var(--font-body); }
+.ar-hud > * { pointer-events: auto; }
+.ah-top { position: absolute; top: calc(14px + env(safe-area-inset-top, 0px)); left: 12px; right: 12px; display: flex; gap: 8px; align-items: center; }
+.ah-pill { display: inline-flex; align-items: center; gap: 8px; padding: 8px 12px; border-radius: 999px; background: rgba(0, 0, 0, .5); font-size: 10px; }
+.ah-pill i { width: 8px; height: 8px; border-radius: 50%; background: #8590A3; } .ah-pill.ok i { background: #F2555A; animation: pulse 1.2s infinite; } .ah-pill.lost i { background: var(--amber); }
+.ah-x { margin-left: auto; width: 38px; height: 38px; border-radius: 50%; border: 0; background: rgba(0, 0, 0, .5); color: #fff; font-size: 22px; }
+.ah-guide { position: absolute; left: 50%; top: 42%; width: 64px; height: 64px; margin: -32px 0 0 -32px; border-radius: 50%; background: rgba(242, 85, 90, .9); display: grid; place-items: center; font: 700 30px/1 var(--font-body); box-shadow: 0 0 0 8px rgba(242, 85, 90, .25); transition: transform .25s linear; pointer-events: none; }
+.ah-bottom { position: absolute; left: 12px; right: 12px; bottom: calc(18px + env(safe-area-inset-bottom, 0px)); display: flex; flex-direction: column; align-items: center; gap: 10px; }
+.ah-tip { margin: 0; padding: 10px 14px; border-radius: 16px; background: rgba(0, 0, 0, .55); font: 600 14px/1.35 var(--font-body); text-align: center; max-width: 100%; } .ah-tip.warn { background: rgba(242, 85, 90, .9); }
+.ah-cov { width: 100%; height: 8px; border-radius: 8px; overflow: hidden; display: flex; background: rgba(255, 255, 255, .2); } .ah-cov i { height: 100%; transition: width .4s; }
+.ah-legend { display: flex; gap: 14px; font-size: 9.5px; text-shadow: 0 1px 4px #000; } .ah-legend b { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 6px; }
+.ah-rec { width: 76px; height: 76px; border-radius: 50%; border: 4px solid #fff; background: rgba(0, 0, 0, .25); display: grid; place-items: center; padding: 0; }
+.ah-rec span { width: 56px; height: 56px; border-radius: 50%; background: #F2555A; transition: all .25s; } .ah-rec.on span { width: 28px; height: 28px; border-radius: 6px; } .ah-rec:disabled { opacity: .4; }
+.cloud-view { width: 100%; border-radius: 16px; overflow: hidden; background: radial-gradient(circle at 50% 40%, #121a2a, #070B14); touch-action: none; }
+.ar-stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; margin: 14px 0; } .ar-stats div { padding: 10px; border-radius: 12px; background: rgba(255, 255, 255, .05); } .ar-stats dt { font-size: 9px; color: var(--dim); } .ar-stats dd { margin: 4px 0 0; font-size: 13px; color: var(--fg); }

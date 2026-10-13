@@ -270,3 +270,18 @@ def robust_bounds(pts: np.ndarray, lo: float = 2.0, hi: float = 98.0, margin: fl
     mn = np.percentile(pts, lo, axis=0) - margin
     mx = np.percentile(pts, hi, axis=0) + margin
     return {"min": [float(v) for v in mn], "max": [float(v) for v in mx]}
+
+
+def umeyama(src: np.ndarray, dst: np.ndarray) -> tuple[float, np.ndarray, np.ndarray]:
+    """Similarity (s, R, t) minimising |s R src + t - dst|^2 (Umeyama 1991). src, dst: (n, 3), n >= 3."""
+    mu_s, mu_d = src.mean(0), dst.mean(0)
+    a, b = src - mu_s, dst - mu_d
+    cov = b.T @ a / len(src)
+    U, D, Vt = np.linalg.svd(cov)
+    S = np.eye(3)
+    if np.linalg.det(U) * np.linalg.det(Vt) < 0:
+        S[2, 2] = -1
+    R = U @ S @ Vt
+    var = (a ** 2).sum() / len(src)
+    s = float(np.trace(np.diag(D) @ S) / var) if var > 0 else 1.0
+    return s, R, mu_d - s * R @ mu_s

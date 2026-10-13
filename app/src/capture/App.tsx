@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react';
 import { analyseFile } from './lib/session';
 import { deleteCapture, loadCapture, newId, saveCapture, storeUpload, type Capture, type Clip } from './lib/store';
 import { Live } from './ui/Live';
+import { ArScan } from './ui/ArScan';
 import { Permissions, type Granted } from './ui/Permissions';
 import { Review } from './ui/Review';
 import { Start } from './ui/Start';
@@ -11,7 +12,7 @@ import { Submit } from './ui/Submit';
 import { Status, rememberJob } from './ui/Status';
 import { Tutorial } from './ui/Tutorial';
 
-type Screen = 'start' | 'perms' | 'tutorial' | 'live' | 'review' | 'submit' | 'analysing' | 'status';
+type Screen = 'start' | 'perms' | 'tutorial' | 'live' | 'ar' | 'review' | 'submit' | 'analysing' | 'status';
 const SEEN = 'ply-tutorial-seen';
 const seen = () => { try { return localStorage.getItem(SEEN) === '1'; } catch { return false; } };
 
@@ -32,6 +33,7 @@ export function App() {
   const update = (c: Capture) => { setCap(c); saveCapture(c); };
 
   const record = () => { setCap(ensureCapture()); go('perms'); };
+  const scan = () => { setCap(ensureCapture()); go('ar'); };
   const onGranted = (g: Granted) => { setGranted(g); go(seen() ? 'live' : 'tutorial'); };
   const onClip = (clip: Clip) => { const c = ensureCapture(); update({ ...c, clips: [...c.clips, clip] }); go('review'); };
 
@@ -57,11 +59,12 @@ export function App() {
   return (
     <>
       {err && <div className="toast" role="alert" onClick={() => setErr(null)}>{err}</div>}
-      {screen === 'start' && <Start onRecord={record} onUpload={onUpload} onOpen={open} onJob={id => { setJobId(id); history.pushState({ screen: 'status' }, '', `?job=${id}`); setScreen('status'); }} />}
+      {screen === 'start' && <Start onRecord={record} onScan={scan} onUpload={onUpload} onOpen={open} onJob={id => { setJobId(id); history.pushState({ screen: 'status' }, '', `?job=${id}`); setScreen('status'); }} />}
       {screen === 'perms' && <Permissions onReady={onGranted} onBack={() => history.back()} />}
       {screen === 'tutorial' && <Tutorial onDone={() => { try { localStorage.setItem(SEEN, '1'); } catch { /* ignore */ } setScreen('live'); history.replaceState({ screen: 'live' }, ''); }} />}
       {screen === 'live' && (granted ? <Live granted={granted} clipNo={(cap?.clips.length ?? 0) + 1} onClip={onClip} onClose={() => go(cap?.clips.length ? 'review' : 'start')} /> : <Relaunch onGo={() => go('perms')} />)}
-      {screen === 'review' && cap && <Review capture={cap} onMore={() => go('perms')} onRetake={retake} onContinue={() => go('submit')} onHome={() => { setCap(null); go('start'); }} />}
+      {screen === 'ar' && <ArScan scanNo={(cap?.clips.length ?? 0) + 1} onClip={onClip} onClose={() => go(cap?.clips.length ? 'review' : 'start')} />}
+      {screen === 'review' && cap && <Review capture={cap} onMore={() => go(cap.clips.at(-1)?.ar ? 'ar' : 'perms')} onRetake={retake} onContinue={() => go('submit')} onHome={() => { setCap(null); go('start'); }} />}
       {screen === 'submit' && cap && <Submit capture={cap} onRename={n => update({ ...cap, name: n })} onBack={() => history.back()} onQueued={id => { rememberJob({ id, name: cap.name, createdAt: Date.now() }); setJobId(id); history.replaceState({ screen: 'status' }, '', `?job=${id}`); setScreen('status'); }} />}
       {screen === 'status' && jobId && <Status jobId={jobId} onHome={() => { history.replaceState({ screen: 'start' }, '', location.pathname); setScreen('start'); }} />}
       {screen === 'analysing' && (

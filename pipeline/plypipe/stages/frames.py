@@ -11,6 +11,7 @@ from __future__ import annotations
 import json
 import shutil
 import subprocess
+import tarfile
 from pathlib import Path
 
 import cv2
@@ -83,7 +84,7 @@ def run_stage(ctx: Ctx, src: Path) -> dict:
         shutil.rmtree(out)
     out.mkdir(parents=True)
 
-    if src.is_dir() and not any(p.suffix.lower() in VIDEO_EXT for p in src.iterdir()):
+    if src.is_dir() and not any(p.suffix.lower() in VIDEO_EXT or p.suffix.lower() == ".tar" for p in src.iterdir()):
         files = sorted(p for p in src.iterdir() if p.suffix.lower() in IMAGE_EXT)
         if not files:
             raise ValueError(f"no images in {src}")
@@ -104,7 +105,10 @@ def run_stage(ctx: Ctx, src: Path) -> dict:
         return {"source": "images", "input": len(files), "kept": kept, "dropped": len(files) - kept,
                 "sharpnessMedian": float(np.median(scores)) if scores else 0.0}
 
+    tars = sorted(p for p in src.iterdir() if p.suffix.lower() == ".tar") if src.is_dir() else []
     videos = sorted(p for p in src.iterdir() if p.suffix.lower() in VIDEO_EXT) if src.is_dir() else [src]
+    if tars:
+        return _ar_frames(ctx, src, tars, videos, out, fps, oversample, long_side, max_frames)
     if not videos:
         raise ValueError(f"no videos in {src}")
     # the capture app ships capture.json (quality + sensor log) next to the clips; keep it with the job
@@ -152,3 +156,60 @@ def _video_frames(ctx: Ctx, src: Path, out: Path, start: int, fps: float, oversa
             "extracted": len(files), "windows": -(-len(files) // oversample), "kept": len(keep),
             "dropped": -(-len(files) // oversample) - len(keep),
             "sharpnessMedian": float(np.median([scores[i] for i in keep])) if keep else 0.0}
+
+
+def _ar_frames(ctx: Ctx, src: Path, tars: list[Path], videos: list[Path], out: Path, fps: float, oversample: int,
+               long_side: int, max_frames) -> dict:
+    """AR scans from the capture app: tars of keyframes (already chosen on the phone for motion and spacing) plus
+    poses.json (camera-to-world in ARCore's 'local-floor' space: metres, +y up, floor at y = 0). Frames are copied
+    in order, the softest few percent dropped; poses go to ar_poses.json for align (real scale, level floor)."""
+    if (src / "capture.json").exists():
+        shutil.copy2(src / "capture.json", ctx.out / "capture.json")
+    kept, segments, dropped, scores_all = 0, [], 0, []
+    for seg, tp in enumerate(tars):
+        with tarfile.open(tp) as tf:
+            meta = json.loads(tf.extractfile("poses.json").read())
+            frames = []
+            for kf in meta["keyframes"]:
+                try:
+                    data = tf.extractfile(kf["file"]).read()
+                except (KeyError, AttributeError):
+                    continue
+                img = cv2.imdecode(np.frombuffer(data, np.uint8), cv2.IMREAD_COLOR)
+                if img is None:
+                    continue
+                frames.append((kf, img, sharpness(img)))
+        if not frames:
+            ctx.log.emit("frames", "warn", f"{tp.name}: no readable keyframes")
+            continue
+        sh = np.array([f[2] for f in frames])
+        floor = np.percentile(sh, float(ctx.opt("ar_drop_pct", 5)))  # the phone already skips fast motion
+        cap = int(max_frames / len(tars)) if max_frames else None
+        step = max(1, int(np.ceil(len(frames) / cap))) if cap else 1
+        seg_frames = []
+        for i, (kf, img, sc) in enumerate(frames):
+            if sc < floor or i % step:
+                dropped += 1
+                continue
+            h, w = img.shape[:2]
+            s = long_side / max(h, w)
+            if s < 1:
+                img = cv2.resize(img, (round(w * s), round(h * s)), interpolation=cv2.INTER_AREA)
+            name = f"{kept:06d}.jpg"
+            cv2.imwrite(str(out / name), img, [cv2.IMWRITE_JPEG_QUALITY, 95])
+            seg_frames.append({"frame": name, "m": kf["m"], "t": kf.get("t"), "fx": kf["fx"] * min(1, s), "fy": kf["fy"] * min(1, s),
+                               "cx": kf["cx"] * min(1, s), "cy": kf["cy"] * min(1, s)})
+            scores_all.append(sc)
+            kept += 1
+        segments.append({"file": tp.name, "keyframes": len(frames), "kept": len(seg_frames), "frames": seg_frames,
+                         "coverage": meta.get("coverage"), "device": meta.get("device")})
+    if not kept:
+        raise ValueError("the AR scans held no usable frames")
+    (ctx.out / "ar_poses.json").write_text(json.dumps({"space": "local-floor", "segments": segments}))
+    extra = []
+    for v in videos:  # uploaded videos next to AR scans: frames appended after the scans (no poses)
+        st = _video_frames(ctx, v, out, kept, fps, oversample, long_side, None)
+        extra.append({"file": v.name, "firstFrame": kept, **st})
+        kept += st["kept"]
+    return {"source": "ar", "segments": [{k: v for k, v in sg.items() if k != "frames"} for sg in segments], "videos": extra,
+            "kept": kept, "dropped": dropped, "sharpnessMedian": float(np.median(scores_all)) if scores_all else 0.0}

@@ -4,13 +4,15 @@ import { Glass } from '../../shared/Glass';
 import { listCaptures, type CaptureSummary } from '../lib/store';
 import { fmtTime } from './viz';
 import { listJobs, stageLabel, stagePct, stepText } from './Status';
+import { arSupported } from '../lib/ar';
 import { getJob, type Job } from '../lib/backend';
 
 const BASE = import.meta.env.BASE_URL;
 const PHONE = matchMedia('(pointer: coarse)').matches;
 
 
-export function Start({ onRecord, onUpload, onOpen, onJob }: { onRecord: () => void; onUpload: (files: File[]) => void; onOpen: (id: string) => void; onJob: (id: string) => void }) {
+export function Start({ onRecord, onScan, onUpload, onOpen, onJob }: { onRecord: () => void; onScan: () => void; onUpload: (files: File[]) => void; onOpen: (id: string) => void; onJob: (id: string) => void }) {
+  const [ar, setAr] = useState(false); useEffect(() => { arSupported().then(setAr); }, []);
   const [jobs] = useState(() => listJobs());
   const live = useLiveJobs(jobs.map(j => j.id));
   const [saved] = useState<CaptureSummary[]>(() => listCaptures());
@@ -26,10 +28,16 @@ export function Start({ onRecord, onUpload, onOpen, onJob }: { onRecord: () => v
         <p className="lead">Record the space with this phone's camera and Ply coaches you live, or upload videos you already have. Both end up as the same walkable twin.</p>
       </section>
       <div className="choices">
-        <Glass as="button" className="choice primary" opts={{ press: true, radius: 22 }} onClick={onRecord}>
+        {ar && <Glass as="button" className="choice primary" opts={{ press: true, radius: 22 }} onClick={onScan}>
+          <span className="choice-ico" aria-hidden="true"><svg viewBox="0 0 24 24" width="26" height="26" fill="none" stroke="currentColor" strokeWidth="1.6"><path d="M3 8V5a2 2 0 0 1 2-2h3M16 3h3a2 2 0 0 1 2 2v3M21 16v3a2 2 0 0 1-2 2h-3M8 21H5a2 2 0 0 1-2-2v-3" /><circle cx="8" cy="10" r="1" fill="currentColor" /><circle cx="12" cy="8" r="1" fill="currentColor" /><circle cx="16" cy="11" r="1" fill="currentColor" /><circle cx="10" cy="14" r="1" fill="currentColor" /><circle cx="14" cy="15" r="1" fill="currentColor" /></svg></span>
+          <span className="choice-t">AR scan</span>
+          <span className="choice-d">Watch the room fill in with live coverage dots. Real scale, level floor. Best results.</span>
+          <span className="choice-note mono">Recommended on this phone</span>
+        </Glass>}
+        <Glass as="button" className={`choice ${ar ? '' : 'primary'}`} opts={{ press: true, radius: 22 }} onClick={onRecord}>
           <span className="choice-ico" aria-hidden="true"><svg viewBox="0 0 24 24" width="26" height="26" fill="none" stroke="currentColor" strokeWidth="1.6"><rect x="2.5" y="6" width="14" height="12" rx="2.5" /><path d="m16.5 10.5 5-3v9l-5-3" /><circle cx="9.5" cy="12" r="2.4" fill="currentColor" stroke="none" /></svg></span>
           <span className="choice-t">Record with camera</span>
-          <span className="choice-d">Live guidance, sensors, quality map. Best results.</span>
+          <span className="choice-d">{ar ? 'Video with live tips and a quality map.' : 'Live guidance, sensors, quality map. Best results.'}</span>
           {!PHONE && <span className="choice-note mono">Works best on a phone</span>}
         </Glass>
         <Glass as="button" className={`choice ${drag ? 'drag' : ''}`} opts={{ press: true, radius: 22 }} onClick={() => file.current?.click()}>

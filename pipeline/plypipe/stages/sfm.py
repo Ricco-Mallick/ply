@@ -131,8 +131,13 @@ def run_stage(ctx: Ctx) -> dict:
     # would try to join unrelated views and miss the real overlaps; pair exhaustively while that stays affordable
     exhaustive_max = int(ctx.opt("exhaustive_max", 250))
     try:
-        if json.loads((ctx.out / ".done" / "frames.json").read_text()).get("source") == "videos":
+        source = json.loads((ctx.out / ".done" / "frames.json").read_text()).get("source")
+        if source == "videos":
             exhaustive_max = max(exhaustive_max, 700)
+        elif source == "ar" and ctx.opt("exhaustive_max") is None:
+            # AR keyframes come in walking order, many of them: sequential pairing with quadratic overlap finds the
+            # loops too, at a fraction of exhaustive matching's cost (n^2 pairs took 20 min for 146 frames on a T4)
+            exhaustive_max = 150
     except (OSError, ValueError):
         pass
     try:
