@@ -115,6 +115,28 @@ def run_stage(ctx: Ctx) -> dict:
         out_file.write_text(json.dumps({"version": 1, "source": "none", "places": []}))
         ctx.log.emit("label", "warn", f"labelling skipped: could not load SAM 3 ({str(e)[:200]})")
         return {"skipped": "weights"}
+    dets: list[dict] = []
+    try:
+        dets = _detect(ctx, model, proc, ims, torch, Image)
+    except Exception as e:  # OOM, an API change, a bad frame...: no labels, but the twin goes on
+        ctx.log.emit("label", "warn", f"labelling stopped: {type(e).__name__}: {str(e)[:200]}")
+        out_file.write_text(json.dumps({"version": 1, "source": "none", "places": []}))
+        return {"skipped": f"{type(e).__name__}"}
+    finally:
+        del model
+        import gc
+        gc.collect()
+        torch.cuda.empty_cache()  # training runs next in a separate process: give it the whole GPU
+    objects = lift(dets, xyz)
+    places = places_from(objects)
+    out_file.write_text(json.dumps({"version": 1, "source": "sam3", "places": places}, indent=1))
+    counts: dict[str, int] = defaultdict(int)
+    for o in objects:
+        counts[o["cls"]] += 1
+    return {"frames": len(ims), "detections": len(dets), "objects": len(objects), "byClass": dict(counts)}
+
+def _detect(ctx: Ctx, model, proc, ims, torch, Image) -> list[dict]:
+    """SAM 3 on each frame (encoded once), every prompt; masks -> the COLMAP point ids observed inside them."""
     texts = {p: proc(text=p, return_tensors="pt").to("cuda") for p in PROMPTS}
     dets = []
     thr = float(ctx.opt("label_threshold", 0.5))
@@ -124,7 +146,7 @@ def run_stage(ctx: Ctx) -> dict:
         obs = [(p.xy, p.point3D_id) for p in im.points2D if p.has_point3D()]
         if not obs:
             continue
-        uv = np.array([o[0] for o in obs]).round().astype(int)
+        uv = np.floor(np.array([o[0] for o in obs])).astype(int)  # COLMAP pixel centres are at +0.5
         ids = np.array([o[1] for o in obs])
         ok = (uv[:, 0] >= 0) & (uv[:, 1] >= 0) & (uv[:, 0] < W) & (uv[:, 1] < H)
         uv, ids = uv[ok], ids[ok]
@@ -141,12 +163,4 @@ def run_stage(ctx: Ctx) -> dict:
                         dets.append({"cls": prompt, "score": float(sc), "frame": im.name, "ids": hit})
         if n % 5 == 0:
             ctx.log.emit("label", "progress", f"frame {n + 1}/{len(ims)}", done=n + 1, total=len(ims))
-    objects = lift(dets, xyz)
-    places = places_from(objects)
-    out_file.write_text(json.dumps({"version": 1, "source": "sam3", "places": places}, indent=1))
-    counts: dict[str, int] = defaultdict(int)
-    for o in objects:
-        counts[o["cls"]] += 1
-    del model
-    torch.cuda.empty_cache()
-    return {"frames": len(ims), "detections": len(dets), "objects": len(objects), "byClass": dict(counts)}
+    return dets

@@ -71,10 +71,12 @@ export default {
     try { const r = await route(req, env, ctx); const h = new Headers(r.headers); for (const [k, v] of Object.entries(c)) h.set(k, v); return new Response(r.body, { status: r.status, headers: h }); }
     catch (e) { return json({ error: (e as Error).message || 'server error' }, 500, c); }
   },
-  /** Every 10 minutes: jobs waiting over 2 minutes and no worker seen for 90 s -> wake Modal again (a missed trigger). */
+  /** Every 10 minutes: work waiting (a missed trigger, or a job whose worker died) and no worker seen for 90 s -> wake Modal. */
   async scheduled(_e: unknown, env: Env, ctx: Ctx) {
     const now = Date.now();
-    const waiting = await env.DB.prepare("SELECT COUNT(*) n FROM jobs WHERE status='queued' AND created_at < ? AND capture_id NOT LIKE 'rehearsal-%'").bind(now - 120_000).first();
+    // queued for 2+ minutes, or 'running' with no heartbeat for 20 minutes (its worker died) and still allowed a retry
+    const waiting = await env.DB.prepare(`SELECT COUNT(*) n FROM jobs WHERE capture_id NOT LIKE 'rehearsal-%' AND
+      ((status='queued' AND created_at < ?) OR (status='running' AND updated_at < ? AND attempts < ?))`).bind(now - 120_000, now - STALE_MS, MAX_ATTEMPTS).first();
     const live = await env.DB.prepare('SELECT COUNT(*) n FROM workers WHERE last_seen > ?').bind(now - 90_000).first();
     if (waiting.n > 0 && live.n === 0) ctx.waitUntil(kickModal(env, 'cron'));
   },

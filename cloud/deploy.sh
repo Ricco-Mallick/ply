@@ -12,6 +12,8 @@ eval "$B2OUT"
 source .b2
 sed -i -e "s#^S3_ENDPOINT = .*#S3_ENDPOINT = \"$S3_ENDPOINT\"#" -e "s#^S3_REGION = .*#S3_REGION = \"$S3_REGION\"#" -e "s#^S3_BUCKET = .*#S3_BUCKET = \"$S3_BUCKET\"#" wrangler.toml
 $W d1 execute ply-jobs --remote --file schema.sql -y >/dev/null
+# migrations for databases created before a column existed (each fails harmlessly once applied)
+$W d1 execute ply-jobs --remote --command "ALTER TABLE jobs ADD COLUMN attempts INTEGER NOT NULL DEFAULT 0" -y >/dev/null 2>&1 || true
 # deploy first: `secret put` on a Worker that doesn't exist yet stops at an interactive prompt.
 # (a brand-new account also needs a workers.dev subdomain: PUT /accounts/<id>/workers/subdomain, done once for ricco-ply)
 URL=$($W deploy 2>&1 | grep -o 'https://[a-z0-9.-]*workers\.dev' | head -1)

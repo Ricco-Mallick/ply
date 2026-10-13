@@ -191,45 +191,50 @@ def _ar_frames(ctx: Ctx, src: Path, tars: list[Path], videos: list[Path], out: P
     kept, segments, dropped, scores_all = 0, [], 0, []
     skips = _exclusions(ctx)
     for seg, tp in enumerate(tars):
+        # two passes: score every keyframe from a small greyscale decode, then fully decode only the ones kept
+        # (an AR video records 4 frames/s; decoding them all at 886x1920 at once would run out of memory)
         with tarfile.open(tp) as tf:
             meta = json.loads(tf.extractfile("poses.json").read())
-            frames = []
+            scored = []
             for kf in meta["keyframes"]:
                 try:
                     data = tf.extractfile(kf["file"]).read()
                 except (KeyError, AttributeError):
                     continue
-                img = cv2.imdecode(np.frombuffer(data, np.uint8), cv2.IMREAD_COLOR)
-                if img is None:
-                    continue
-                frames.append((kf, img, sharpness(img)))
-        if not frames:
-            ctx.log.emit("frames", "warn", f"{tp.name}: no readable keyframes")
-            continue
-        sh = np.array([f[2] for f in frames])
-        floor = np.percentile(sh, float(ctx.opt("ar_drop_pct", 5)))  # the phone already skips fast motion
-        # many frames (video mode records 4/s): keep the sharpest of each run of neighbours, up to the cap
-        cap = int((max_frames or int(ctx.opt("ar_max_frames", 450))) / len(tars))
-        step = max(1, int(np.ceil(len(frames) / cap)))
-        keep = {i for w0 in range(0, len(frames), step) for i in [max(range(w0, min(w0 + step, len(frames))), key=lambda k: frames[k][2])]}
-        seg_frames = []
-        for i, (kf, img, sc) in enumerate(frames):
-            t = (kf.get("t") or 0) / 1000
-            if i not in keep or (step == 1 and sc < floor) or any(a <= t <= b for a, b in skips.get(tp.name, [])):
-                dropped += 1
+                small = cv2.imdecode(np.frombuffer(data, np.uint8), cv2.IMREAD_REDUCED_GRAYSCALE_2)
+                if small is not None:
+                    scored.append((kf, sharpness(small)))
+            if not scored:
+                ctx.log.emit("frames", "warn", f"{tp.name}: no readable keyframes")
                 continue
-            h, w = img.shape[:2]
-            s = long_side / max(h, w)
-            if s < 1:
-                img = cv2.resize(img, (round(w * s), round(h * s)), interpolation=cv2.INTER_AREA)
-            name = f"{kept:06d}.jpg"
-            cv2.imwrite(str(out / name), img, [cv2.IMWRITE_JPEG_QUALITY, 95])
-            seg_frames.append({"frame": name, "m": kf["m"], "t": kf.get("t"), "fx": kf["fx"] * min(1, s), "fy": kf["fy"] * min(1, s),
-                               "cx": kf["cx"] * min(1, s), "cy": kf["cy"] * min(1, s)})
-            scores_all.append(sc)
-            _note_frames(ctx, [{"frame": name, "clip": tp.name, "t": round((kf.get("t") or 0) / 1000, 2)}])
-            kept += 1
-        segments.append({"file": tp.name, "keyframes": len(frames), "kept": len(seg_frames), "frames": seg_frames,
+            sh = np.array([f[1] for f in scored])
+            floor = np.percentile(sh, float(ctx.opt("ar_drop_pct", 5)))  # the phone already skips fast motion
+            # many frames (video mode): keep the sharpest of each run of neighbours, up to the cap
+            cap = int((max_frames or int(ctx.opt("ar_max_frames", 450))) / len(tars))
+            step = max(1, int(np.ceil(len(scored) / cap)))
+            keep = {i for w0 in range(0, len(scored), step) for i in [max(range(w0, min(w0 + step, len(scored))), key=lambda k: scored[k][1])]}
+            seg_frames = []
+            for i, (kf, sc) in enumerate(scored):
+                t = (kf.get("t") or 0) / 1000
+                if i not in keep or (step == 1 and sc < floor) or any(a <= t <= b for a, b in skips.get(tp.name, [])):
+                    dropped += 1
+                    continue
+                img = cv2.imdecode(np.frombuffer(tf.extractfile(kf["file"]).read(), np.uint8), cv2.IMREAD_COLOR)
+                if img is None:
+                    dropped += 1
+                    continue
+                h, w = img.shape[:2]
+                s = long_side / max(h, w)
+                if s < 1:
+                    img = cv2.resize(img, (round(w * s), round(h * s)), interpolation=cv2.INTER_AREA)
+                name = f"{kept:06d}.jpg"
+                cv2.imwrite(str(out / name), img, [cv2.IMWRITE_JPEG_QUALITY, 95])
+                seg_frames.append({"frame": name, "m": kf["m"], "t": kf.get("t"), "fx": kf["fx"] * min(1, s), "fy": kf["fy"] * min(1, s),
+                                   "cx": kf["cx"] * min(1, s), "cy": kf["cy"] * min(1, s)})
+                scores_all.append(sc)
+                _note_frames(ctx, [{"frame": name, "clip": tp.name, "t": round(t, 2)}])
+                kept += 1
+        segments.append({"file": tp.name, "keyframes": len(scored), "kept": len(seg_frames), "frames": seg_frames,
                          "coverage": meta.get("coverage"), "device": meta.get("device")})
     if not kept:
         raise ValueError("the AR scans held no usable frames")

@@ -55,7 +55,7 @@ export function App() {
   const onPreview = (jobId: string) => { if (cap) update({ ...cap, preview: { jobId, clips: sig(cap), at: Date.now() } }); };
   const onReplace = (s: Span) => {
     if (!cap) return; const clips = cap.clips.map(k => k.id === s.clipId ? { ...k, exclude: [...(k.exclude ?? []), [+s.from.toFixed(2), +s.to.toFixed(2)] as [number, number]] } : k);
-    update({ ...cap, clips }); go(clips.find(k => k.id === s.clipId)?.ar ? 'ar' : 'perms');
+    update({ ...cap, clips }); const k = clips.find(x => x.id === s.clipId); go(k?.ar ? (k.name.startsWith('video') ? 'arvideo' : 'ar') : 'perms');
   };
   const open = async (id: string) => { const c = await loadCapture(id); if (c) { setCap(c); go('review'); } else setErr('That capture is no longer on this device.'); };
   const retake = async (clipId: string) => {

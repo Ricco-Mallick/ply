@@ -3,7 +3,7 @@
    each with "Replace this part". Clips stay uploaded, so processing afterwards starts straight away. */
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Glass } from '../../shared/Glass';
-import { DEFAULT_SETTINGS, backendReady, getHealth, getJob, getPreview, setTeamKey, teamKey, upload, type Health, type Job, type Preview } from '../lib/backend';
+import { DEFAULT_SETTINGS, backendReady, serverName, getHealth, getJob, getPreview, setTeamKey, teamKey, upload, type Health, type Job, type Preview } from '../lib/backend';
 import type { Capture } from '../lib/store';
 import { CloudView } from './CloudView';
 import { stageLabel, stagePct } from './Status';
@@ -16,7 +16,7 @@ export interface Span { clipId: string; from: number; to: number }
 export function lostSpans(c: Capture, p: Preview): Span[] {
   const out: Span[] = [];
   for (const k of c.clips) {
-    const fr = p.frames.filter(f => f.clip === k.name && f.t != null).sort((a, b) => a.t! - b.t!); let run: typeof fr = [];
+    const fr = p.frames.filter(f => f.clip === serverName(k.name) && f.t != null).sort((a, b) => a.t! - b.t!); let run: typeof fr = [];
     const flush = () => { if (run.length >= 2) out.push({ clipId: k.id, from: Math.max(0, run[0].t! - .5), to: Math.min(k.duration || 1e9, run[run.length - 1].t! + .5) }); run = []; };
     for (const f of fr) { if (!f.registered) run.push(f); else flush(); } flush();
   }
@@ -80,7 +80,7 @@ export function CoverageCheck({ capture, onPreview, onReplace }: { capture: Capt
         <CloudView pts={prev.pts} col={view.col} path={view.path} height={340} dot={.035} />
         <div className="bars cc-bars"><i style={{ flex: view.g, background: '#3DDC97' }} /><i style={{ flex: view.o, background: '#FFB84D' }} /><i style={{ flex: 1 - view.g - view.o, background: '#FF5A4E' }} /></div>
         <p className="cc-p mono dim">Points seen by 6+ frames green · 3–5 orange · fewer red. Orange line: where the camera was.</p>
-        {capture.clips.map(k => { const fr = prev.frames.filter(f => f.clip === k.name && f.t != null), d = k.duration || Math.max(1, ...fr.map(f => f.t!));
+        {capture.clips.map(k => { const fr = prev.frames.filter(f => f.clip === serverName(k.name) && f.t != null), d = k.duration || Math.max(1, ...fr.map(f => f.t!));
           return <div className="cc-clip" key={k.id}><span className="mono">{k.ar ? 'AR ' : ''}{k.name.replace(/\.\w+$/, '')}</span>
             <div className="cc-strip">{fr.map(f => <i key={f.frame} className={f.registered ? 'ok' : 'lost'} style={{ left: `${f.t! / d * 100}%` }} />)}{(k.exclude ?? []).map(([a, b], i) => <b key={i} style={{ left: `${a / d * 100}%`, width: `${(b - a) / d * 100}%` }} />)}</div></div>; })}
         {spans.length ? <ul className="cc-spans">{spans.map((s, i) => { const k = capture.clips.find(x => x.id === s.clipId)!; return <li key={i}><span><b>{fmtTime(s.from)}–{fmtTime(s.to)}</b> of {k.name.replace(/\.\w+$/, '')} lost track</span><button className="btn ghost" onClick={() => onReplace(s)}>Replace this part</button></li>; })}</ul>

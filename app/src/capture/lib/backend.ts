@@ -41,10 +41,13 @@ export function pipelineArgs(s: Settings) {
   return f;
 }
 
+/** The name a clip has on the server (the API's safeName): what the pipeline and its reports call it. */
+export const serverName = (n: string) => n.replace(/[^\w.\-]+/g, '_').slice(0, 120) || 'file';
+
 /** Everything the pipeline (and a human) needs besides the videos. */
 export function captureJson(c: Capture, s: Settings) {
   return JSON.stringify({ version: 1, name: c.name, createdAt: new Date(c.createdAt).toISOString(), settings: s, pipelineArgs: pipelineArgs(s),
-    clips: c.clips.map(k => ({ file: k.name, source: k.source, mime: k.mime, duration: k.duration, width: k.width, height: k.height, lock: k.lock, loopClosed: k.loopClosed, ar: k.ar, exclude: k.exclude,
+    clips: c.clips.map(k => ({ file: serverName(k.name), source: k.source, mime: k.mime, duration: k.duration, width: k.width, height: k.height, lock: k.lock, loopClosed: k.loopClosed, ar: k.ar, exclude: k.exclude,
       quality: k.quality.map(q => [Math.round(q.t), q.grade, +q.sharp.toFixed(1), Math.round(q.luma), +q.flow.toFixed(1), +q.turn.toFixed(1)]),
       qualityFields: ['tMs', 'grade', 'sharp', 'luma', 'flowPctPerS', 'turnDegPerS'],
       sensors: k.sensors.map(x => [Math.round(x.t), x.heading == null ? null : +x.heading.toFixed(1), +x.pitch.toFixed(1), +x.roll.toFixed(1), +x.turn.toFixed(1), +x.accel.toFixed(2)]),

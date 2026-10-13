@@ -9,6 +9,7 @@ Built from the aligned model (scene frame: +y up, metres) when align ran, else f
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 
 import numpy as np
@@ -18,7 +19,17 @@ from plypipe import colmap_txt
 MAX_POINTS = 80_000
 
 
-def build(out: Path) -> list[Path]:
+def _write(path: Path, data: bytes) -> None:
+    """Atomic: readers (an upload on another thread) never see a half-written file."""
+    tmp = path.with_name(path.name + ".tmp")
+    tmp.write_bytes(data)
+    os.replace(tmp, path)
+
+
+def build(out: Path, dest: Path | None = None) -> list[Path]:
+    """Read the job folder `out`, write preview.bin / preview.json into `dest` (default `out`)."""
+    dest = dest or out
+    dest.mkdir(parents=True, exist_ok=True)
     for d in (out / "data" / "sparse" / "0", out / "dense" / "sparse_txt"):
         if (d / "points3D.txt").exists():
             model, aligned = colmap_txt.read_model(d), d.parent.name == "sparse"
@@ -31,7 +42,7 @@ def build(out: Path) -> list[Path]:
     xyz = model.xyz[keep].astype(np.float32)
     rgb = model.rgb[keep].astype(np.uint8)
     views = np.minimum(model.track_len[keep], 255).astype(np.uint8)
-    (out / "preview.bin").write_bytes(np.array([len(keep)], np.uint32).tobytes() + xyz.tobytes() + rgb.tobytes() + views.tobytes())
+    _write(dest / "preview.bin", np.array([len(keep)], np.uint32).tobytes() + xyz.tobytes() + rgb.tobytes() + views.tobytes())
     names = sorted(im.name for im in model.images)
     centers, _, _ = model.cameras()
     reg = {n: [round(float(v), 3) for v in c] for n, c in zip(names, centers)}
@@ -41,5 +52,5 @@ def build(out: Path) -> list[Path]:
     frames = [{"frame": f, "clip": src.get(f, {}).get("clip"), "t": src.get(f, {}).get("t"), "registered": f in reg, "c": reg.get(f)} for f in all_frames]
     meta = {"version": 1, "aligned": aligned, "points": int(len(keep)), "frames": frames,
             "registered": sum(1 for f in frames if f["registered"]), "total": len(frames)}
-    (out / "preview.json").write_text(json.dumps(meta))
-    return [out / "preview.bin", out / "preview.json"]
+    _write(dest / "preview.json", json.dumps(meta).encode())
+    return [dest / "preview.bin", dest / "preview.json"]

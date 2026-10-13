@@ -13,6 +13,7 @@ ignored: the live view is a nicety, the job must not fail because of it.
 from __future__ import annotations
 
 import json
+import os
 import re
 import subprocess
 import threading
@@ -33,17 +34,20 @@ class Live:
         self.lock = threading.Lock()
         self.seen_snaps: set[str] = set()
         self.last_loss = -1.0
+        self.sparse_lock = threading.Lock()  # sfm and align previews must not interleave
+        self.preview_only = False  # coverage checks publish their own preview; the live sparse step is skipped
 
     # ---- plumbing ----
     def _put(self, name: str, path: Path, ctype: str):
         self.api.upload(f"scenes/{self.jid}/{name}", path, ctype)
 
     def _publish(self):
-        with self.lock:
+        with self.lock:  # write and upload under the lock: another thread may be about to rewrite it
             self.index["updated"] = time.time()
-            f = self.out / "live-index.json"
-            f.write_text(json.dumps(self.index))
-        self._put("live-index.json", f, "application/json")
+            f, tmp = self.out / "live-index.json", self.out / "live-index.json.tmp"
+            tmp.write_text(json.dumps(self.index))
+            os.replace(tmp, f)
+            self._put("live-index.json", f, "application/json")
 
     def _bg(self, fn, *a):
         def go():
@@ -63,7 +67,7 @@ class Live:
         self.stage(name, "done")
         if name == "frames":
             self._bg(self.frames_sheet)
-        elif name in ("sfm", "align"):
+        elif name in ("sfm", "align") and not self.preview_only:
             self._bg(self.sparse, name)
 
     def frames_sheet(self):
@@ -98,7 +102,11 @@ class Live:
 
     def sparse(self, stage: str):
         from plypipe import preview
-        bin_, js = preview.build(self.out)
+        with self.sparse_lock:
+            self._sparse(stage, preview)
+
+    def _sparse(self, stage: str, preview):
+        bin_, js = preview.build(self.out, self.out / f"_live_{stage}")
         for src, name, ct in ((bin_, "live-sparse.bin", "application/octet-stream"), (js, "live-sparse.json", "application/json")):
             dst = self.out / name
             dst.write_bytes(src.read_bytes())
@@ -119,13 +127,17 @@ class Live:
         with self.lock:
             self.index["loss"].append([round(frac, 3), float(m.group(1))])
 
-    def poll_snapshots(self, alive):
-        """While training runs, turn each new intermediate PLY into a small SPZ and publish it."""
+    def poll_snapshots(self, alive, final_step: int | None = None):
+        """While training runs, turn each new intermediate PLY into a small SPZ and publish it (`alive` turns false when
+        training ends; the final PLY is skipped: export publishes the finished twin)."""
         d = self.out / "train" / "ply"
         last_pub = 0.0
         while alive():
             for p in sorted(d.glob("point_cloud_*.ply")) if d.exists() else []:
                 if p.name in self.seen_snaps or time.time() - p.stat().st_mtime < 5:  # still being written
+                    continue
+                if final_step is not None and int(p.stem.rsplit("_", 1)[1]) >= final_step - 1:
+                    self.seen_snaps.add(p.name)
                     continue
                 self.seen_snaps.add(p.name)
                 try:

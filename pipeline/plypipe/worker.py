@@ -38,7 +38,11 @@ RESULTS = ["scene.spz", "scene_lite.spz", "scene.json", "occupancy.png", "occupa
 PART = 32 * 1024 * 1024
 # stop-loss: a stage that runs past its limit is killed and the job fails with a clear message (minutes;
 # PLY_STAGE_LIMITS="sfm=30,train=60" overrides). Generous for a T4; they exist to cap a stuck run, not to race.
-STAGE_LIMITS_MIN = {"frames": 15, "sfm": 45, "align": 5, "occupancy": 5, "train": 120, "export": 15}
+STAGE_LIMITS_MIN = {"frames": 15, "sfm": 45, "align": 5, "occupancy": 5, "label": 15, "train": 120, "export": 15}
+# the most a job can take (frames..export limits): a worker with a hard deadline (Modal timeout) never starts a job
+# it could not finish
+JOB_MAX_MIN = sum(STAGE_LIMITS_MIN.values())
+PRESET_STEPS = {"quick": 7_000, "standard": 30_000, "high": 40_000}
 # checkpoints: after these stages the out/ folder (minus re-creatable bulk) goes to B2, so a retry with the same
 # settings resumes there instead of re-downloading the clips and redoing frames + SfM
 CHECKPOINT_AFTER = ("sfm", "occupancy")
@@ -83,13 +87,21 @@ class Api:
             url = info["url"]
         for i in range(4):
             try:
-                with urllib.request.urlopen(urllib.request.Request(url, headers=UA), timeout=600) as resp, dest.open("wb") as f:
-                    shutil.copyfileobj(resp, f, 8 * 1024 * 1024)
+                with urllib.request.urlopen(urllib.request.Request(url, headers=UA), timeout=600) as resp:
+                    # Drive answers a private / over-quota file with an HTML page and status 200: not a clip
+                    if "text/html" in (resp.headers.get("content-type") or ""):
+                        raise RuntimeError(f"{key}: the link returned a web page, not the file (is it shared as 'Anyone with the link'?)")
+                    with dest.open("wb") as f:
+                        shutil.copyfileobj(resp, f, 8 * 1024 * 1024)
                 return
             except (urllib.error.URLError, TimeoutError, ConnectionError):
+                dest.unlink(missing_ok=True)
                 if i == 3:
                     raise
                 time.sleep(3 * (i + 1))
+            except Exception:
+                dest.unlink(missing_ok=True)
+                raise
 
     def upload(self, key: str, path: Path, ctype: str):
         size = path.stat().st_size
@@ -193,6 +205,9 @@ def run_job(api: Api, job: dict, work: Path, extra: list[str]) -> None:
     rehearsal = "--train-dry-run" in job["args"]
     post = lambda **kw: api.req("POST", f"/v1/worker/jobs/{jid}", kw)
     live = Live(api, jid, out, log=lambda m: print(m, file=sys.stderr, flush=True))  # what the status page shows in 3D
+    live.preview_only = "--until" in job["args"]  # coverage checks publish their own preview
+    a_ = job["args"]
+    final_step = int(a_[a_.index("--iterations") + 1]) if "--iterations" in a_ else PRESET_STEPS.get(a_[a_.index("--preset") + 1] if "--preset" in a_ else "standard")
 
     def beat():  # heartbeat + progress every 20 s, independent of log activity
         while state["alive"]:
@@ -218,11 +233,17 @@ def run_job(api: Api, job: dict, work: Path, extra: list[str]) -> None:
         inp.mkdir(parents=True, exist_ok=True)
         for k in ([] if resumed else job["files"]):  # a checkpoint past SfM needs no clips at all
             cached = cache / k.replace(':', '_')
+            if k.endswith(".json"):  # capture.json is re-uploaded (e.g. new spans to skip): always fresh
+                cached.unlink(missing_ok=True)
             if not cached.exists() or cached.stat().st_size == 0:
                 api.download(k, cached.with_suffix(cached.suffix + ".part"))
                 cached.with_suffix(cached.suffix + ".part").rename(cached)
             inp.mkdir(parents=True, exist_ok=True)
             dest = inp / (k.split(':', 2)[2] if k.startswith('gdrive:') else Path(k).name)
+            n = 2
+            while dest.exists() and k.startswith("gdrive:"):  # two shared files with one name: keep both
+                dest = dest.with_name(f"{Path(k.split(':', 2)[2]).stem}-{n}{Path(k).suffix}")
+                n += 1
             if not dest.exists():
                 os.link(cached, dest) if hasattr(os, "link") else shutil.copy2(cached, dest)
         # PLY_PIPELINE_CMD swaps the pipeline for a stand-in (tests: the worker plumbing without a GPU)
@@ -268,7 +289,7 @@ def run_job(api: Api, job: dict, work: Path, extra: list[str]) -> None:
                             state["stage"], state["frac"], state["stage_t0"] = st, 0.0, time.time()
                             live.stage(st, "running")
                             if st == "train":  # intermediate PLYs -> small SPZ snapshots for the live view
-                                threading.Thread(target=live.poll_snapshots, args=(lambda: p.poll() is None,), daemon=True).start()
+                                threading.Thread(target=live.poll_snapshots, args=(lambda: p.poll() is None and state["stage"] == "train", final_step), daemon=True).start()
                             try:  # tell the status page straight away; the heartbeat covers the rest
                                 post(stage=st, progress=overall(st, 0.0), message=f"{st}: started")
                             except Exception:
@@ -373,7 +394,11 @@ def main(argv: list[str] | None = None) -> int:
         ap.error("set PLY_API and PLY_WORKER_TOKEN (or --api/--token)")
     api, idle_since = Api(a.api, a.token), time.time()
     print(f"[worker] {a.name} polling {a.api}", flush=True)
+    deadline = float(os.environ.get("PLY_DEADLINE", 0))  # epoch seconds when this machine will be killed (Modal timeout)
     while True:
+        if deadline and deadline - time.time() < JOB_MAX_MIN * 60:
+            print(f"[worker] less than {JOB_MAX_MIN} min left before this machine's deadline: not taking new jobs", flush=True)
+            return 0
         status, job = api.req("POST", "/v1/worker/claim", {"worker": a.name, "prefix": os.environ.get("PLY_CLAIM_PREFIX", "")})
         if status == 200 and job:
             print(f"[worker] claimed {job['id']} ({job['name']})", flush=True)
