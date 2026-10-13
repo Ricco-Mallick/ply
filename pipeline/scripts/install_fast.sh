@@ -21,7 +21,8 @@ GSPLAT_WHL="https://github.com/nerfstudio-project/gsplat/releases/download/v1.5.
 log() { printf '{"stage":"install","event":"progress","msg":"%s"}\n' "$*"; }
 
 log "pipeline env: pycolmap-cuda12 4.2.1 + plypipe"
-$PY -m pip install -q uv "pycolmap-cuda12==4.2.1"
+PYCOLMAP="pycolmap-cuda12==4.2.1"; [ -n "${PLY_CPU:-}" ] && PYCOLMAP="pycolmap==4.2.1"
+$PY -m pip install -q uv "$PYCOLMAP"
 $PY -m pip install -q -e "$HERE"
 UV="$PY -m uv"
 
@@ -30,23 +31,31 @@ log "training venv: python 3.10"
 VPY="$VENV/bin/python"
 $UV pip install -q --python "$VPY" setuptools wheel ninja
 
+# every later install is constrained, or gsplat's example requirements (torchmetrics) pull the newest torch (2.14,
+# CUDA 13), which the prebuilt gsplat 1.5.3 cannot load (found by the CPU rehearsal)
+printf 'torch==2.4.1\ntorchvision==0.19.1\nnumpy<2\n' > /tmp/ply-constraints.txt
+CON="-c /tmp/ply-constraints.txt"
 log "training venv: torch 2.4.1+cu124"
-$UV pip install -q --python "$VPY" torch==2.4.1 torchvision==0.19.1 --index-url https://download.pytorch.org/whl/cu124
+# PLY_CPU=1 (rehearsal on a CPU machine): CPU builds, and no CUDA extension compiles; training runs as a dry run
+TORCH_INDEX=https://download.pytorch.org/whl/cu124; [ -n "${PLY_CPU:-}" ] && TORCH_INDEX=https://download.pytorch.org/whl/cpu
+$UV pip install -q --python "$VPY" torch==2.4.1 torchvision==0.19.1 --index-url "$TORCH_INDEX"
 
 log "training venv: prebuilt gsplat 1.5.3"
-$UV pip install -q --python "$VPY" "$GSPLAT_WHL"
+$UV pip install -q --python "$VPY" $CON "$GSPLAT_WHL"
 if [ ! -d "$GSPLAT_DIR/examples" ]; then git clone -q --depth 1 --branch v1.5.3 https://github.com/nerfstudio-project/gsplat "$GSPLAT_DIR"; fi
 
 log "training venv: example requirements (fused-ssim, fused-bilagrid compile here)"
 grep -v -E '^#|^$|fused-ssim|fused-bilagrid' "$GSPLAT_DIR/examples/requirements.txt" > /tmp/ply-reqs153.txt
-$UV pip install -q --python "$VPY" -r /tmp/ply-reqs153.txt
+$UV pip install -q --python "$VPY" $CON -r /tmp/ply-reqs153.txt
 FSSIM=$(grep -o 'git+https://github.com/rahul-goel/fused-ssim@[0-9a-f]*' "$GSPLAT_DIR/examples/requirements.txt")
 FBILA=$(grep -o 'git+https://github.com/harry7557558/fused-bilagrid@[0-9a-f]*' "$GSPLAT_DIR/examples/requirements.txt")
-$UV pip install -q --python "$VPY" --no-build-isolation "$FSSIM" "$FBILA"
+if [ -z "${PLY_CPU:-}" ]; then $UV pip install -q --python "$VPY" $CON --no-build-isolation "$FSSIM" "$FBILA"; fi
 
 log "check"
 "$VPY" - <<'PY'
-import json, torch, gsplat, fused_ssim
+import json, os, torch, gsplat
+if not os.environ.get("PLY_CPU"):
+    import fused_ssim  # noqa: F401
 print(json.dumps({"stage": "install", "event": "done", "trainPython": "3.10", "torch": torch.__version__, "cuda": torch.version.cuda,
                   "gpu": torch.cuda.get_device_name(0) if torch.cuda.is_available() else None, "gsplat": gsplat.__version__}))
 PY

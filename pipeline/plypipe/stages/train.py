@@ -35,6 +35,8 @@ def run_stage(ctx: Ctx) -> dict:
            "--result", str(result), "--preset", preset]
     if ctx.opt("ppisp") is False:
         cmd.append("--no-ppisp")
+    if ctx.opt("train_dry_run"):
+        cmd.append("--dry-run")
     for k, flag in (("iterations", "--iterations"), ("sh_degree", "--sh-degree"), ("cap_max", "--cap-max")):
         if ctx.opt(k) is not None:
             cmd += [flag, str(ctx.opt(k))]
@@ -46,6 +48,8 @@ def run_stage(ctx: Ctx) -> dict:
            # gsplat's cli() spawns one process per visible GPU (Kaggle gives two T4s); train on one
            "CUDA_VISIBLE_DEVICES": os.environ.get("PLY_TRAIN_GPU", "0")}
     run(cmd, ctx, "train", env=env, progress_every=50)
+    if ctx.opt("train_dry_run"):
+        return {"dryRun": True}
     plys = sorted((result / "ply").glob("point_cloud_*.ply"), key=lambda p: int(p.stem.rsplit("_", 1)[1]))
     if not plys:
         raise RuntimeError(f"training finished but no PLY in {result / 'ply'}")

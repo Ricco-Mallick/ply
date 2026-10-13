@@ -13,7 +13,8 @@
  *    GET  /v1/health                                             -> GPU workers online, queue length
  *    GET  /v1/scenes/:jobId/:file                                -> results (Range supported) for the viewer
  *  GPU worker (Authorization: Bearer WORKER_TOKEN)
- *    POST /v1/worker/claim       {worker}                        -> next job or 204       stale running jobs (no heartbeat 20 min) are re-queued
+ *    POST /v1/worker/claim       {worker, prefix?}               -> next job or 204       stale running jobs (no heartbeat 20 min) are re-queued;
+ *                                                                  prefix limits it to captures whose id starts with it (rehearsals)
  *    POST /v1/worker/jobs/:id    {status?, stage?, progress?, message?, result?}          heartbeat + progress
  *    GET  /v1/worker/file        ?key                            -> {url} signed download link (inputs)
  *    (and the upload routes above, which accept any key under scenes/<jobId>/ for results)
@@ -133,8 +134,8 @@ async function route(req: Request, env: Env): Promise<Response> {
       const b = await req.json().catch(() => ({})) as any;
       const wname = String(b.worker ?? 'worker').slice(0, 60);
       const row = await env.DB.prepare(`UPDATE jobs SET status='running', worker=?, stage=NULL, progress=0, message='claimed', started_at=?, updated_at=?
-        WHERE id = (SELECT id FROM jobs WHERE status='queued' OR (status='running' AND updated_at < ?) ORDER BY created_at LIMIT 1) RETURNING *`)
-        .bind(String(b.worker ?? 'worker').slice(0, 60), now, now, now - STALE_MS).first();
+        WHERE id = (SELECT id FROM jobs WHERE (status='queued' OR (status='running' AND updated_at < ?)) AND capture_id LIKE ? ORDER BY created_at LIMIT 1) RETURNING *`)
+        .bind(String(b.worker ?? 'worker').slice(0, 60), now, now, now - STALE_MS, `${String(b.prefix ?? '').replace(/[%_]/g, '')}%`).first();
       await env.DB.prepare('INSERT INTO workers (name,last_seen,busy_job,note) VALUES (?,?,?,NULL) ON CONFLICT(name) DO UPDATE SET last_seen=excluded.last_seen, busy_job=excluded.busy_job, note=NULL').bind(wname, now, row?.id ?? null).run();
       if (!row) return new Response(null, { status: 204 });
       return json({ ...row, settings: JSON.parse(row.settings), args: JSON.parse(row.args), files: JSON.parse(row.files) });

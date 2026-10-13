@@ -20,6 +20,7 @@ import shutil
 import socket
 import subprocess
 import sys
+import tarfile
 import threading
 import time
 import urllib.error
@@ -32,6 +33,13 @@ WEIGHTS = {"frames": .05, "sfm": .20, "align": .02, "occupancy": .02, "train": .
 ORDER = list(WEIGHTS)
 RESULTS = ["scene.spz", "scene_lite.spz", "scene.json", "occupancy.png", "occupancy.json", "report.json"]
 PART = 32 * 1024 * 1024
+# stop-loss: a stage that runs past its limit is killed and the job fails with a clear message (minutes;
+# PLY_STAGE_LIMITS="sfm=30,train=60" overrides). Generous for a T4; they exist to cap a stuck run, not to race.
+STAGE_LIMITS_MIN = {"frames": 15, "sfm": 45, "align": 5, "occupancy": 5, "train": 120, "export": 15}
+# checkpoints: after these stages the out/ folder (minus re-creatable bulk) goes to B2, so a retry with the same
+# settings resumes there instead of re-downloading the clips and redoing frames + SfM
+CHECKPOINT_AFTER = ("sfm", "occupancy")
+CKPT_SKIP = {"frames", "frames_raw", "colmap", "train"}
 # Cloudflare rejects the default "Python-urllib" user agent with 403 before the request reaches the API
 UA = {"user-agent": "ply-worker/1.0 (+https://ricco.codes/ply)"}
 
@@ -117,11 +125,54 @@ def frac_from(ev: dict) -> float | None:
     return None
 
 
+def stage_limits() -> dict:
+    lim = dict(STAGE_LIMITS_MIN)
+    for part in filter(None, os.environ.get("PLY_STAGE_LIMITS", "").split(",")):
+        k, _, v = part.partition("=")
+        lim[k.strip()] = float(v)
+    return lim
+
+
+def save_checkpoint(api, jid: str, out: Path, root: Path, args: list[str], after: str) -> None:
+    tar = root / "checkpoint.tar"
+    with tarfile.open(tar, "w") as tf:
+        meta = json.dumps({"args": args, "after": after, "time": time.time()}).encode()
+        info = tarfile.TarInfo("ckpt.json"); info.size = len(meta)
+        tf.addfile(info, __import__("io").BytesIO(meta))
+        for p in sorted(out.iterdir()):
+            if p.name not in CKPT_SKIP:
+                tf.add(p, arcname=p.name)
+    api.upload(f"scenes/{jid}/checkpoint.tar", tar, "application/x-tar")
+    tar.unlink(missing_ok=True)
+
+
+def load_checkpoint(api, jid: str, out: Path, root: Path, args: list[str]) -> str | None:
+    """Restore the last checkpoint if it was made with exactly these settings; returns the stage it covers."""
+    tar = root / "checkpoint.tar"
+    try:
+        api.download(f"scenes/{jid}/checkpoint.tar", tar)
+        with tarfile.open(tar) as tf:
+            meta = json.load(tf.extractfile("ckpt.json"))
+            if meta.get("args") != args:
+                return None
+            out.mkdir(parents=True, exist_ok=True)
+            tf.extractall(out, filter="data")
+        (out / "ckpt.json").unlink(missing_ok=True)
+        return meta.get("after")
+    except Exception:  # no checkpoint yet (404) or unreadable: start from scratch
+        return None
+    finally:
+        tar.unlink(missing_ok=True)
+
+
 def run_job(api: Api, job: dict, work: Path, extra: list[str]) -> None:
     jid = job["id"]
     root = work / jid
     inp, out = root / "input", root / "out"
-    state = {"stage": None, "frac": 0.0, "msg": "downloading clips", "alive": True}
+    root.mkdir(parents=True, exist_ok=True)
+    state = {"stage": None, "frac": 0.0, "msg": "downloading clips", "alive": True, "stage_t0": time.time(), "timeout": None}
+    limits = stage_limits()
+    rehearsal = "--train-dry-run" in job["args"]
     post = lambda **kw: api.req("POST", f"/v1/worker/jobs/{jid}", kw)
 
     def beat():  # heartbeat + progress every 20 s, independent of log activity
@@ -141,7 +192,12 @@ def run_job(api: Api, job: dict, work: Path, extra: list[str]) -> None:
         # inputs are cached per storage key for the whole session: retries and requeues don't download the clips
         # again (B2's free tier caps downloads at 1 GB/day)
         cache = work / "_inputs"
-        for k in job["files"]:
+        resumed = load_checkpoint(api, jid, out, root, job["args"])
+        if resumed:
+            post(message=f"resuming after {resumed} (checkpoint)")
+            print(f"[worker] resuming {jid} after {resumed}", flush=True)
+        inp.mkdir(parents=True, exist_ok=True)
+        for k in ([] if resumed else job["files"]):  # a checkpoint past SfM needs no clips at all
             cached = cache / k
             if not cached.exists() or cached.stat().st_size == 0:
                 api.download(k, cached.with_suffix(cached.suffix + ".part"))
@@ -158,6 +214,16 @@ def run_job(api: Api, job: dict, work: Path, extra: list[str]) -> None:
             print("[worker] " + " ".join(cmd), flush=True)
             p = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1)
             last_err, tail = "", collections.deque(maxlen=40)
+
+            def watchdog():  # stop-loss per stage
+                while p.poll() is None:
+                    st, lim = state["stage"], limits.get(state["stage"] or "", 0)
+                    if st and lim and time.time() - state["stage_t0"] > lim * 60:
+                        state["timeout"] = f"{st} exceeded its {lim:g}-minute limit and was stopped"
+                        p.kill()
+                        return
+                    time.sleep(2)
+            threading.Thread(target=watchdog, daemon=True).start()
             with (root / "pipeline.log").open("a") as logf:
                 for line in p.stdout:  # the pipeline prints the same JSON lines it writes to log.jsonl, plus library output
                     sys.stdout.write(line)
@@ -171,13 +237,19 @@ def run_job(api: Api, job: dict, work: Path, extra: list[str]) -> None:
                     st = ev.get("stage")
                     if st in WEIGHTS:
                         if st != state["stage"]:
-                            state["stage"], state["frac"] = st, 0.0
+                            state["stage"], state["frac"], state["stage_t0"] = st, 0.0, time.time()
                             try:  # tell the status page straight away; the heartbeat covers the rest
                                 post(stage=st, progress=overall(st, 0.0), message=f"{st}: started")
                             except Exception:
                                 pass
                         if ev.get("event") == "done":
                             state["frac"] = 1.0
+                            if st in CHECKPOINT_AFTER and not rehearsal:
+                                try:
+                                    state["msg"] = f"{st}: saving checkpoint"
+                                    save_checkpoint(api, jid, out, root, job["args"], st)
+                                except Exception as e:  # a missed checkpoint only costs time on a retry
+                                    print(f"[worker] checkpoint after {st} failed: {e}", flush=True)
                         f = frac_from(ev) if ev.get("event") == "progress" else None
                         if f is not None:
                             state["frac"] = max(state["frac"], f)
@@ -187,13 +259,16 @@ def run_job(api: Api, job: dict, work: Path, extra: list[str]) -> None:
                             state["msg"] = f"{st}: {ev.get('msg') or ev.get('event')}"[:200]
                     if ev.get("event") == "error":
                         last_err = f"{st}: {ev.get('msg')}"
-            return p.wait(), last_err, list(tail)
+            code = p.wait()
+            if state["timeout"]:
+                last_err = state["timeout"]
+            return code, last_err, list(tail)
 
         state["msg"] = "starting pipeline"
         code, last_err, tail = pipeline(job["args"])
         # a native crash in camera solving (abort/segfault: negative exit code) is usually the learned features or the
         # global mapper on an unusual capture; retry once from the sfm stage with classic SIFT + incremental mapping
-        if code < 0 and state["stage"] == "sfm" and "incremental" not in job["args"]:
+        if code < 0 and state["stage"] == "sfm" and "incremental" not in job["args"] and not state["timeout"]:
             base = [a for i, a in enumerate(job["args"]) if a not in ("--features", "--mapper", "--matcher")
                     and (i == 0 or job["args"][i - 1] not in ("--features", "--mapper", "--matcher"))]
             retry = [*base, "--features", "sift", "--mapper", "incremental", "--matcher", "sequential", "--force", "sfm"]
@@ -207,6 +282,11 @@ def run_job(api: Api, job: dict, work: Path, extra: list[str]) -> None:
                 pass
             detail = "\n".join(tail[-14:])
             raise RuntimeError(f"{last_err or f'pipeline exited with {code}'}{' :: ' + detail if detail else ''}")
+        if rehearsal:  # dry run: nothing to publish, the report is the result
+            report = json.loads((out / "report.json").read_text()) if (out / "report.json").exists() else {}
+            state["alive"] = False
+            post(status="done", stage="train", progress=1, message="rehearsal passed", result={"rehearsal": True, "report": report})
+            return
         state["msg"] = "publishing results"
         files = {}
         for name in RESULTS:
@@ -244,7 +324,7 @@ def main(argv: list[str] | None = None) -> int:
     api, idle_since = Api(a.api, a.token), time.time()
     print(f"[worker] {a.name} polling {a.api}", flush=True)
     while True:
-        status, job = api.req("POST", "/v1/worker/claim", {"worker": a.name})
+        status, job = api.req("POST", "/v1/worker/claim", {"worker": a.name, "prefix": os.environ.get("PLY_CLAIM_PREFIX", "")})
         if status == 200 and job:
             print(f"[worker] claimed {job['id']} ({job['name']})", flush=True)
             run_job(api, job, a.work, a.extra)

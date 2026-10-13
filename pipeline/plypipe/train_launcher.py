@@ -81,7 +81,16 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--iterations", type=int)
     ap.add_argument("--sh-degree", type=int)
     ap.add_argument("--cap-max", type=int)
+    ap.add_argument("--dry-run", action="store_true",
+                    help="everything except the GPU work: import the trainer, build the config, load the scene with gsplat's parser")
     a = ap.parse_args(argv)
+    if a.dry_run:  # CPU rehearsal: CUDA-only extensions may be missing; stand in for them so the import itself is tested
+        import importlib.util, types
+        # only fused_ssim is imported at module level (fused_bilagrid only when the bilateral grid is on)
+        if importlib.util.find_spec("fused_ssim") is None:
+            stub = types.ModuleType("fused_ssim")
+            stub.fused_ssim = lambda *x, **k: None
+            sys.modules["fused_ssim"] = stub
 
     sys.path.insert(0, os.path.abspath(a.examples))
     os.chdir(a.examples)  # simple_trainer imports sibling modules (datasets, utils, gsplat_viewer)
@@ -94,6 +103,13 @@ def main(argv: list[str] | None = None) -> int:
     with open(os.path.join(a.result, "ply_preset.json"), "w") as f:
         json.dump(summary, f, indent=2)
     print(json.dumps({"plyTrainConfig": summary}), flush=True)
+    if a.dry_run:
+        parser = st.Parser(data_dir=cfg.data_dir, factor=cfg.data_factor, normalize=cfg.normalize_world_space, test_every=cfg.test_every)
+        ds = st.Dataset(parser, split="train")
+        item = ds[0]
+        print(json.dumps({"plyTrainDryRun": {"images": len(parser.image_names), "trainImages": len(ds), "points": int(len(parser.points)),
+                                             "imageShape": list(item["image"].shape), "sceneScale": float(parser.scene_scale)}}), flush=True)
+        return 0
     st.cli(st.main, cfg, verbose=True)
     return 0
 
