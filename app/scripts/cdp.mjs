@@ -11,7 +11,7 @@ export async function open({ port = 9360, w = 1280, h = 800, mobile = false } = 
   const t = (await (await fetch(`http://127.0.0.1:${port}/json`)).json()).find(x => x.type === 'page');
   const ws = new WebSocket(t.webSocketDebuggerUrl); await new Promise(r => ws.onopen = r);
   let id = 0; const pend = {}; const logs = [];
-  ws.onmessage = m => { const d = JSON.parse(m.data); if (d.method === 'Runtime.exceptionThrown') logs.push('EXC ' + JSON.stringify(d.params.exceptionDetails.exception?.description ?? d.params.exceptionDetails.text).slice(0, 300)); if (pend[d.id]) { pend[d.id](d); delete pend[d.id]; } };
+  ws.onmessage = m => { const d = JSON.parse(m.data); if (d.method === 'Runtime.exceptionThrown') logs.push('EXC ' + JSON.stringify(d.params.exceptionDetails.exception?.description ?? d.params.exceptionDetails.text).slice(0, 300)); if (d.method === 'Runtime.consoleAPICalled' && ['error', 'warning'].includes(d.params.type)) logs.push(d.params.type + ' ' + d.params.args.map(a => a.value ?? a.description ?? '').join(' ').slice(0, 300)); if (pend[d.id]) { pend[d.id](d); delete pend[d.id]; } };
   const send = (method, params = {}) => new Promise(r => { const i = ++id; pend[i] = r; ws.send(JSON.stringify({ id: i, method, params })); });
   const ev = async e => { const r = await send('Runtime.evaluate', { expression: e, returnByValue: true, awaitPromise: true }); const x = r.result?.exceptionDetails ?? r.error; if (x) return 'ERR ' + String(x.exception?.description ?? JSON.stringify(x)).slice(0, 300); return r.result?.result?.value; };
   const shot = async n => { const r = await send('Page.captureScreenshot', { format: 'jpeg', quality: 82 }); fs.writeFileSync(path.join(SHOTS, `${n}.jpg`), Buffer.from(r.result.data, 'base64')); };
