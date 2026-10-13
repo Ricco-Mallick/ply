@@ -14,6 +14,7 @@ CREATE TABLE IF NOT EXISTS jobs (
   result TEXT,                     -- JSON: { base, files, report } when done
   created_at INTEGER NOT NULL,
   updated_at INTEGER NOT NULL,
+  attempts INTEGER NOT NULL DEFAULT 0,  -- claims so far; a job whose worker died twice is failed, not retried again
   started_at INTEGER,
   finished_at INTEGER
 );

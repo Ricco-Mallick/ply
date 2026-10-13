@@ -38,6 +38,7 @@ const s3 = (e: Env): S3Conf => ({ endpoint: e.S3_ENDPOINT, region: e.S3_REGION, 
 const SIGN_TTL = 6 * 3600;
 
 const STALE_MS = 20 * 60 * 1000;
+const MAX_ATTEMPTS = 2;
 const json = (data: unknown, status = 200, h: Record<string, string> = {}) => new Response(JSON.stringify(data), { status, headers: { 'content-type': 'application/json', ...h } });
 const safeName = (s: string) => s.replace(/[^\w.\-]+/g, '_').slice(0, 120) || 'file';
 const id = () => crypto.randomUUID();
@@ -152,9 +153,13 @@ async function route(req: Request, env: Env, ctx: Ctx): Promise<Response> {
     if (p === '/v1/worker/claim' && req.method === 'POST') {
       const b = await req.json().catch(() => ({})) as any;
       const wname = String(b.worker ?? 'worker').slice(0, 60);
-      const row = await env.DB.prepare(`UPDATE jobs SET status='running', worker=?, stage=NULL, progress=0, message='claimed', started_at=?, updated_at=?
-        WHERE id = (SELECT id FROM jobs WHERE (status='queued' OR (status='running' AND updated_at < ?)) AND capture_id LIKE ? ORDER BY created_at LIMIT 1) RETURNING *`)
-        .bind(String(b.worker ?? 'worker').slice(0, 60), now, now, now - STALE_MS, `${String(b.prefix ?? '').replace(/[%_]/g, '')}%`).first();
+      // a job whose worker died twice (crash, out of memory, stalled) is failed for good instead of being picked up
+      // again and again: each retry costs GPU time
+      await env.DB.prepare(`UPDATE jobs SET status='failed', message='Stopped after 2 attempts: the GPU worker crashed or stalled each time. Check the capture, then queue it again.', finished_at=?, updated_at=?
+        WHERE status='running' AND updated_at < ? AND attempts >= ?`).bind(now, now, now - STALE_MS, MAX_ATTEMPTS).run();
+      const row = await env.DB.prepare(`UPDATE jobs SET status='running', worker=?, stage=NULL, progress=0, message='claimed', started_at=?, updated_at=?, attempts=attempts+1
+        WHERE id = (SELECT id FROM jobs WHERE (status='queued' OR (status='running' AND updated_at < ? AND attempts < ?)) AND capture_id LIKE ? ORDER BY created_at LIMIT 1) RETURNING *`)
+        .bind(String(b.worker ?? 'worker').slice(0, 60), now, now, now - STALE_MS, MAX_ATTEMPTS, `${String(b.prefix ?? '').replace(/[%_]/g, '')}%`).first();
       if (!wname.startsWith('preflight')) // the pre-flight check's token probe is not a worker
         await env.DB.prepare('INSERT INTO workers (name,last_seen,busy_job,note) VALUES (?,?,?,NULL) ON CONFLICT(name) DO UPDATE SET last_seen=excluded.last_seen, busy_job=excluded.busy_job, note=NULL').bind(wname, now, row?.id ?? null).run();
       if (!row) return new Response(null, { status: 204 });

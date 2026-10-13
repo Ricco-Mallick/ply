@@ -23,16 +23,18 @@ image = (
     .apt_install("git", "ffmpeg", "build-essential", "curl", "ca-certificates", "libgl1", "libglib2.0-0")
     .run_commands("curl -fsSL https://deb.nodesource.com/setup_22.x | bash - && apt-get install -y nodejs",
                   "npm i -g @playcanvas/splat-transform@3.10.1 && npx -y @playcanvas/splat-transform@3.10.1 --version || true")
-    .env({"TORCH_CUDA_ARCH_LIST": "8.0;8.6;8.9;9.0", "MAX_JOBS": "8", "PLY_GSPLAT_DIR": "/opt/gsplat", "PLY_SKIP_PLYPIPE": "1"})
+    # gcc, not the clang Modal's Python reports from its own build (torch's extension builder would pick that up)
+    .env({"TORCH_CUDA_ARCH_LIST": "8.0;8.6;8.9;9.0", "MAX_JOBS": "8", "PLY_GSPLAT_DIR": "/opt/gsplat", "PLY_SKIP_PLYPIPE": "1",
+          "CC": "gcc", "CXX": "g++", "LDSHARED": "gcc -pthread -shared"})
     .add_local_file(PIPE / "scripts" / "install_gpu.sh", "/opt/ply-install/install_gpu.sh", copy=True)
-    .run_commands("bash /opt/ply-install/install_gpu.sh 2>&1 | tail -20")
+    .run_commands("bash -o pipefail -c 'bash /opt/ply-install/install_gpu.sh 2>&1 | tail -40'")
     .add_local_dir(PIPE / "plypipe", "/root/pipeline/plypipe")
 )
 app = modal.App("ply", image=image)
 secret = modal.Secret.from_name("ply-worker")
 
 
-@app.function(gpu=GPU, cpu=8, memory=32768, timeout=3 * 3600, max_containers=1, secrets=[secret])
+@app.function(gpu=GPU, cpu=4, memory=16384, timeout=3 * 3600, max_containers=1, secrets=[secret])  # L4 + 4 cores + 16 GB = ~$1.12/h
 def work():
     """Claim and run jobs until the queue has been empty for 3 minutes."""
     env = dict(os.environ, PYTHONPATH="/root/pipeline", PLY_WORKER_NAME=f"modal-{GPU.lower()}", PLY_WORK_DIR="/tmp/work",
@@ -61,7 +63,7 @@ def smoke():
     print(check.remote())
 
 
-@app.function(gpu=GPU, timeout=600)
+@app.function(gpu=GPU, cpu=1, memory=4096, timeout=300)
 def check():
     import torch, gsplat, pycolmap  # noqa: E401
     import ppisp  # noqa: F401  (PPISP present = the full training stack)
