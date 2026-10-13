@@ -44,7 +44,7 @@ export function pipelineArgs(s: Settings) {
 /** Everything the pipeline (and a human) needs besides the videos. */
 export function captureJson(c: Capture, s: Settings) {
   return JSON.stringify({ version: 1, name: c.name, createdAt: new Date(c.createdAt).toISOString(), settings: s, pipelineArgs: pipelineArgs(s),
-    clips: c.clips.map(k => ({ file: k.name, source: k.source, mime: k.mime, duration: k.duration, width: k.width, height: k.height, lock: k.lock, loopClosed: k.loopClosed, ar: k.ar,
+    clips: c.clips.map(k => ({ file: k.name, source: k.source, mime: k.mime, duration: k.duration, width: k.width, height: k.height, lock: k.lock, loopClosed: k.loopClosed, ar: k.ar, exclude: k.exclude,
       quality: k.quality.map(q => [Math.round(q.t), q.grade, +q.sharp.toFixed(1), Math.round(q.luma), +q.flow.toFixed(1), +q.turn.toFixed(1)]),
       qualityFields: ['tMs', 'grade', 'sharp', 'luma', 'flowPctPerS', 'turnDegPerS'],
       sensors: k.sensors.map(x => [Math.round(x.t), x.heading == null ? null : +x.heading.toFixed(1), +x.pitch.toFixed(1), +x.roll.toFixed(1), +x.turn.toFixed(1), +x.accel.toFixed(2)]),
@@ -83,8 +83,12 @@ async function putPart(url: string, body: Blob, signal: AbortSignal) {
   }
 }
 
-/** Upload every clip (resuming finished parts), then capture.json, then queue the job. */
-export async function upload(c: Capture, s: Settings, onProgress: (done: number, total: number, label: string) => void, signal: AbortSignal) {
+/** Coverage check: frames + camera solving + align only, quick settings. Publishes preview.bin / preview.json. */
+export const previewArgs = (s: Settings) => ['--preset', 'quick', '--until', 'align', '--features', 'sift', '--fps', '1.5', '--height-cam', String(s.advanced.cameraHeight)];
+export const DEFAULT_SETTINGS: Settings = { preset: 'standard', advanced: { mapper: 'global', features: 'aliked', cameraHeight: 1.45 } };
+
+/** Upload every clip (resuming finished parts), then capture.json, then queue the job (or a coverage check). */
+export async function upload(c: Capture, s: Settings, onProgress: (done: number, total: number, label: string) => void, signal: AbortSignal, preview = false) {
   if (!backendReady) throw new Error('No processing server is connected yet');
   if (!teamKey()) throw Object.assign(new Error('Enter the team key first'), { fatal: true });
   const total = c.clips.reduce((a, k) => a + k.size, 0); let before = 0; const keys: string[] = [];
@@ -114,7 +118,7 @@ export async function upload(c: Capture, s: Settings, onProgress: (done: number,
   const cj = `captures/${c.id.replace(/[^\w.\-]+/g, '_')}/capture.json`;
   await call(`/v1/files?key=${encodeURIComponent(cj)}`, { method: 'PUT', headers: { 'content-type': 'application/json' }, body: captureJson(c, s) }, signal);
   keys.push(cj);
-  const j = await call('/v1/jobs', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ captureId: c.id, name: c.name, settings: s, args: pipelineArgs(s), files: keys }) }, signal);
+  const j = await call('/v1/jobs', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ captureId: c.id, name: preview ? `${c.name} · coverage check` : c.name, settings: { ...s, preview }, args: preview ? previewArgs(s) : pipelineArgs(s), files: keys }) }, signal);
   return j as { jobId: string };
 }
 
@@ -138,4 +142,14 @@ export async function saveToDevice(c: Capture, s: Settings) {
   if ((navigator as any).canShare?.({ files })) { try { await navigator.share({ files, title: c.name }); return 'shared'; } catch (e) { if ((e as Error).name === 'AbortError') return 'cancelled'; } }
   for (const f of files) { const a = document.createElement('a'); a.href = URL.createObjectURL(f); a.download = f.name; document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(a.href), 4000); await new Promise(r => setTimeout(r, 400)); }
   return 'downloaded';
+}
+
+/** The coverage check's result: sparse points (xyz, rgb, how many frames saw each) and every frame's clip, second and fate. */
+export interface PreviewFrame { frame: string; clip: string | null; t: number | null; registered: boolean; c: number[] | null; }
+export interface Preview { pts: Float32Array; rgb: Uint8Array; views: Uint8Array; frames: PreviewFrame[]; registered: number; total: number; aligned: boolean; }
+export async function getPreview(jobId: string, signal?: AbortSignal): Promise<Preview> {
+  const [b, j] = await Promise.all([fetch(`${sceneUrl(jobId)}preview.bin`, { signal }), fetch(`${sceneUrl(jobId)}preview.json`, { signal })]);
+  if (!b.ok || !j.ok) throw new Error('The coverage preview is not ready');
+  const buf = await b.arrayBuffer(), n = new Uint32Array(buf, 0, 1)[0], meta = await j.json();
+  return { pts: new Float32Array(buf.slice(4, 4 + n * 12)), rgb: new Uint8Array(buf, 4 + n * 12, n * 3), views: new Uint8Array(buf, 4 + n * 15, n), ...meta };
 }

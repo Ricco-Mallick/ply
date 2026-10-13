@@ -1,8 +1,8 @@
 /* Live coverage from depth: every few frames the depth map (160x90 on the S24 FE) is sampled and unprojected into 8 cm
    cells. A cell is only drawn once depth has hit it twice (single noisy hits never show), samples on depth edges are
    skipped (they produce "flying" points between objects), and only the first 4 m count.
-   Each saved keyframe credits the cells its depth saw: red = in 0-1 keyframes, orange = 2+, green = 3+ keyframes from
-   2+ directions within 3.5 m. */
+   Each saved keyframe credits the cells its depth saw: red = in 0-1 keyframes, orange = 2-3, green = 4+ keyframes, or 3
+   from 2+ directions, within 3.5 m. */
 import * as THREE from 'three';
 
 const CELL = .08, CAP = 250_000, NX = 20, NY = 36, EDGE = .012, FAR = 4;
@@ -51,7 +51,7 @@ export class Coverage {
     if (this.drawIdx[i] < 0) this.drawIdx[i] = this.dn++;
     const di = this.drawIdx[i]; this.dpos[di * 3] = this.center[i * 3]; this.dpos[di * 3 + 1] = this.center[i * 3 + 1]; this.dpos[di * 3 + 2] = this.center[i * 3 + 2];
     let bins = 0; for (let b = this.dirs[i]; b; b &= b - 1) bins++;
-    const g = this.kf[i] >= 3 && bins >= 2 && this.near[i] <= 3.5 ? 0 : this.kf[i] >= 2 ? 1 : 2;
+    const g = (this.kf[i] >= 4 || (this.kf[i] >= 3 && bins >= 2)) && this.near[i] <= 3.5 ? 0 : this.kf[i] >= 2 ? 1 : 2;
     if (g !== this.grade[i]) { if (this.grade[i] !== 255) this.counts[this.grade[i]]--; this.counts[g]++; this.grade[i] = g; const c = GRADE_RGB[g]; this.dcol[di * 3] = c.r; this.dcol[di * 3 + 1] = c.g; this.dcol[di * 3 + 2] = c.b; }
     if (di < this.lo) this.lo = di; if (di > this.hi) this.hi = di;
   }

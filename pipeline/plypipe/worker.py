@@ -311,6 +311,18 @@ def run_job(api: Api, job: dict, work: Path, extra: list[str]) -> None:
             state["alive"] = False
             post(status="done", stage="train", progress=1, message="rehearsal passed", result={"rehearsal": True, "report": report})
             return
+        until = job["args"][job["args"].index("--until") + 1] if "--until" in job["args"] else None
+        if until in ("frames", "sfm", "align", "occupancy"):  # a coverage check from the app: publish the sparse preview
+            state["msg"] = "publishing coverage preview"
+            from plypipe import preview
+            files = {}
+            for f in preview.build(out):
+                api.upload(f"scenes/{jid}/{f.name}", f, CTYPE.get(f.suffix, "application/octet-stream"))
+                files[f.name] = f.stat().st_size
+            report = json.loads((out / "report.json").read_text()) if (out / "report.json").exists() else {}
+            state["alive"] = False
+            post(status="done", stage=until, progress=1, message="coverage preview ready", result={"preview": True, "base": f"/v1/scenes/{jid}/", "files": files, "report": report})
+            return
         state["msg"] = "publishing results"
         files = {}
         for name in RESULTS:

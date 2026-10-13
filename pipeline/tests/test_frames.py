@@ -1,5 +1,7 @@
+import json
 import shutil
 
+import json
 import cv2
 import numpy as np
 import pytest
@@ -72,3 +74,20 @@ def test_folder_of_clips_numbers_frames_continuously(tmp_path):
     assert [p.stem for p in kept] == [f"{i:06d}" for i in range(len(kept))]    # no gaps, no overwrites
     assert rep["clips"][1]["firstFrame"] == rep["clips"][0]["kept"]
     assert (tmp_path / "out" / "capture.json").exists()
+
+
+def test_spans_marked_for_replacing_are_skipped_and_frames_are_indexed(tmp_path):
+    """The app can mark a stretch of a clip as replaced by a new clip (capture.json clips[].exclude, seconds)."""
+    src = tmp_path / "capture"
+    src.mkdir()
+    w = cv2.VideoWriter(str(src / "clip-01.mp4"), cv2.VideoWriter_fourcc(*"mp4v"), 10, (640, 480))
+    for i in range(80):  # 8 s
+        w.write(checker(i, 0 if i % 4 == 2 else 4))
+    w.release()
+    (src / "capture.json").write_text('{"version": 1, "clips": [{"file": "clip-01.mp4", "exclude": [[2.0, 5.0]]}]}')
+    ctx = Ctx(out=tmp_path / "out", log=Log(tmp_path / "out", quiet=True), opts={"fps": 2.5, "oversample": 4, "long_side": 400})
+    rep = frames.run_stage(ctx, src)
+    idx = json.loads((tmp_path / "out" / "frames_index.json").read_text())
+    assert rep["excluded"] >= 6 and len(idx) == rep["kept"]
+    assert all(not (2.0 <= e["t"] <= 5.0) for e in idx) and all(e["clip"] == "clip-01.mp4" for e in idx)
+    assert [e["frame"] for e in idx] == [f"{i:06d}.jpg" for i in range(len(idx))]

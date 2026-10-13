@@ -7,8 +7,12 @@ import type { SensorSample } from './sensors';
 export interface Clip { id: string; name: string; source: 'camera' | 'upload' | 'ar'; mime: string; size: number; duration: number; width: number; height: number; createdAt: number;
   quality: Quality[]; sensors: SensorSample[]; path: { x: number; z: number; t: number }[]; lock?: Record<string, unknown>; loopClosed?: boolean;
   /** AR scans: a tar of keyframes + poses instead of a video; the coverage cloud is stored next to it as `${id}.cloud` */
-  ar?: { keyframes: number; coverage: { green: number; orange: number; red: number; voxels: number }; camera: string | null; walked: number }; }
-export interface Capture { id: string; name: string; createdAt: number; clips: Clip[]; }
+  ar?: { keyframes: number; coverage: { green: number; orange: number; red: number; voxels: number }; camera: string | null; walked: number };
+  /** stretches (seconds) replaced by a later clip: the pipeline skips their frames */
+  exclude?: [number, number][]; }
+export interface Capture { id: string; name: string; createdAt: number; clips: Clip[];
+  /** the last coverage check (a quick camera-solving job) and which clips it covered */
+  preview?: { jobId: string; clips: string[]; at: number }; }
 
 const INDEX = 'ply-captures';
 const uid = () => Math.random().toString(36).slice(2, 10) + Date.now().toString(36).slice(-4);

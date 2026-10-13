@@ -1,12 +1,12 @@
 import { useRef, useState } from 'react';
 import { Glass } from '../../shared/Glass';
-import { PRESETS, backendReady, pipelineArgs, saveToDevice, setTeamKey, teamKey, upload, type Settings } from '../lib/backend';
+import { DEFAULT_SETTINGS, PRESETS, backendReady, pipelineArgs, saveToDevice, setTeamKey, teamKey, upload, type Settings } from '../lib/backend';
 import type { Capture } from '../lib/store';
 import { fmtBytes, fmtTime } from './viz';
 
 export function Submit({ capture, onRename, onBack, onQueued }: { capture: Capture; onRename: (n: string) => void; onBack: () => void; onQueued: (jobId: string) => void }) {
   const [key, setKey] = useState(teamKey());
-  const [s, setS] = useState<Settings>({ preset: 'standard', advanced: { mapper: 'global', features: 'aliked', cameraHeight: 1.45 } });
+  const [s, setS] = useState<Settings>(DEFAULT_SETTINGS);
   const [adv, setAdv] = useState(false); const [busy, setBusy] = useState<string | null>(null); const [pct, setPct] = useState(0);
   const [msg, setMsg] = useState<{ ok: boolean; t: string } | null>(null); const [copied, setCopied] = useState(false); const abort = useRef<AbortController | null>(null);
   const p = PRESETS[s.preset], a = s.advanced, size = capture.clips.reduce((x, k) => x + k.size, 0);

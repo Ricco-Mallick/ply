@@ -3,6 +3,7 @@ import { Glass } from '../../shared/Glass';
 import { TIP, problemSpans, summarise } from '../lib/analyzer';
 import { loadCloud, readFile, type Capture, type Clip } from '../lib/store';
 import { CloudView } from './CloudView';
+import { CoverageCheck, type Span } from './CoverageCheck';
 import { HeadingRing, Legend, PathMap, Timeline, fmtBytes, fmtTime } from './viz';
 
 const VERDICT = {
@@ -11,17 +12,17 @@ const VERDICT = {
   recapture: { t: 'Recapture recommended', d: 'Too much of this take is blurred, dark or rushed. Record the red stretches again before processing.' },
 };
 
-export function Review({ capture, onMore, onRetake, onContinue, onHome }: { capture: Capture; onMore: () => void; onRetake: (clipId: string) => void; onContinue: () => void; onHome: () => void }) {
+export function Review({ capture, onMore, onRetake, onContinue, onHome, onPreview, onReplace }: { capture: Capture; onMore: () => void; onRetake: (clipId: string) => void; onContinue: () => void; onHome: () => void; onPreview: (jobId: string) => void; onReplace: (s: Span) => void }) {
   const [sel, setSel] = useState(capture.clips.length - 1); const clip = capture.clips[Math.min(sel, capture.clips.length - 1)];
-  if (clip.ar) return <ArReview capture={capture} clip={clip} sel={sel} setSel={setSel} onMore={onMore} onRetake={onRetake} onContinue={onContinue} onHome={onHome} />;
-  return <VideoReview capture={capture} clip={clip} sel={sel} setSel={setSel} onMore={onMore} onRetake={onRetake} onContinue={onContinue} onHome={onHome} />;
+  const p = { capture, clip, sel, setSel, onMore, onRetake, onContinue, onHome, check: <CoverageCheck capture={capture} onPreview={onPreview} onReplace={onReplace} /> };
+  return clip.ar ? <ArReview {...p} /> : <VideoReview {...p} />;
 }
 
-interface RP { capture: Capture; clip: Clip; sel: number; setSel: (i: number) => void; onMore: () => void; onRetake: (clipId: string) => void; onContinue: () => void; onHome: () => void }
+interface RP { capture: Capture; clip: Clip; sel: number; setSel: (i: number) => void; onMore: () => void; onRetake: (clipId: string) => void; onContinue: () => void; onHome: () => void; check: React.ReactNode }
 const Tabs = ({ capture, sel, setSel }: { capture: Capture; sel: number; setSel: (i: number) => void }) => capture.clips.length > 1 ? <div className="clip-tabs" role="tablist">{capture.clips.map((k, i) => <button key={k.id} role="tab" aria-selected={i === sel} className={i === sel ? 'on' : ''} onClick={() => setSel(i)}><span className="mono">{String(i + 1).padStart(2, '0')}</span> {k.ar ? 'AR' : ''} {fmtTime(k.duration)}</button>)}</div> : null;
 
 /** AR scans: the coverage cloud instead of a video, coverage instead of per-second quality. */
-function ArReview({ capture, clip, sel, setSel, onMore, onRetake, onContinue, onHome }: RP) {
+function ArReview({ capture, clip, sel, setSel, onMore, onRetake, onContinue, onHome, check }: RP) {
   const [cloud, setCloud] = useState<{ pts: Float32Array; col: Float32Array } | null | undefined>(undefined);
   useEffect(() => { setCloud(undefined); loadCloud(clip.id).then(setCloud); }, [clip.id]);
   const c = clip.ar!.coverage, tot = Math.max(1, c.voxels), g = c.green / tot, o = c.orange / tot, r = c.red / tot;
@@ -49,6 +50,7 @@ function ArReview({ capture, clip, sel, setSel, onMore, onRetake, onContinue, on
           </Glass>
         </div>
       </div>
+      {check}
       <div className="actions">
         <button className="btn ghost" onClick={() => onRetake(clip.id)}>Delete this scan</button>
         <button className="btn ghost" onClick={onMore}>Scan another part</button>
@@ -58,7 +60,7 @@ function ArReview({ capture, clip, sel, setSel, onMore, onRetake, onContinue, on
   );
 }
 
-function VideoReview({ capture, clip, sel, setSel, onMore, onRetake, onContinue, onHome }: RP) {
+function VideoReview({ capture, clip, sel, setSel, onMore, onRetake, onContinue, onHome, check }: RP) {
   const [url, setUrl] = useState<string | null>(null); const [cur, setCur] = useState(0); const vid = useRef<HTMLVideoElement>(null);
   useEffect(() => { let u: string | null = null; readFile(clip.id, clip.mime).then(b => { if (b) { u = URL.createObjectURL(b); setUrl(u); } else setUrl(null); }); return () => { if (u) URL.revokeObjectURL(u); }; }, [clip.id]);
   const sum = useMemo(() => summarise(clip.quality), [clip]); const spans = useMemo(() => problemSpans(clip.quality), [clip]);
@@ -107,6 +109,7 @@ function VideoReview({ capture, clip, sel, setSel, onMore, onRetake, onContinue,
         </div>
       </div>
 
+      {check}
       <div className="actions">
         <button className="btn ghost" onClick={() => onRetake(clip.id)}>Delete this clip</button>
         <button className="btn ghost" onClick={onMore}>Record another part</button>

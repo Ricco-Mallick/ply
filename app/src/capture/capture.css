@@ -251,3 +251,15 @@ a.btn { text-decoration: none; }
 .ah-thumb img { display: block; width: 100%; } .ah-thumb figcaption { position: absolute; left: 4px; bottom: 3px; font-size: 9px; text-shadow: 0 1px 3px #000; }
 @keyframes pop { from { transform: scale(.85); opacity: .4; } }
 .link-btn { display: block; margin: 16px 0 0; padding: 0; border: 0; background: none; color: var(--muted); text-decoration: underline; text-underline-offset: 3px; font-size: 10px; }
+/* ---- coverage check ---- */
+.covcheck { margin-top: 14px; padding: 16px; border-radius: 20px; display: grid; gap: 12px; }
+.cc-h { display: flex; justify-content: space-between; align-items: baseline; gap: 10px; flex-wrap: wrap; } .cc-h h2 { margin: 0; color: var(--muted); }
+.cc-p { margin: 0; color: var(--body); font-size: 14px; line-height: 1.55; } .cc-p.mono { font-size: 10.5px; }
+.cc-key { height: 40px; padding: 0 14px; border-radius: 12px; border: 1px solid var(--line-2); background: rgba(255, 255, 255, .05); color: var(--fg); text-transform: none; }
+.cc-bars { height: 8px; border-radius: 8px; overflow: hidden; display: flex; }
+.cc-clip { display: grid; grid-template-columns: 110px 1fr; gap: 10px; align-items: center; } .cc-clip .mono { font-size: 9.5px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cc-strip { position: relative; height: 18px; border-radius: 6px; background: rgba(255, 255, 255, .05); overflow: hidden; }
+.cc-strip i { position: absolute; top: 3px; bottom: 3px; width: 2px; margin-left: -1px; border-radius: 1px; } .cc-strip i.ok { background: #3DDC97; } .cc-strip i.lost { background: #FF5A4E; }
+.cc-strip b { position: absolute; top: 0; bottom: 0; background: repeating-linear-gradient(45deg, rgba(255, 255, 255, .18) 0 4px, transparent 4px 8px); }
+.cc-spans { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; } .cc-spans li { display: flex; justify-content: space-between; align-items: center; gap: 10px; padding: 10px 12px; border-radius: 12px; background: rgba(255, 90, 78, .1); font-size: 13.5px; }
+.cc-spans .btn { height: 36px; margin: 0; padding: 0 14px; font-size: 9px; }

@@ -69,3 +69,13 @@ def test_ar_scan_gives_scale_and_level_floor(tmp_path):
     assert abs(np.median(path[:, 1]) - np.median(centers[:, 1])) < 0.04  # true heights, floor at 0
     ext_true = sorted(np.ptp(centers[:, [0, 2]], 0)); ext_got = sorted(np.ptp(path[:, [0, 2]], 0))
     assert np.allclose(ext_got, ext_true, rtol=0.04), (ext_got, ext_true)
+    # the coverage preview the app shows: aligned sparse points + every frame mapped back to its scan and second
+    from plypipe import preview
+    preview.build(out)
+    meta = json.loads((out / "preview.json").read_text())
+    blob = (out / "preview.bin").read_bytes()
+    n = int(np.frombuffer(blob[:4], np.uint32)[0])
+    assert meta["aligned"] and meta["registered"] == meta["total"] >= 44 and n == meta["points"] > 200
+    assert len(blob) == 4 + n * 16 and all(f["clip"] == "scan-01.tar" for f in meta["frames"])
+    ts = [f["t"] for f in meta["frames"]]
+    assert ts == sorted(ts) and ts[-1] > 12  # 48 keyframes 0.3 s apart, a few soft ones dropped

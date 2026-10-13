@@ -111,9 +111,10 @@ def run_stage(ctx: Ctx, src: Path) -> dict:
         return _ar_frames(ctx, src, tars, videos, out, fps, oversample, long_side, max_frames)
     if not videos:
         raise ValueError(f"no videos in {src}")
-    # the capture app ships capture.json (quality + sensor log) next to the clips; keep it with the job
+    # the capture app ships capture.json (quality + sensor log, spans to skip) next to the clips; keep it with the job
     if src.is_dir() and (src / "capture.json").exists():
         shutil.copy2(src / "capture.json", ctx.out / "capture.json")
+    (ctx.out / "frames_index.json").unlink(missing_ok=True)
     clips, kept = [], 0
     for v in videos:
         st = _video_frames(ctx, v, out, kept, fps, oversample, long_side, max_frames / len(videos) if max_frames else None)
@@ -123,6 +124,22 @@ def run_stage(ctx: Ctx, src: Path) -> dict:
         return {"source": "video", **{k: v for k, v in clips[0].items() if k not in ("file", "firstFrame")}}
     return {"source": "videos", "clips": clips, "kept": kept, "dropped": sum(c["dropped"] for c in clips),
             "sharpnessMedian": float(np.median([c["sharpnessMedian"] for c in clips]))}
+
+
+def _exclusions(ctx: Ctx) -> dict[str, list[tuple[float, float]]]:
+    """Spans the user marked for replacing in the app (capture.json clips[].exclude, seconds), per clip file."""
+    try:
+        cj = json.loads((ctx.out / "capture.json").read_text())
+    except (OSError, ValueError):
+        return {}
+    return {c["file"]: [tuple(x) for x in c.get("exclude") or []] for c in cj.get("clips", []) if c.get("file")}
+
+
+def _note_frames(ctx: Ctx, entries: list[dict]) -> None:
+    """frames_index.json: which clip and second each frame came from (the coverage preview maps gaps back to the video)."""
+    f = ctx.out / "frames_index.json"
+    cur = json.loads(f.read_text()) if f.exists() else []
+    f.write_text(json.dumps(cur + entries))
 
 
 def _video_frames(ctx: Ctx, src: Path, out: Path, start: int, fps: float, oversample: int, long_side: int,
@@ -149,12 +166,17 @@ def _video_frames(ctx: Ctx, src: Path, out: Path, start: int, fps: float, oversa
         if i % 200 == 0:
             ctx.log.emit("frames", "progress", f"{src.name}: scored {i}/{len(files)}", done=i, total=len(files))
     keep = select_sharpest(scores, oversample)
+    rate = fps * oversample  # frame i of the extraction sits at i / rate seconds
+    skip = _exclusions(ctx).get(src.name, [])
+    excluded = [i for i in keep if any(a <= i / rate <= b for a, b in skip)]
+    keep = [i for i in keep if i not in excluded]
     for n, i in enumerate(keep):
         shutil.move(str(files[i]), out / f"{start + n:06d}.jpg")
+    _note_frames(ctx, [{"frame": f"{start + n:06d}.jpg", "clip": src.name, "t": round(i / rate, 2)} for n, i in enumerate(keep)])
     shutil.rmtree(raw)
     return {"source": "video", "durationSec": duration, "fps": fps, "oversample": oversample,
             "extracted": len(files), "windows": -(-len(files) // oversample), "kept": len(keep),
-            "dropped": -(-len(files) // oversample) - len(keep),
+            "dropped": -(-len(files) // oversample) - len(keep), "excluded": len(excluded),
             "sharpnessMedian": float(np.median([scores[i] for i in keep])) if keep else 0.0}
 
 
@@ -165,7 +187,9 @@ def _ar_frames(ctx: Ctx, src: Path, tars: list[Path], videos: list[Path], out: P
     in order, the softest few percent dropped; poses go to ar_poses.json for align (real scale, level floor)."""
     if (src / "capture.json").exists():
         shutil.copy2(src / "capture.json", ctx.out / "capture.json")
+    (ctx.out / "frames_index.json").unlink(missing_ok=True)
     kept, segments, dropped, scores_all = 0, [], 0, []
+    skips = _exclusions(ctx)
     for seg, tp in enumerate(tars):
         with tarfile.open(tp) as tf:
             meta = json.loads(tf.extractfile("poses.json").read())
@@ -190,7 +214,8 @@ def _ar_frames(ctx: Ctx, src: Path, tars: list[Path], videos: list[Path], out: P
         keep = {i for w0 in range(0, len(frames), step) for i in [max(range(w0, min(w0 + step, len(frames))), key=lambda k: frames[k][2])]}
         seg_frames = []
         for i, (kf, img, sc) in enumerate(frames):
-            if i not in keep or (step == 1 and sc < floor):
+            t = (kf.get("t") or 0) / 1000
+            if i not in keep or (step == 1 and sc < floor) or any(a <= t <= b for a, b in skips.get(tp.name, [])):
                 dropped += 1
                 continue
             h, w = img.shape[:2]
@@ -202,6 +227,7 @@ def _ar_frames(ctx: Ctx, src: Path, tars: list[Path], videos: list[Path], out: P
             seg_frames.append({"frame": name, "m": kf["m"], "t": kf.get("t"), "fx": kf["fx"] * min(1, s), "fy": kf["fy"] * min(1, s),
                                "cx": kf["cx"] * min(1, s), "cy": kf["cy"] * min(1, s)})
             scores_all.append(sc)
+            _note_frames(ctx, [{"frame": name, "clip": tp.name, "t": round((kf.get("t") or 0) / 1000, 2)}])
             kept += 1
         segments.append({"file": tp.name, "keyframes": len(frames), "kept": len(seg_frames), "frames": seg_frames,
                          "coverage": meta.get("coverage"), "device": meta.get("device")})

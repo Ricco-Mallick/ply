@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react';
 import { analyseFile } from './lib/session';
 import { deleteCapture, loadCapture, newId, saveCapture, storeUpload, type Capture, type Clip } from './lib/store';
 import { Live } from './ui/Live';
+import type { Span } from './ui/CoverageCheck';
 import { ArScan } from './ui/ArScan';
 import { Permissions, type Granted } from './ui/Permissions';
 import { Review } from './ui/Review';
@@ -49,6 +50,13 @@ export function App() {
     setProg(null); if (!clips.length) { go('start'); return; }
     update({ ...c, clips: [...c.clips, ...clips] }); go('review');
   };
+  // coverage check: remember the job and what it covered; replacing a lost stretch marks it skipped and records a new clip
+  const sig = (c: Capture) => c.clips.map(k => `${k.id}:${(k.exclude ?? []).length}`);
+  const onPreview = (jobId: string) => { if (cap) update({ ...cap, preview: { jobId, clips: sig(cap), at: Date.now() } }); };
+  const onReplace = (s: Span) => {
+    if (!cap) return; const clips = cap.clips.map(k => k.id === s.clipId ? { ...k, exclude: [...(k.exclude ?? []), [+s.from.toFixed(2), +s.to.toFixed(2)] as [number, number]] } : k);
+    update({ ...cap, clips }); go(clips.find(k => k.id === s.clipId)?.ar ? 'ar' : 'perms');
+  };
   const open = async (id: string) => { const c = await loadCapture(id); if (c) { setCap(c); go('review'); } else setErr('That capture is no longer on this device.'); };
   const retake = async (clipId: string) => {
     if (!cap) return; const clips = cap.clips.filter(k => k.id !== clipId);
@@ -65,7 +73,7 @@ export function App() {
       {screen === 'live' && (granted ? <Live granted={granted} clipNo={(cap?.clips.length ?? 0) + 1} onClip={onClip} onClose={() => go(cap?.clips.length ? 'review' : 'start')} /> : <Relaunch onGo={() => go('perms')} />)}
       {screen === 'ar' && <ArScan scanNo={(cap?.clips.length ?? 0) + 1} onClip={onClip} onClose={() => go(cap?.clips.length ? 'review' : 'start')} />}
       {screen === 'arvideo' && <ArScan key="video" mode="video" scanNo={(cap?.clips.length ?? 0) + 1} onClip={onClip} onClose={() => go(cap?.clips.length ? 'review' : 'start')} />}
-      {screen === 'review' && cap && <Review capture={cap} onMore={() => go(cap.clips.at(-1)?.ar ? (cap.clips.at(-1)!.name.startsWith('video') ? 'arvideo' : 'ar') : 'perms')} onRetake={retake} onContinue={() => go('submit')} onHome={() => { setCap(null); go('start'); }} />}
+      {screen === 'review' && cap && <Review capture={cap} onMore={() => go(cap.clips.at(-1)?.ar ? (cap.clips.at(-1)!.name.startsWith('video') ? 'arvideo' : 'ar') : 'perms')} onRetake={retake} onContinue={() => go('submit')} onHome={() => { setCap(null); go('start'); }} onPreview={onPreview} onReplace={onReplace} />}
       {screen === 'submit' && cap && <Submit capture={cap} onRename={n => update({ ...cap, name: n })} onBack={() => history.back()} onQueued={id => { rememberJob({ id, name: cap.name, createdAt: Date.now() }); setJobId(id); history.replaceState({ screen: 'status' }, '', `?job=${id}`); setScreen('status'); }} />}
       {screen === 'status' && jobId && <Status jobId={jobId} onHome={() => { history.replaceState({ screen: 'start' }, '', location.pathname); setScreen('start'); }} />}
       {screen === 'analysing' && (
