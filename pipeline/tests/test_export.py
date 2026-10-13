@@ -56,6 +56,12 @@ def test_export_writes_full_and_lite_spz_and_crops(tmp_path):
     update_scene(ctx, {"bounds": {"min": [0, 0, 0], "max": [6, 2.8, 4]}})
     rep = export.run_stage(ctx)
     assert (tmp_path / "scene.spz").stat().st_size > 1000
+    # the viewer (Spark 2.3.1) only reads SPZ v3, which is gzip-wrapped; v4 starts with the raw "NGSP" header
+    import gzip, struct
+    for name in ("scene.spz", "scene_lite.spz"):
+        raw = (tmp_path / name).read_bytes()
+        assert raw[:2] == b"\x1f\x8b", f"{name} is not gzip (SPZ v4?)"
+        assert struct.unpack("<I", gzip.decompress(raw)[4:8])[0] == 3
     assert (tmp_path / "scene_lite.spz").stat().st_size < (tmp_path / "scene.spz").stat().st_size
     # round-trip the SPZ back to PLY: floaters cropped, positions unchanged (no axis flip)
     subprocess.run(["npx", "-y", export.SPLAT_TRANSFORM, "-w", str(tmp_path / "scene.spz"), str(tmp_path / "back.ply")],

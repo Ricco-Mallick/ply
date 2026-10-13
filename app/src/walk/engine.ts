@@ -40,7 +40,7 @@ export class WalkEngine {
     if (m.splatQuaternion) this.splat.quaternion.set(...m.splatQuaternion);
     if (m.splatPosition) this.splat.position.set(...m.splatPosition);
     this.scene.add(this.splat);
-    try { await this.splat.initialized; this.state.loaded = true; this.state.progress = 1; } catch (e) { this.state.error = (e as Error).message || 'The scene failed to load'; this.emit(); return; }
+    try { await this.splat.initialized; this.state.loaded = true; this.state.progress = 1; } catch (e) { console.error('[ply] splat failed to load', url, e); this.state.error = (e as Error)?.message || String(e) || 'The scene failed to load'; this.emit(); return; }
     if (!this.grid || m.floorY === undefined) this.deriveFromSplat(m);
     // no start in the manifest: begin in the middle of the walkable floor
     if (!m.start && this.grid) this.openSpawn();

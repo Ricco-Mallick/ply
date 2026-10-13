@@ -69,7 +69,8 @@ def run_stage(ctx: Ctx) -> dict:
     if not ply.exists():
         raise FileNotFoundError(f"{ply} missing: run the train stage or pass --ply")
     scene = read_scene(ctx)
-    base = ["npx", "-y", SPLAT_TRANSFORM, "-w", str(ply)]
+    # SPZ v3 (gzip): the web viewer's Spark 2.3.1 rejects v4, splat-transform's default ("Unsupported SPZ version: 4")
+    base = ["npx", "-y", SPLAT_TRANSFORM, "-w", "--spz-version", "3", str(ply)]
     if ctx.opt("apply_align"):
         base += align_actions(np.array(scene["transform"]))
     base += ["-N"]
