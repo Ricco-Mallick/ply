@@ -263,3 +263,22 @@ a.btn { text-decoration: none; }
 .cc-strip b { position: absolute; top: 0; bottom: 0; background: repeating-linear-gradient(45deg, rgba(255, 255, 255, .18) 0 4px, transparent 4px 8px); }
 .cc-spans { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; } .cc-spans li { display: flex; justify-content: space-between; align-items: center; gap: 10px; padding: 10px 12px; border-radius: 12px; background: rgba(255, 90, 78, .1); font-size: 13.5px; }
 .cc-spans .btn { height: 36px; margin: 0; padding: 0 14px; font-size: 9px; }
+/* ---- live view (status page) ---- */
+.status.wide-status { max-width: 1080px; }
+.theatre { margin: 18px 0 14px; padding: 12px; border-radius: 22px; }
+.th-tabs { display: flex; gap: 6px; align-items: center; margin-bottom: 10px; flex-wrap: wrap; }
+.th-tabs button { height: 34px; padding: 0 14px; border-radius: 999px; border: 1px solid var(--line); background: rgba(255, 255, 255, .04); color: var(--muted); font: 600 12.5px/1 var(--font-body); }
+.th-tabs button.on { background: var(--accent); border-color: var(--accent); color: #0B1220; } .th-tabs button:disabled { opacity: .35; }
+.th-live { margin-left: auto; display: inline-flex; gap: 8px; align-items: center; font-size: 10px; color: var(--body); } .th-live i { width: 8px; height: 8px; border-radius: 50%; background: #F2555A; animation: pulse 1.2s infinite; }
+.th-frames { max-height: 460px; overflow: auto; border-radius: 14px; }
+.th-grid { display: grid; gap: 3px; }
+.th-grid span { display: block; border-radius: 3px; background-repeat: no-repeat; animation: thIn .5s var(--ease-out) both; }
+@keyframes thIn { from { opacity: 0; transform: scale(.7); } }
+.th-cap { margin: 10px 4px 2px; font-size: 10px; color: var(--muted); }
+.th-wait { display: grid; place-items: center; height: 420px; color: var(--muted); }
+.th-snaps { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; margin-top: 10px; }
+.th-snaps button { height: 30px; padding: 0 12px; border-radius: 999px; border: 1px solid var(--line); background: none; color: var(--body); font: 400 10px/1 var(--font-mono); }
+.th-snaps button.on { border-color: var(--accent); color: var(--accent); }
+.th-loss { margin-left: auto; width: 180px; height: 36px; } .th-loss path { fill: none; stroke: var(--accent); stroke-width: 2; vector-effect: non-scaling-stroke; }
+.splat-orbit { position: relative; width: 100%; border-radius: 16px; overflow: hidden; background: radial-gradient(circle at 50% 40%, #121a2a, #070B14); touch-action: none; }
+.so-state { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); color: var(--muted); font-size: 10px; pointer-events: none; }

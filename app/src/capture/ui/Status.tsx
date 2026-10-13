@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Glass } from '../../shared/Glass';
 import { getHealth, getJob, sceneUrl, type Health, type Job } from '../lib/backend';
+import { LiveTheatre } from './LiveTheatre';
 
 const BASE = import.meta.env.BASE_URL;
 const STAGES: [string, string][] = [['frames', 'Picking sharp frames'], ['sfm', 'Solving camera positions'], ['align', 'Levelling the floor, real scale'], ['occupancy', 'Mapping walkable floor'], ['train', 'Training gaussian splats'], ['export', 'Compressing for the web']];
@@ -43,7 +44,7 @@ export function Status({ jobId, onHome }: { jobId: string; onHome: () => void })
   const head = !job ? 'Checking…' : job.status === 'queued' ? 'Waiting for a GPU' : job.status === 'running' ? 'Building your twin' : job.status === 'done' ? 'Your twin is ready' : 'Processing failed';
 
   return (
-    <main className="status">
+    <main className={`status ${job?.status === 'running' || job?.status === 'done' ? 'wide-status' : ''}`}>
       <header className="cap-top"><button className="back mono" onClick={onHome}>← Captures</button><span className="mono dim">Job {jobId.slice(0, 8)}</span></header>
       <div className="wide eyebrow">{job?.name ?? 'Processing'}</div>
       <h1>{head}</h1>
@@ -53,6 +54,8 @@ export function Status({ jobId, onHome }: { jobId: string; onHome: () => void })
       {job?.status === 'running' && <p className={`gpu-chip mono ${Date.now() - job.updated_at < 90_000 ? 'on is-live' : 'warm'}`}><span aria-hidden="true" />{stepText(job.message) || 'Working'} · {Date.now() - job.updated_at < 90_000 ? `live, updated ${ago(job.updated_at)} ago` : `no word from the GPU for ${ago(job.updated_at)}`}</p>}
       {job?.status === 'failed' && <p className="lead bad-t">{job.message ?? 'The pipeline stopped with an error.'} Try the Incremental camera solver or SIFT matching in Advanced settings, or recapture the red stretches.</p>}
       {job?.status === 'done' && <p className="lead">Finished in {job.started_at && job.finished_at ? ago(Date.now() - (job.finished_at - job.started_at)) : '—'}. Walk it in the browser, share the link, or open it on the big screen.</p>}
+
+      {job && (job.status === 'running' || job.status === 'done') && <LiveTheatre jobId={jobId} job={job} />}
 
       <Glass className="stages" opts={{ radius: 20, shader: false }}>
         <ol>{STAGES.map(([k, label], i) => {

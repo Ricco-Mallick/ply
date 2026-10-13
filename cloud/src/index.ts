@@ -98,7 +98,8 @@ async function route(req: Request, env: Env, ctx: Ctx): Promise<Response> {
     return json({ ...row, result: row.result ? JSON.parse(row.result) : null, queuePosition: row.status === 'queued' ? (await env.DB.prepare("SELECT COUNT(*) n FROM jobs WHERE status='queued' AND created_at<?").bind(row.created_at).first()).n + 1 : 0 }, 200, { 'cache-control': 'no-store' });
   }
   m = p.match(/^\/v1\/scenes\/([\w-]+)\/([\w.\-]+)$/);
-  if (m && (req.method === 'GET' || req.method === 'HEAD')) return serve(env, `scenes/${m[1]}/${m[2]}`, req, 'public, max-age=3600');
+  // the live view's index changes every few seconds while a job runs; everything else is immutable or cache-busted
+  if (m && (req.method === 'GET' || req.method === 'HEAD')) return serve(env, `scenes/${m[1]}/${m[2]}`, req, m[2] === 'live-index.json' ? 'no-store' : 'public, max-age=3600');
 
   // ---- uploads (app: captures/, worker: scenes/) ----
   if (p === '/v1/uploads' && req.method === 'POST') {

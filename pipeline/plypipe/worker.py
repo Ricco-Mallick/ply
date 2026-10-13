@@ -28,6 +28,7 @@ import urllib.parse
 import urllib.request
 from pathlib import Path
 
+from plypipe.live import Live
 from plypipe.progress import SfmProgress
 
 # rough share of wall time per stage on a T4, for one overall progress number
@@ -191,6 +192,7 @@ def run_job(api: Api, job: dict, work: Path, extra: list[str]) -> None:
     limits = stage_limits()
     rehearsal = "--train-dry-run" in job["args"]
     post = lambda **kw: api.req("POST", f"/v1/worker/jobs/{jid}", kw)
+    live = Live(api, jid, out, log=lambda m: print(m, file=sys.stderr, flush=True))  # what the status page shows in 3D
 
     def beat():  # heartbeat + progress every 20 s, independent of log activity
         while state["alive"]:
@@ -264,12 +266,16 @@ def run_job(api: Api, job: dict, work: Path, extra: list[str]) -> None:
                     if st in WEIGHTS:
                         if st != state["stage"]:
                             state["stage"], state["frac"], state["stage_t0"] = st, 0.0, time.time()
+                            live.stage(st, "running")
+                            if st == "train":  # intermediate PLYs -> small SPZ snapshots for the live view
+                                threading.Thread(target=live.poll_snapshots, args=(lambda: p.poll() is None,), daemon=True).start()
                             try:  # tell the status page straight away; the heartbeat covers the rest
                                 post(stage=st, progress=overall(st, 0.0), message=f"{st}: started")
                             except Exception:
                                 pass
                         if ev.get("event") == "done":
                             state["frac"] = 1.0
+                            live.stage_done(st)
                             if st in CHECKPOINT_AFTER and not rehearsal:
                                 try:
                                     state["msg"] = f"{st}: saving checkpoint"
@@ -283,6 +289,7 @@ def run_job(api: Api, job: dict, work: Path, extra: list[str]) -> None:
                             state["frac"] = max(state["frac"], f)
                             if st == "train":
                                 state["msg"] = f"train: {round(f * 100)}%{eta(state['stage_t0'], f)}"
+                                live.train_line(f, ev.get("msg", ""))
                         elif ev.get("event") == "progress" and ev.get("msg"):  # named steps inside a stage ("matching", "incremental mapping")
                             state["msg"] = f"{st}: {ev['msg']}"[:200]
                         if ev.get("event") in ("start", "done", "warn"):
@@ -352,6 +359,7 @@ def run_job(api: Api, job: dict, work: Path, extra: list[str]) -> None:
 
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
+    os.environ.setdefault("PLY_LIVE_SNAPSHOTS", "0.1,0.3,0.6")  # live view: the twin at 10, 30 and 60 % of training
     ap.add_argument("--api", default=os.environ.get("PLY_API"))
     ap.add_argument("--token", default=os.environ.get("PLY_WORKER_TOKEN"))
     ap.add_argument("--name", default=os.environ.get("PLY_WORKER_NAME", socket.gethostname()))

@@ -49,7 +49,8 @@ def build_config(st, data: str, result: str, preset: str, ppisp: bool | None, an
     cfg.eval_steps = []
     cfg.save_steps = [steps]
     cfg.save_ply = True
-    cfg.ply_steps = [steps]
+    # PLY_LIVE_SNAPSHOTS="0.15,0.4,0.7": also save PLYs part-way, for the live view on the status page
+    cfg.ply_steps = sorted({*(max(1, int(steps * float(f))) for f in os.environ.get("PLY_LIVE_SNAPSHOTS", "").split(",") if f.strip()), steps})
     cfg.sh_degree = p["sh_degree"]
     cfg.disable_viewer = True
     cfg.disable_video = True
