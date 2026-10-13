@@ -12,7 +12,7 @@ import { Submit } from './ui/Submit';
 import { Status, rememberJob } from './ui/Status';
 import { Tutorial } from './ui/Tutorial';
 
-type Screen = 'start' | 'perms' | 'tutorial' | 'live' | 'ar' | 'review' | 'submit' | 'analysing' | 'status';
+type Screen = 'start' | 'perms' | 'tutorial' | 'live' | 'ar' | 'arvideo' | 'review' | 'submit' | 'analysing' | 'status';
 const SEEN = 'ply-tutorial-seen';
 const seen = () => { try { return localStorage.getItem(SEEN) === '1'; } catch { return false; } };
 
@@ -32,7 +32,10 @@ export function App() {
   const ensureCapture = () => cap ?? { id: newId(), name: `Capture ${new Date().toLocaleDateString(undefined, { day: 'numeric', month: 'short' })}`, createdAt: Date.now(), clips: [] };
   const update = (c: Capture) => { setCap(c); saveCapture(c); };
 
-  const record = () => { setCap(ensureCapture()); go('perms'); };
+  const [arOk, setArOk] = useState(false); useEffect(() => { import('./lib/ar').then(m => m.arSupported()).then(setArOk); }, []);
+  // AR phones record video inside AR (coverage needs AR tracking, and the browser cannot run both); others use the camera directly
+  const record = () => { setCap(ensureCapture()); go(arOk ? 'arvideo' : 'perms'); };
+  const classic = () => { setCap(ensureCapture()); go('perms'); };
   const scan = () => { setCap(ensureCapture()); go('ar'); };
   const onGranted = (g: Granted) => { setGranted(g); go(seen() ? 'live' : 'tutorial'); };
   const onClip = (clip: Clip) => { const c = ensureCapture(); update({ ...c, clips: [...c.clips, clip] }); go('review'); };
@@ -64,7 +67,8 @@ export function App() {
       {screen === 'tutorial' && <Tutorial onDone={() => { try { localStorage.setItem(SEEN, '1'); } catch { /* ignore */ } setScreen('live'); history.replaceState({ screen: 'live' }, ''); }} />}
       {screen === 'live' && (granted ? <Live granted={granted} clipNo={(cap?.clips.length ?? 0) + 1} onClip={onClip} onClose={() => go(cap?.clips.length ? 'review' : 'start')} /> : <Relaunch onGo={() => go('perms')} />)}
       {screen === 'ar' && <ArScan scanNo={(cap?.clips.length ?? 0) + 1} onClip={onClip} onClose={() => go(cap?.clips.length ? 'review' : 'start')} />}
-      {screen === 'review' && cap && <Review capture={cap} onMore={() => go(cap.clips.at(-1)?.ar ? 'ar' : 'perms')} onRetake={retake} onContinue={() => go('submit')} onHome={() => { setCap(null); go('start'); }} />}
+      {screen === 'arvideo' && <ArScan key="video" mode="video" scanNo={(cap?.clips.length ?? 0) + 1} onClip={onClip} onClose={() => go(cap?.clips.length ? 'review' : 'start')} onClassic={classic} />}
+      {screen === 'review' && cap && <Review capture={cap} onMore={() => go(cap.clips.at(-1)?.ar ? (cap.clips.at(-1)!.name.startsWith('video') ? 'arvideo' : 'ar') : 'perms')} onRetake={retake} onContinue={() => go('submit')} onHome={() => { setCap(null); go('start'); }} />}
       {screen === 'submit' && cap && <Submit capture={cap} onRename={n => update({ ...cap, name: n })} onBack={() => history.back()} onQueued={id => { rememberJob({ id, name: cap.name, createdAt: Date.now() }); setJobId(id); history.replaceState({ screen: 'status' }, '', `?job=${id}`); setScreen('status'); }} />}
       {screen === 'status' && jobId && <Status jobId={jobId} onHome={() => { history.replaceState({ screen: 'start' }, '', location.pathname); setScreen('start'); }} />}
       {screen === 'analysing' && (

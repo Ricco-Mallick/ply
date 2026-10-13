@@ -184,11 +184,13 @@ def _ar_frames(ctx: Ctx, src: Path, tars: list[Path], videos: list[Path], out: P
             continue
         sh = np.array([f[2] for f in frames])
         floor = np.percentile(sh, float(ctx.opt("ar_drop_pct", 5)))  # the phone already skips fast motion
-        cap = int(max_frames / len(tars)) if max_frames else None
-        step = max(1, int(np.ceil(len(frames) / cap))) if cap else 1
+        # many frames (video mode records 4/s): keep the sharpest of each run of neighbours, up to the cap
+        cap = int((max_frames or int(ctx.opt("ar_max_frames", 450))) / len(tars))
+        step = max(1, int(np.ceil(len(frames) / cap)))
+        keep = {i for w0 in range(0, len(frames), step) for i in [max(range(w0, min(w0 + step, len(frames))), key=lambda k: frames[k][2])]}
         seg_frames = []
         for i, (kf, img, sc) in enumerate(frames):
-            if sc < floor or i % step:
+            if i not in keep or (step == 1 and sc < floor):
                 dropped += 1
                 continue
             h, w = img.shape[:2]

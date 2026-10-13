@@ -37,7 +37,7 @@ export function Start({ onRecord, onScan, onUpload, onOpen, onJob }: { onRecord:
         <Glass as="button" className={`choice ${ar ? '' : 'primary'}`} opts={{ press: true, radius: 22 }} onClick={onRecord}>
           <span className="choice-ico" aria-hidden="true"><svg viewBox="0 0 24 24" width="26" height="26" fill="none" stroke="currentColor" strokeWidth="1.6"><rect x="2.5" y="6" width="14" height="12" rx="2.5" /><path d="m16.5 10.5 5-3v9l-5-3" /><circle cx="9.5" cy="12" r="2.4" fill="currentColor" stroke="none" /></svg></span>
           <span className="choice-t">Record with camera</span>
-          <span className="choice-d">{ar ? 'Video with live tips and a quality map.' : 'Live guidance, sensors, quality map. Best results.'}</span>
+          <span className="choice-d">{ar ? 'Film normally while floors and walls fill in with live coverage dots.' : 'Live guidance, sensors, quality map. Best results.'}</span>
           {!PHONE && <span className="choice-note mono">Works best on a phone</span>}
         </Glass>
         <Glass as="button" className={`choice ${drag ? 'drag' : ''}`} opts={{ press: true, radius: 22 }} onClick={() => file.current?.click()}>
