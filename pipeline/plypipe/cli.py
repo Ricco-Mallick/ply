@@ -64,6 +64,8 @@ def build_parser() -> argparse.ArgumentParser:
     g = r.add_argument_group("sfm")
     g.add_argument("--features", choices=["aliked", "sift"], default="aliked")
     g.add_argument("--matcher", choices=["auto", "sequential", "exhaustive"], default="auto")
+    g.add_argument("--camera-model", choices=["SIMPLE_RADIAL", "RADIAL", "OPENCV", "OPENCV_FISHEYE"], default="SIMPLE_RADIAL",
+                   help="lens model for SfM: OPENCV for wide action cams (DJI, GoPro), OPENCV_FISHEYE beyond ~150 deg")
     g.add_argument("--exhaustive-max", type=int, default=250, help="auto: exhaustive up to this many frames")
     g.add_argument("--device", choices=["auto", "cuda", "cpu"], default="auto")
     g.add_argument("--mapper", choices=["global", "incremental"], default="global",

@@ -46,17 +46,26 @@ def focal_prior_params(images: Path, focal_35mm: float) -> str:
     return f"{f:.3f},{w / 2:.3f},{h / 2:.3f},0"
 
 
-def _extract(pycolmap, db: Path, images: Path, features: str, device, camera_params: str | None = None) -> str:
+def _camera_mode(pycolmap, images: Path):
+    """One shared camera when every frame has the same size (one phone or one action cam); per-image cameras when
+    clips were shot at different resolutions or aspect ratios (a single camera would be wrong for some of them)."""
+    import cv2
+    sizes = {cv2.imread(str(p), cv2.IMREAD_REDUCED_GRAYSCALE_8).shape for p in sorted(images.glob("*.jpg"))}
+    return pycolmap.CameraMode.SINGLE if len(sizes) == 1 else pycolmap.CameraMode.PER_IMAGE
+
+
+def _extract(pycolmap, db: Path, images: Path, features: str, device, camera_params: str | None = None,
+             camera_model: str = "SIMPLE_RADIAL") -> str:
     reader = pycolmap.ImageReaderOptions()
-    reader.camera_model = "SIMPLE_RADIAL"
-    if camera_params:
+    reader.camera_model = camera_model
+    if camera_params and camera_model == "SIMPLE_RADIAL":  # the focal prior is written for SIMPLE_RADIAL's parameters
         reader.camera_params = camera_params
     if features == "aliked":
         ext = pycolmap.FeatureExtractionOptions(pycolmap.FeatureExtractorType.ALIKED_N16ROT)
     else:
         ext = pycolmap.FeatureExtractionOptions(pycolmap.FeatureExtractorType.SIFT)
     ext.max_image_size = 1600
-    pycolmap.extract_features(db, images, camera_mode=pycolmap.CameraMode.SINGLE, reader_options=reader,
+    pycolmap.extract_features(db, images, camera_mode=_camera_mode(pycolmap, images), reader_options=reader,
                               extraction_options=ext, device=device)
     return features
 
@@ -117,14 +126,14 @@ def run_stage(ctx: Ctx) -> dict:
     cam_params = focal_prior_params(images, float(ctx.opt("focal_35mm"))) if ctx.opt("focal_35mm") else None
     ctx.log.emit("sfm", "progress", f"extracting {features} features", images=n_images, cameraPrior=cam_params)
     try:
-        _extract(pycolmap, db, images, features, device, cam_params)
+        _extract(pycolmap, db, images, features, device, cam_params, ctx.opt("camera_model", "SIMPLE_RADIAL"))
     except Exception as e:  # ONNX model download/runtime missing -> SIFT
         if features != "aliked":
             raise
         ctx.log.emit("sfm", "warn", f"ALIKED failed ({e}); falling back to SIFT")
         db.unlink(missing_ok=True)
         features = "sift"
-        _extract(pycolmap, db, images, features, device, cam_params)
+        _extract(pycolmap, db, images, features, device, cam_params, ctx.opt("camera_model", "SIMPLE_RADIAL"))
 
     ctx.log.emit("sfm", "progress", "matching")
     # several clips: frames from different clips sit next to each other in the numbering, so sequential pairing
@@ -134,10 +143,10 @@ def run_stage(ctx: Ctx) -> dict:
         source = json.loads((ctx.out / ".done" / "frames.json").read_text()).get("source")
         if source == "videos":
             exhaustive_max = max(exhaustive_max, 700)
-        elif source == "ar" and ctx.opt("exhaustive_max") is None:
+        elif source == "ar":
             # AR keyframes come in walking order, many of them: sequential pairing with quadratic overlap finds the
             # loops too, at a fraction of exhaustive matching's cost (n^2 pairs took 20 min for 146 frames on a T4)
-            exhaustive_max = 150
+            exhaustive_max = min(exhaustive_max, 150)
     except (OSError, ValueError):
         pass
     try:
@@ -148,7 +157,7 @@ def run_stage(ctx: Ctx) -> dict:
         ctx.log.emit("sfm", "warn", f"LightGlue matching failed ({e}); re-running with SIFT")
         db.unlink(missing_ok=True)
         features = "sift"
-        _extract(pycolmap, db, images, features, device, cam_params)
+        _extract(pycolmap, db, images, features, device, cam_params, ctx.opt("camera_model", "SIMPLE_RADIAL"))
         matcher = _match(pycolmap, db, features, n_images, ctx.opt("matcher", "auto"), exhaustive_max, device)
 
     mapper = ctx.opt("mapper", "global")

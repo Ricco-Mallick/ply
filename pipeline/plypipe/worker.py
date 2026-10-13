@@ -71,12 +71,18 @@ class Api:
             time.sleep([1, 3, 8, 20, 40][min(i, 4)])
 
     def download(self, key: str, dest: Path):
-        """The API hands out a signed link; the bytes come straight from the bucket (no auth header on that request)."""
+        """The API hands out a signed link; the bytes come straight from the bucket (no auth header on that request).
+        'gdrive:<id>:<name>' inputs (large shared clips, e.g. demo footage) come straight from Google Drive instead,
+        which keeps multi-GB captures off the bucket's daily download allowance."""
         dest.parent.mkdir(parents=True, exist_ok=True)
-        _, info = self.req("GET", "/v1/worker/file?" + urllib.parse.urlencode({"key": key}))
+        if key.startswith("gdrive:"):
+            url = f"https://drive.usercontent.google.com/download?id={key.split(':')[1]}&export=download&confirm=t"
+        else:
+            _, info = self.req("GET", "/v1/worker/file?" + urllib.parse.urlencode({"key": key}))
+            url = info["url"]
         for i in range(4):
             try:
-                with urllib.request.urlopen(urllib.request.Request(info["url"], headers=UA), timeout=600) as resp, dest.open("wb") as f:
+                with urllib.request.urlopen(urllib.request.Request(url, headers=UA), timeout=600) as resp, dest.open("wb") as f:
                     shutil.copyfileobj(resp, f, 8 * 1024 * 1024)
                 return
             except (urllib.error.URLError, TimeoutError, ConnectionError):
@@ -209,12 +215,12 @@ def run_job(api: Api, job: dict, work: Path, extra: list[str]) -> None:
             print(f"[worker] resuming {jid} after {resumed}", flush=True)
         inp.mkdir(parents=True, exist_ok=True)
         for k in ([] if resumed else job["files"]):  # a checkpoint past SfM needs no clips at all
-            cached = cache / k
+            cached = cache / k.replace(':', '_')
             if not cached.exists() or cached.stat().st_size == 0:
                 api.download(k, cached.with_suffix(cached.suffix + ".part"))
                 cached.with_suffix(cached.suffix + ".part").rename(cached)
             inp.mkdir(parents=True, exist_ok=True)
-            dest = inp / Path(k).name
+            dest = inp / (k.split(':', 2)[2] if k.startswith('gdrive:') else Path(k).name)
             if not dest.exists():
                 os.link(cached, dest) if hasattr(os, "link") else shutil.copy2(cached, dest)
         # PLY_PIPELINE_CMD swaps the pipeline for a stand-in (tests: the worker plumbing without a GPU)

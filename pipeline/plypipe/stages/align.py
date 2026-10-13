@@ -25,7 +25,7 @@ import shutil
 
 import numpy as np
 
-from plypipe import colmap_txt, geometry
+from plypipe import colmap_txt, geometry, tour
 from plypipe.util import Ctx, update_scene
 
 
@@ -90,6 +90,7 @@ def run_stage(ctx: Ctx) -> dict:
         "bounds": geometry.robust_bounds(p2),
         "cameraPath": path,
         "spawn": spawn,
+        "tour": tour.build_tour(c2, geometry.robust_bounds(p2)),
     })
     return {"floorInliers": int(plane.inliers.sum()), "floorInlierRatio": float(plane.inliers.mean()),
             "floorTiltDeg": info["floorTiltDeg"], "yawDeg": info["yawDeg"], "scale": info["scale"],

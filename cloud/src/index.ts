@@ -137,7 +137,8 @@ async function route(req: Request, env: Env, ctx: Ctx): Promise<Response> {
   if (p === '/v1/jobs' && req.method === 'POST') {
     if (r !== 'app') return json({ error: 'missing or wrong key' }, 401);
     const b = await req.json() as any;
-    const files: string[] = (b.files ?? []).filter((k: string) => typeof k === 'string' && k.startsWith(`captures/${safeName(b.captureId)}/`));
+    // uploaded clips under captures/<id>/, or shared Google Drive files 'gdrive:<fileId>:<name>' (the worker fetches those itself)
+    const files: string[] = (b.files ?? []).filter((k: string) => typeof k === 'string' && (k.startsWith(`captures/${safeName(b.captureId)}/`) || /^gdrive:[\w-]{20,}:[\w.\-]{1,120}$/.test(k)));
     if (!files.length) return json({ error: 'no uploaded files for this capture' }, 400);
     const jobId = id();
     await env.DB.prepare('INSERT INTO jobs (id,name,capture_id,settings,args,files,status,progress,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?)')
