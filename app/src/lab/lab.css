@@ -16,9 +16,10 @@ kbd { font: 700 10px/1 var(--font-mono); padding: 3px 6px; border-radius: 5px; b
 .lab-row { padding: 9px 0; border-top: 1px solid var(--line); }
 .lab-row-l { display: block; font: 600 12.5px/1 var(--font-body); color: var(--fg); margin-bottom: 8px; }
 .lab-seg { display: flex; flex-wrap: wrap; gap: 4px; }
-.lab-seg button { border: 1px solid var(--line); background: rgba(255, 255, 255, .03); border-radius: 999px; height: 28px; padding: 0 11px; font: 600 11.5px/1 var(--font-body); color: var(--muted); transition: background .2s, color .2s, border-color .2s; }
-.lab-seg button:hover { color: var(--fg); border-color: var(--line-2); }
-.lab-seg button.on { background: var(--accent); border-color: var(--accent); color: #0B1220; }
+.lab-seg a { display: inline-flex; align-items: center; text-decoration: none; }
+.lab-seg button, .lab-seg a { border: 1px solid var(--line); background: rgba(255, 255, 255, .03); border-radius: 999px; height: 28px; padding: 0 11px; font: 600 11.5px/1 var(--font-body); color: var(--muted); transition: background .2s, color .2s, border-color .2s; }
+.lab-seg button:hover, .lab-seg a:hover { color: var(--fg); border-color: var(--line-2); }
+.lab-seg button.on, .lab-seg a.on { background: var(--accent); border-color: var(--accent); color: #0B1220; }
 .lab-note { margin: 10px 0 0; font-size: 11.5px; line-height: 1.5; color: var(--dim); }
 
 /* ---- projected labels ---- */

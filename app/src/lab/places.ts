@@ -1,6 +1,7 @@
 /* Places in a twin, and routes between them on the occupancy grid.
-   The lab ships hand-placed places for the first real capture (job 0ffc07fb, found by hit-testing the splat);
-   in the product they come from people pinning spots and from the AI labelling pass. */
+   The lab ships hand-placed places for two scenes (found by hit-testing the splat from probe views, see
+   app/scripts/probe-pick.mjs): the bundled demo bedroom and the first real capture (job 0ffc07fb).
+   In the product they come from people pinning spots and from the AI labelling pass. */
 import type { OccupancyGrid } from '../walk/scene';
 
 export type Category = 'Furniture' | 'Storage' | 'Exits' | 'Things';
@@ -11,7 +12,8 @@ export interface Place {
   pinned?: boolean;
 }
 
-export const PLACES: Place[] = [
+/** The first real capture (job 0ffc07fb): floor at y = 0. */
+export const ROOM_PLACES: Place[] = [
   { id: 'desk', name: 'Study desk', cat: 'Furniture', p: [0.62, 0.86, 1.62], pinned: true, ai: { cls: 'desk', conf: .93, half: [.55, .42, .32] } },
   { id: 'laptop', name: 'Laptop', cat: 'Things', p: [0.56, 1.07, 1.83], ai: { cls: 'laptop', conf: .97, half: [.2, .14, .16] } },
   { id: 'flowers', name: 'Flower shelf', cat: 'Storage', p: [1.46, 1.72, 1.52], pinned: true, ai: { cls: 'potted plant', conf: .88, half: [.26, .24, .2] } },
@@ -22,6 +24,29 @@ export const PLACES: Place[] = [
   { id: 'curtain', name: 'Curtained doorway', cat: 'Exits', p: [2.2, 1.44, -1.1], pinned: true, ai: { cls: 'door', conf: .67, half: [.1, .9, .5] } },
   { id: 'chair', name: 'Chair', cat: 'Furniture', p: [1.4, 0.55, 0.06], ai: { cls: 'chair', conf: .95, half: [.3, .45, .3] } },
 ];
+
+/** The bundled demo bedroom (Aholo capture): floor at y = -1.13. */
+export const DEMO_PLACES: Place[] = [
+  { id: 'doorway', name: 'Hall doorway', cat: 'Exits', p: [-1.28, 0.21, -3.09], pinned: true, ai: { cls: 'door', conf: .94, half: [.45, 1.05, .1] } },
+  { id: 'sidedoor', name: 'Side door', cat: 'Exits', p: [2.4, 0.39, 0.46], pinned: true, ai: { cls: 'door', conf: .9, half: [.1, 1.05, .45] } },
+  { id: 'window', name: 'Window', cat: 'Things', p: [0.43, 0.57, 2.39], pinned: true, ai: { cls: 'window', conf: .96, half: [.55, .75, .1] } },
+  { id: 'wardrobe', name: 'Wardrobe', cat: 'Storage', p: [-2.35, 0.55, -2.33], pinned: true, ai: { cls: 'wardrobe', conf: .92, half: [.5, 1.0, .3] } },
+  { id: 'fireplace', name: 'Fireplace', cat: 'Things', p: [2.05, -.16, -1.06], pinned: true, ai: { cls: 'fireplace', conf: .81, half: [.18, .5, .75] } },
+  { id: 'desk', name: 'Writing desk', cat: 'Furniture', p: [1.84, -.32, 1.66], pinned: true, ai: { cls: 'desk', conf: .88, half: [.5, .4, .3] } },
+  { id: 'bed', name: 'Double bed', cat: 'Furniture', p: [.31, -.72, -2.11], pinned: true, ai: { cls: 'bed', conf: .97, half: [.55, .3, 1.0] } },
+  { id: 'twinbed', name: 'Twin beds', cat: 'Furniture', p: [-1.27, -.41, 1.49], pinned: true, ai: { cls: 'bed', conf: .95, half: [1.0, .35, .5] } },
+  { id: 'armchair', name: 'Armchair', cat: 'Furniture', p: [-1.66, -.71, -2.27], ai: { cls: 'chair', conf: .93, half: [.35, .45, .35] } },
+  { id: 'lamp', name: 'Floor lamp', cat: 'Things', p: [-2.73, .22, .54], ai: { cls: 'lamp', conf: .86, half: [.2, .85, .2] } },
+  { id: 'nightstand', name: 'Nightstand', cat: 'Storage', p: [1.53, -.42, -2.49], ai: { cls: 'nightstand', conf: .79, half: [.22, .35, .22] } },
+  { id: 'radiator', name: 'Radiator', cat: 'Things', p: [.36, -.6, 2.12], ai: { cls: 'radiator', conf: .74, half: [.4, .3, .08] } },
+  { id: 'ship', name: 'Model ship', cat: 'Things', p: [2.22, .19, -.86], ai: { cls: 'boat', conf: .69, half: [.12, .25, .3] } },
+];
+
+/** Place set and opening view for a scene URL (no scene = the bundled demo). */
+export function placesFor(scene: string | null) {
+  if (scene?.includes('0ffc07fb')) return { places: ROOM_PLACES, start: { x: -.38, z: -.02, yaw: Math.PI * 1.1, pitch: -.12 } };
+  return { places: DEMO_PLACES, start: { x: .8, z: -.15, yaw: .35, pitch: -.12 } };
+}
 
 /** Distance (in cells) from every cell to the nearest blocked one: two-pass chamfer transform. */
 export function clearance(g: OccupancyGrid) {

@@ -17,7 +17,7 @@ export type ArNav = 'arrows' | 'line' | 'compass';
 export type ArCap = 'floor' | 'trail';
 
 const ORANGE = new THREE.Color('#FF6B00');
-const CLASS_COL: Record<string, string> = { desk: '#FF8A3D', laptop: '#5CC8FF', 'potted plant': '#3DDC97', door: '#B79CFF', helmet: '#FFD24D', clothing: '#FF6FA8', shelf: '#7FE0D0', chair: '#FF6B00' };
+const CLASS_COL: Record<string, string> = { desk: '#FF8A3D', laptop: '#5CC8FF', 'potted plant': '#3DDC97', door: '#B79CFF', helmet: '#FFD24D', clothing: '#FF6FA8', shelf: '#7FE0D0', chair: '#FF6B00', bed: '#5CC8FF', wardrobe: '#FF8A3D', window: '#7FE0D0', fireplace: '#FF6FA8', lamp: '#FFD24D', nightstand: '#B79CFF', radiator: '#8FA3C0', boat: '#3DDC97' };
 export const classColor = (c: string) => CLASS_COL[c] ?? '#FFB84D';
 
 /** Smooth a polyline of floor points into evenly spaced samples (Catmull-Rom through the corners). */

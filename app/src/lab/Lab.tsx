@@ -6,12 +6,15 @@ import QRCode from 'qrcode';
 import { WalkEngine } from '../walk/engine';
 import { loadManifest, type SceneManifest } from '../walk/scene';
 import { Glass } from '../shared/Glass';
-import { PLACES, Navigator, pathLength, steps, type Place, type Category } from './places';
+import { placesFor, Navigator, pathLength, steps, type Place, type Category } from './places';
 import { Overlay, classColor, type PinStyle, type RouteStyle, type AiStyle, type ArMode, type ArNav, type ArCap } from './overlay';
 
 const TOUCH = matchMedia('(pointer: coarse)').matches;
 const BASE = import.meta.env.BASE_URL;
-const DEFAULT_SCENE = 'https://ply-api.ricco-ply.workers.dev/v1/scenes/0ffc07fb-4d8d-49eb-9a40-22b9c6fddd76/';
+const MY_CAPTURE = 'https://ply-api.ricco-ply.workers.dev/v1/scenes/0ffc07fb-4d8d-49eb-9a40-22b9c6fddd76/';
+// the bundled demo bedroom by default; ?scene=<MY_CAPTURE> switches to the first real capture
+const SCENE = new URLSearchParams(location.search).get('scene');
+const { places: PLACES, start: START } = placesFor(SCENE);
 
 interface Opts { pins: PinStyle; search: 'palette' | 'sheet' | 'rail'; route: RouteStyle; ai: AiStyle; ar: ArMode; arNav: ArNav; arCap: ArCap; }
 const DEFAULTS: Opts = { pins: 'tag', search: 'palette', route: 'ribbon', ai: 'off', ar: 'off', arNav: 'arrows', arCap: 'floor' };
@@ -45,11 +48,11 @@ export function Lab() {
   // boot: engine, scene (the first real capture unless ?scene=), navigator and overlay once the grid exists
   useEffect(() => {
     const e = new WalkEngine(canvas.current!); setEngine(e); if (import.meta.env.DEV) (window as any).__ply = e;
-    const q = new URLSearchParams(location.search); if (!q.get('scene')) { q.set('scene', DEFAULT_SCENE); history.replaceState(null, '', `?${q}`); }
+    const q = new URLSearchParams(location.search);
     loadManifest().then(async ({ manifest, base }) => {
       setManifest(manifest); await e.load(manifest, base);
       const at = q.get('at')?.split(',').map(Number); if (at?.length === 4 && at.every(Number.isFinite)) { e.state.pos.x = at[0]; e.state.pos.z = at[1]; e.state.yaw = at[2]; e.pitch = at[3]; }
-      else if (e.grid) { e.state.pos.x = -.38; e.state.pos.z = -.02; e.state.yaw = Math.PI * 1.1; e.pitch = -.12; }
+      else if (e.grid) { e.state.pos.x = START.x; e.state.pos.z = START.z; e.state.yaw = START.yaw; e.pitch = START.pitch; if (!e.grid.clear(START.x, START.z, .22)) e.unstick(); }
       const n = e.grid ? new Navigator(e.grid) : null; setNav(n);
       const overlay = new Overlay(e, n); overlay.allPlaces = PLACES; setOv(overlay); if (import.meta.env.DEV) (window as any).__lab = overlay;
     }).catch(x => setErr(x.message));
@@ -138,7 +141,9 @@ export function Lab() {
           <div className="lab-row" key={r.key}><span className="lab-row-l">{r.label}</span>
             <div className="lab-seg" role="radiogroup" aria-label={r.label}>{r.opts.map(([v, l]) => <button key={v} role="radio" aria-checked={o[r.key] === v} className={o[r.key] === v ? 'on' : ''} onClick={() => set(r.key, v as never)}>{l}</button>)}</div>
           </div>))}
-        <p className="lab-note">Running on your real capture. Places and AI boxes are placed by hand for this demo; the build fills them in automatically.</p>
+        <div className="lab-row"><span className="lab-row-l">Scene</span><div className="lab-seg">
+          <a className={!SCENE ? 'on' : ''} href={`${BASE}lab.html`}>Demo bedroom</a><a className={SCENE ? 'on' : ''} href={`${BASE}lab.html?scene=${encodeURIComponent(MY_CAPTURE)}`}>My capture</a></div></div>
+        <p className="lab-note">Places and AI boxes are pinned by hand for this demo; the build fills them in automatically.</p>
       </Glass>}
 
       {/* ---------- search ---------- */}
@@ -180,7 +185,7 @@ export function Lab() {
       <div className={`gate ${entered ? 'gone' : ''}`}>
         <div className="gate-inner">
           <div className="wide eyebrow">Design lab</div>
-          <h1>Your room, with the next features</h1>
+          <h1>The next features, on a real twin</h1>
           {err || s?.error ? <p className="err" role="alert">{err ?? s?.error}</p> : <>
             <div className="bar"><i style={{ transform: `scaleX(${s?.progress ?? 0})` }} /></div>
             <p className="mono status">{ready ? 'Ready' : `Streaming your twin · ${Math.round((s?.progress ?? 0) * 100)}%`}</p>
