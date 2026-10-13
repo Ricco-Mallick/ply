@@ -389,6 +389,12 @@ function begin(withSound) { if (gate !== 'locked') return; if (withSound) setSou
   gate = 'boot'; bootT0 = performance.now(); bootStage = -1; $('icap').classList.add('on'); sfx('charge'); }
 $('cta').addEventListener('click', () => begin(true)); $('silent').addEventListener('click', () => begin(false));
 $('replay').addEventListener('click', () => { rawT = 0; gate = 'intro'; introT = 1; chromT = performance.now(); sfx('whoosh'); });
+// skip: fast-forward through the rest of the film (it still plays, quickly) and land on the final card
+let skipping = null;
+$('skip').addEventListener('click', () => {
+  if (gate === 'boot') { bootT0 = 0; bootDone = 1; $('icap').classList.remove('on'); }
+  gate = 'open'; introT = 1; skipping = { from: rawT, t0: performance.now() }; sfx('whoosh');
+});
 
 /* ================= cursor ================= */
 const cur = $('cursor'), orb = $('orb'), hintEl = $('hint'); let mx = innerWidth / 2, my = innerHeight / 2, cx = mx, cy = my, mN = new THREE.Vector2(9, 9), lastX = null, rotT = 0, rotV = 0, rot = 0;
@@ -503,6 +509,7 @@ const dummy = new THREE.Object3D();
 function frame(now) { requestAnimationFrame(frame); const dt = Math.min(.05, (now - last) / 1000); last = now; const time = now / 1000;
   if (document.hidden) return;
   /* scroll */
+  if (skipping) { const k = Math.min(1, (now - skipping.t0) / 2600), e = k < .5 ? 4 * k * k * k : 1 - Math.pow(-2 * k + 2, 3) / 2; rawT = lerp(skipping.from, 1, e); lastIn = now; if (k >= 1) skipping = null; }
   rawC = RM ? rawT : lerp(rawC, rawT, 1 - Math.pow(1 - .1, dt * 60));
   if (!RM && gate === 'open' && now - lastIn > 1000 && !dragging) { const p0 = rawToP(rawT); for (const s of SNAPS) if (Math.abs(s - p0) < SNAP_R && Math.abs(s - p0) > .0008) { rawT = pToRaw(s); lastIn = now; } }
   /* boot timeline (seconds): 0-.8 collapse, .8-1.75 floor renders, 1.75 bang, 3.1 hand over to scroll */
@@ -575,6 +582,7 @@ function frame(now) { requestAnimationFrame(frame); const dt = Math.min(.05, (no
   const o1 = ss(clamp(Math.min((e - .12) / .1, (.4 - e) / .08))), o2 = ss(clamp(Math.min((e - .42) / .09, (.64 - e) / .06))), o3 = ss(clamp((e - .66) / .11)); /* o3 must be 1 by the .985 snap (e = .8) */
   [['e1', o1], ['e2', o2]].forEach(([id, o]) => { $(id).style.opacity = o; $(id).style.filter = `blur(${(1 - o) * 10}px)`; });
   $('final').style.opacity = o3; $('final').style.transform = `translateY(${(1 - o3) * 18}px)`; $('final').style.pointerEvents = o3 > .5 ? 'auto' : 'none'; $('replay').style.opacity = o3; $('replay').style.pointerEvents = o3 > .5 ? 'auto' : 'none';
+  const sk = gate !== 'locked' && !skipping && p < .9 ? 1 : 0; $('skip').style.opacity = sk; $('skip').style.pointerEvents = sk ? 'auto' : 'none';
   /* cursor */
   cx = lerp(cx, mx, 1 - Math.exp(-dt * 12)); cy = lerp(cy, my, 1 - Math.exp(-dt * 12)); cur.style.transform = `translate(${cx}px,${cy}px)`;
   const ex = gate === 'open' && exploring(p); orb.classList.toggle('on', ex);
