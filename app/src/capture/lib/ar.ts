@@ -14,7 +14,7 @@ const VOX = .05, CAP = 400_000, KF_MOVE = .1, KF_TURN = 7 * Math.PI / 180, KF_GA
 
 export interface ArKeyframe { file: string; t: number; m: number[]; fx: number; fy: number; cx: number; cy: number; w: number; h: number; }
 export interface ArStats { tracking: 'starting' | 'ok' | 'lost'; keyframes: number; seconds: number; green: number; orange: number; red: number; voxels: number;
-  tooFast: boolean; walked: number; guide: { angle: number; dist: number } | null; depth: boolean; camera: string | null; bytes: number; }
+  tooFast: boolean; walked: number; guide: { angle: number; dist: number } | null; depth: boolean; camera: string | null; bytes: number; thumb: string | null; }
 export interface ArResult { tar: string; bytes: number; keyframes: ArKeyframe[]; seconds: number; coverage: { green: number; orange: number; red: number; voxels: number };
   points: Float32Array; colors: Float32Array; path: { x: number; z: number; t: number }[]; camera: string | null; }
 
@@ -71,7 +71,7 @@ export function dotsMaterial(size = .042) {
 
 /** One AR capture session. start() needs a user gesture; the overlay element becomes the DOM overlay in AR. */
 export class ArCapture {
-  map = new VoxelMap(); keyframes: ArKeyframe[] = []; stats: ArStats = { tracking: 'starting', keyframes: 0, seconds: 0, green: 0, orange: 0, red: 0, voxels: 0, tooFast: false, walked: 0, guide: null, depth: false, camera: null, bytes: 0 };
+  map = new VoxelMap(); keyframes: ArKeyframe[] = []; stats: ArStats = { tracking: 'starting', keyframes: 0, seconds: 0, green: 0, orange: 0, red: 0, voxels: 0, tooFast: false, walked: 0, guide: null, depth: false, camera: null, bytes: 0, thumb: null };
   path: { x: number; z: number; t: number }[] = [];
   private renderer!: THREE.WebGLRenderer; private scene = new THREE.Scene(); private cam = new THREE.PerspectiveCamera();
   private geo = new THREE.BufferGeometry(); private session: any = null; private t0 = 0; private frameNo = 0;
@@ -165,7 +165,8 @@ export class ArCapture {
     for (let y = 0; y < h; y++) dst.set(src.subarray((h - 1 - y) * row, (h - y) * row), y * row);
     this.pending++;
     const oc = new OffscreenCanvas(w, h); oc.getContext('2d')!.putImageData(img, 0, 0);
-    oc.convertToBlob({ type: 'image/jpeg', quality: .92 }).then(b => { this.sink!.write(new Blob([tarHeader(file, b.size), b, tarPad(b.size)])); this.stats.bytes += b.size + 1024; })
+    oc.convertToBlob({ type: 'image/jpeg', quality: .92 }).then(b => { this.sink!.write(new Blob([tarHeader(file, b.size), b, tarPad(b.size)])); this.stats.bytes += b.size + 1024;
+      if (this.stats.thumb) URL.revokeObjectURL(this.stats.thumb); this.stats.thumb = URL.createObjectURL(b); })
       .finally(() => { this.pending--; });
     return true;
   }
@@ -178,6 +179,6 @@ export class ArCapture {
     sink.write(new Blob([tarHeader('poses.json', meta.length), meta, tarPad(meta.length), new Uint8Array(1024)])); await sink.close('application/x-tar');
     const mp = this.map; const r: ArResult = { tar: this.id, bytes: this.stats.bytes + meta.length + 2048, keyframes: this.keyframes, seconds: this.stats.seconds,
       coverage: { green: mp.counts[0], orange: mp.counts[1], red: mp.counts[2], voxels: mp.n }, points: mp.pos.slice(0, mp.n * 3), colors: mp.col.slice(0, mp.n * 3), path: this.path, camera: this.stats.camera };
-    this.renderer.dispose(); this.ended?.(r);
+    if (this.stats.thumb) URL.revokeObjectURL(this.stats.thumb); this.stats.thumb = null; this.renderer.dispose(); this.ended?.(r);
   }
 }

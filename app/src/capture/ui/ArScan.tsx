@@ -43,6 +43,7 @@ export function ArScan({ scanNo, onClip, onClose }: { scanNo: number; onClip: (c
             <span className="ah-pill mono">{s.keyframes} frames · {fmtBytes(s.bytes)}</span>
             <button className="ah-x" onClick={() => cap?.stop()} aria-label="End scan">×</button>
           </div>
+          {s.thumb && cap?.recording && <figure className="ah-thumb"><img src={s.thumb} alt="Last saved frame" /><figcaption className="mono">#{s.keyframes}</figcaption></figure>}
           {s.guide && cap?.recording && s.guide.dist < 4 && <div className="ah-guide" style={{ transform: `rotate(${-s.guide.angle}rad)` }} aria-hidden="true">↑</div>}
           <div className="ah-bottom">
             <p className={`ah-tip ${s.tooFast ? 'warn' : ''}`}>{tip}</p>
