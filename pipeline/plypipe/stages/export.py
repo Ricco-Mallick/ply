@@ -22,7 +22,7 @@ from pathlib import Path
 
 import numpy as np
 
-from plypipe.util import Ctx, need, read_scene, run, update_scene
+from plypipe.util import Ctx, need, read_scene, run, splat_transform_cmd, update_scene
 
 SPLAT_TRANSFORM = "@playcanvas/splat-transform@3.10.1"
 LITE_MAX = 800_000
@@ -84,13 +84,15 @@ def crop_box(scene: dict) -> str | None:
 
 
 def run_stage(ctx: Ctx) -> dict:
-    need("npx", "Install Node.js >= 20 (splat-transform runs through npx).")
+    st = splat_transform_cmd()
+    if st[0] == "npx":
+        need("npx", "Install Node.js >= 20 (splat-transform runs through npx).")
     ply = Path(ctx.opt("ply") or ctx.out / "scene.ply")
     if not ply.exists():
         raise FileNotFoundError(f"{ply} missing: run the train stage or pass --ply")
     scene = read_scene(ctx)
     # SPZ v3 (gzip): the web viewer's Spark 2.3.1 rejects v4, splat-transform's default ("Unsupported SPZ version: 4")
-    base = ["npx", "-y", SPLAT_TRANSFORM, "-w", "--spz-version", "3", str(ply)]
+    base = [*st, "-w", "--spz-version", "3", str(ply)]
     if ctx.opt("apply_align"):
         base += align_actions(np.array(scene["transform"]))
     base += ["-N"]
@@ -114,13 +116,13 @@ def run_stage(ctx: Ctx) -> dict:
             run(base + [str(cleaned)], ctx, "export")
     else:
         run(base + [str(cleaned)], ctx, "export")
-    src = ["npx", "-y", SPLAT_TRANSFORM, "-w", "--spz-version", "3", str(cleaned)]
+    src = [*st, "-w", "--spz-version", "3", str(cleaned)]
     run(src + [str(full)], ctx, "export")
     n = ply_count(cleaned)
     if n > LITE_MAX:  # decimation must end in a .ply: decimate, then convert
         lite_ply = ctx.out / "scene_lite.ply"
-        run(["npx", "-y", SPLAT_TRANSFORM, "-w", str(cleaned), "-H", "0", "-d", str(LITE_MAX), str(lite_ply)], ctx, "export")
-        run(["npx", "-y", SPLAT_TRANSFORM, "-w", "--spz-version", "3", str(lite_ply), str(lite)], ctx, "export")
+        run([*st, "-w", str(cleaned), "-H", "0", "-d", str(LITE_MAX), str(lite_ply)], ctx, "export")
+        run([*st, "-w", "--spz-version", "3", str(lite_ply), str(lite)], ctx, "export")
         lite_ply.unlink(missing_ok=True)
     else:
         run(src + ["-H", "0", str(lite)], ctx, "export")

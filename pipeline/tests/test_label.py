@@ -28,3 +28,11 @@ def test_lift_merges_views_and_boxes_the_object():
 def test_names_are_numbered_per_class():
     objs = [{"cls": "chair", "conf": .9, "frames": 2, "points": 9, "center": [0, 0, i], "half": [.2, .2, .2]} for i in range(3)]
     assert [p["name"] for p in places_from(objs)] == ["Chair", "Chair 2", "Chair 3"]
+
+
+def test_one_thing_seen_as_two_classes_is_kept_once():
+    rng = np.random.default_rng(1)
+    xyz = {i: p for i, p in enumerate(rng.uniform([0, 0, 0], [1, .8, .6], (50, 3)))}
+    dets = [{"cls": "table", "score": .9, "frame": f, "ids": set(range(50))} for f in "abc"] + \
+           [{"cls": "desk", "score": .7, "frame": f, "ids": set(range(5, 50))} for f in "ab"]
+    assert [o["cls"] for o in lift(dets, xyz)] == ["table"]

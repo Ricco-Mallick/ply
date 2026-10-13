@@ -56,8 +56,17 @@ def lift(dets: list[dict], xyz: dict[int, np.ndarray], min_frames: int = 2, solo
             best["scores"].append(d["score"])
             best["frames"].add(d["frame"])
             best["c"] = np.median(np.array([xyz[i] for i in best["ids"] if i in xyz]), axis=0)
-    out = []
+    # one physical thing seen as several classes (a table also called "desk" and "podium"): keep the best-supported
     for o in objs:
+        o["support"] = len(o["frames"]) * float(np.mean(sorted(o["scores"])[-5:]))
+    objs.sort(key=lambda o: -o["support"])
+    kept_objs: list[dict] = []
+    for o in objs:
+        if any(len(o["ids"] & k["ids"]) / max(1, min(len(o["ids"]), len(k["ids"]))) > 0.5 for k in kept_objs):
+            continue
+        kept_objs.append(o)
+    out = []
+    for o in kept_objs:
         if len(o["frames"]) < min_frames and max(o["scores"]) < solo_score:
             continue
         p = np.array([xyz[i] for i in o["ids"] if i in xyz])

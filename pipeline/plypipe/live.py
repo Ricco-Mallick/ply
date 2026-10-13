@@ -24,7 +24,6 @@ import numpy as np
 
 SNAP_MAX = 250_000
 LOSS = re.compile(r"loss=([0-9.]+)")
-SPLAT_TRANSFORM = "@playcanvas/splat-transform@3.10.1"
 
 
 class Live:
@@ -132,9 +131,13 @@ class Live:
         training ends; the final PLY is skipped: export publishes the finished twin)."""
         d = self.out / "train" / "ply"
         last_pub = 0.0
-        while alive():
+        final_sweep = False
+        while alive() or not final_sweep:
+            if not alive():
+                final_sweep = True  # training ended: publish what was saved but not yet picked up, then stop
+                time.sleep(6)
             for p in sorted(d.glob("point_cloud_*.ply")) if d.exists() else []:
-                if p.name in self.seen_snaps or time.time() - p.stat().st_mtime < 5:  # still being written
+                if p.name in self.seen_snaps or (not final_sweep and time.time() - p.stat().st_mtime < 5):  # still being written
                     continue
                 if final_step is not None and int(p.stem.rsplit("_", 1)[1]) >= final_step - 1:
                     self.seen_snaps.add(p.name)
@@ -150,15 +153,26 @@ class Live:
                     self._publish()
                 except Exception as e:
                     self.log(f"[live] publish failed: {e}")
-            time.sleep(15)
+            if not final_sweep:
+                time.sleep(15)
 
     def snapshot(self, ply: Path):
+        from plypipe.stages.export import ply_count
+        from plypipe.util import splat_transform_cmd
         step = int(ply.stem.rsplit("_", 1)[1])
         small, spz = self.out / f"live-snap-{step}.ply", self.out / f"live-train-{step}.spz"
-        st = ["npx", "-y", SPLAT_TRANSFORM, "-q", "-w"]
-        subprocess.run([*st, str(ply), "-N", "-H", "0", "-d", str(SNAP_MAX), str(small)], check=True, capture_output=True, timeout=600)
-        subprocess.run([*st, "--spz-version", "3", str(small), str(spz)], check=True, capture_output=True, timeout=600)
-        small.unlink(missing_ok=True)
+        st = [*splat_transform_cmd(), "-q", "-w"]
+
+        def go(cmd):
+            r = subprocess.run(cmd, capture_output=True, text=True, timeout=600)
+            if r.returncode:
+                raise RuntimeError(f"splat-transform exit {r.returncode}: {(r.stderr or r.stdout)[-300:]}")
+        if ply_count(ply) > SNAP_MAX:  # decimation must end in a .ply: decimate, then convert
+            go([*st, str(ply), "-N", "-H", "0", "-d", str(SNAP_MAX), str(small)])
+            go([*st, "--spz-version", "3", str(small), str(spz)])
+            small.unlink(missing_ok=True)
+        else:
+            go([*st, "--spz-version", "3", str(ply), "-N", "-H", "0", str(spz)])
         self._put(spz.name, spz, "application/octet-stream")
         with self.lock:
             self.index["snapshots"].append({"step": step, "file": spz.name, "mb": round(spz.stat().st_size / 2**20, 2), "t": time.time()})

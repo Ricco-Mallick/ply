@@ -124,3 +124,18 @@ def run(cmd: list[str], ctx: Ctx, stage: str, cwd: str | Path | None = None, env
         code = proc.wait()
     if code != 0:
         raise RuntimeError(f"{cmd[0]} exited with {code}; last output:\n" + "\n".join(tail))
+
+
+def splat_transform_cmd(version: str = "3.10.1") -> list[str]:
+    """The pinned splat-transform: the globally installed binary when it is that version (the GPU image), else npx.
+    Several npx runs of one package at once race in npm's cache, so the binary is preferred."""
+    import shutil
+    import subprocess
+    exe = shutil.which("splat-transform")
+    if exe:
+        try:
+            if version in subprocess.run([exe, "--version"], capture_output=True, text=True, timeout=60).stdout:
+                return [exe]
+        except Exception:
+            pass
+    return ["npx", "-y", f"@playcanvas/splat-transform@{version}"]

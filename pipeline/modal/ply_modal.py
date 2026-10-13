@@ -25,13 +25,24 @@ GPU = os.environ.get("PLY_MODAL_GPU", "L4")
 WHEELS = PIPE / "wheels"
 image = (
     modal.Image.from_registry("nvidia/cuda:12.8.1-cudnn-runtime-ubuntu24.04", add_python="3.12")
-    .apt_install("git", "ffmpeg", "curl", "ca-certificates", "libgl1", "libglib2.0-0")
+    .apt_install("git", "ffmpeg", "curl", "ca-certificates", "libgl1", "libglib2.0-0", "libsm6", "libxext6", "libxrender1")
     .run_commands("curl -fsSL https://deb.nodesource.com/setup_22.x | bash - && apt-get install -y nodejs",
                   "npm i -g @playcanvas/splat-transform@3.10.1 && npx -y @playcanvas/splat-transform@3.10.1 --version || true")
-    .env({"PLY_GSPLAT_DIR": "/opt/gsplat", "PLY_SKIP_PLYPIPE": "1", "PLY_WHEELS": "/opt/ply-wheels"})
+    .env({"PLY_GSPLAT_DIR": "/opt/gsplat", "UV_LINK_MODE": "copy"})
+    # one cached step per layer, uv instead of pip (pip unpacking the 900 MB torch wheel ran the builder out of memory),
+    # same pins as scripts/install_gpu.sh (the Kaggle / RunPod path)
+    .run_commands("python -m pip install -q uv")
+    .run_commands("python -m uv pip install --system torch==2.11.0 torchvision==0.26.0 --index-url https://download.pytorch.org/whl/cu128")
+    .run_commands("git init -q /opt/gsplat && cd /opt/gsplat && git remote add origin https://github.com/nerfstudio-project/gsplat.git"
+                  " && git fetch -q --depth 1 origin 512d366b67073d77ca099ede742683c165dfc23b && git checkout -q FETCH_HEAD")
     .add_local_dir(WHEELS, "/opt/ply-wheels", copy=True)
-    .add_local_file(PIPE / "scripts" / "install_gpu.sh", "/opt/ply-install/install_gpu.sh", copy=True)
-    .run_commands("bash -o pipefail -c 'bash /opt/ply-install/install_gpu.sh 2>&1 | tail -60'")
+    .run_commands("python -m uv pip install --system --no-deps /opt/ply-wheels/*.whl")
+    .run_commands("grep -v -E '^(torch|torchvision)==|^nvidia-ncore|^pycolmap|fused-ssim|fused-bilagrid|^ppisp|nerfview|^#|^$' /opt/gsplat/examples/requirements.txt > /tmp/reqs.txt"
+                  " && python -m uv pip install --system -r /tmp/reqs.txt 'git+https://github.com/nerfstudio-project/nerfview@4538024fe0d15fd1a0e4d760f3695fc44ca72787'"
+                  " jaxtyping nvtx 'rich>=12' ninja 'torch==2.11.0' 'torchvision==0.26.0' --index-strategy unsafe-best-match"
+                  " --extra-index-url https://download.pytorch.org/whl/cu128")
+    .run_commands("python -m uv pip install --system pycolmap-cuda12==4.2.1 'opencv-python-headless>=4.9' 'transformers==5.19.0' 'accelerate>=1.1.0' pillow")
+    .run_commands("python -c \"import torch, gsplat, pycolmap, ppisp, fused_ssim, transformers; print('versions', torch.__version__, gsplat.__version__, pycolmap.__version__, transformers.__version__)\"")
     # SAM 3 weights baked in (3.4 GB, fetched once at build with the HF token): no download on every wake-up, and no
     # Modal Volume (Volumes bill storage even under a $0 spend limit)
     .env({"HF_HOME": "/opt/hf"})
@@ -82,10 +93,19 @@ def smoke():
 
 @app.function(gpu=GPU, cpu=1, memory=4096, timeout=300)
 def check():
+    import json
     import torch, gsplat, pycolmap  # noqa: E401
     import ppisp  # noqa: F401  (PPISP present = the full training stack)
     import fused_ssim  # noqa: F401
     from transformers import Sam3Model  # noqa: F401  (the label stage)
     out = subprocess.run(["npx", "-y", "@playcanvas/splat-transform@3.10.1", "--version"], capture_output=True, text=True)
-    return {"gpu": torch.cuda.get_device_name(0), "torch": torch.__version__, "cuda": torch.version.cuda, "gsplat": gsplat.__version__,
-            "pycolmap": pycolmap.__version__, "pycolmap_cuda": pycolmap.has_cuda, "splat-transform": out.stdout.strip() or out.stderr[-200:]}
+    info = {"gpu": torch.cuda.get_device_name(0), "torch": str(torch.__version__), "cuda": str(torch.version.cuda), "gsplat": str(gsplat.__version__),
+            "pycolmap": str(pycolmap.__version__), "pycolmap_cuda": bool(pycolmap.has_cuda), "splat-transform": (out.stdout.strip() or out.stderr[-200:])}
+    # a real CUDA kernel from the compiled gsplat wheel: rasterise 1000 random Gaussians
+    from gsplat import rasterization
+    n, dev = 1000, "cuda"
+    img, alpha, _ = rasterization(torch.randn(n, 3, device=dev) + torch.tensor([0, 0, 4.0], device=dev), torch.nn.functional.normalize(torch.randn(n, 4, device=dev), dim=-1),
+                                  torch.rand(n, 3, device=dev) * .1, torch.rand(n, device=dev), torch.rand(n, 3, device=dev),
+                                  torch.eye(4, device=dev)[None], torch.tensor([[[300., 0, 160], [0, 300., 120], [0, 0, 1]]], device=dev), 320, 240)
+    info["gsplat_render"] = f"{tuple(img.shape)} mean alpha {float(alpha.mean()):.3f}"
+    return json.dumps(info)
