@@ -42,7 +42,7 @@ def build_tour(cams: np.ndarray, bounds: dict, eye: float = 1.55) -> list[dict]:
             look = c
         kf.append({"pos": _inside(p, lo, hi, 0.4), "target": look, "fov": 66, "dur": 4.5})
     kf.append({"pos": b, "target": c, "fov": 60, "dur": 5})
-    kf.append({"pos": np.array([c[0], min(top - 0.25, high + 0.4), c[2]]) + (b - c) * np.array([0.35, 0, 0.35]),
+    kf.append({"pos": np.array([c[0], min(top - 0.3, high + 0.15), c[2]]) + (b - c) * np.array([0.35, 0, 0.35]),
                "target": np.array([c[0], 0.0, c[2]]), "fov": 70, "dur": 5})
     return [{"pos": [round(float(v), 3) for v in k["pos"]], "target": [round(float(v), 3) for v in k["target"]],
              "fov": k["fov"], "dur": k["dur"]} for k in kf]

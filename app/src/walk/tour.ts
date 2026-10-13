@@ -33,7 +33,7 @@ export function autoTour(grid: OccupancyGrid, floorY: number, eye = 1.55, from?:
   return [
     { pos: k(lo[0], lo[1]), target: c, fov: 62, dur: 0 }, { pos: k(lo[0] + (c[0] - lo[0]) * .2, lo[1] + (c[2] - lo[1]) * .2), target: c, fov: 58, dur: 5 },
     ...walk.map((p, i) => ({ pos: p, target: walk[(i + 1) % walk.length].map((v, j) => j === 1 ? floorY + eye - .15 : v * .6 + c[j] * .4) as [number, number, number], fov: 66, dur: 4.5 })),
-    { pos: k(hi[0], hi[1]), target: c, fov: 60, dur: 5 }, { pos: k(c[0] + (hi[0] - c[0]) * .35, c[2] + (hi[1] - c[2]) * .35, high + .4), target: [c[0], floorY, c[2]], fov: 70, dur: 5 },
+    { pos: k(hi[0], hi[1]), target: c, fov: 60, dur: 5 }, { pos: k(c[0] + (hi[0] - c[0]) * .35, c[2] + (hi[1] - c[2]) * .35, high + .15), target: [c[0], floorY, c[2]], fov: 70, dur: 5 },
   ];
 }
 
