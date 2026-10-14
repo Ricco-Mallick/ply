@@ -170,8 +170,10 @@ def save_checkpoint(api, jid: str, out: Path, root: Path, args: list[str], after
         info = tarfile.TarInfo("ckpt.json"); info.size = len(meta)
         tf.addfile(info, __import__("io").BytesIO(meta))
         for p in sorted(out.iterdir()):
-            if p.name not in CKPT_SKIP:
-                tf.add(p, arcname=p.name)
+            # the live view's files come and go on other threads (and are republished anyway): never checkpointed
+            if p.name in CKPT_SKIP or p.name.startswith(("live-", "_live_")) or p.name.endswith(".tmp"):
+                continue
+            tf.add(p, arcname=p.name)
     api.upload(f"scenes/{jid}/checkpoint.tar", tar, "application/x-tar")
     tar.unlink(missing_ok=True)
 
