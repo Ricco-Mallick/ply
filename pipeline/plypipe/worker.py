@@ -163,16 +163,36 @@ def stage_limits() -> dict:
     return lim
 
 
+# checkpoints carry the undistorted frames; above this they cost more (upload time, the bucket's 1 GB/day download
+# allowance on resume) than redoing the stages on a GPU that is not pre-empted
+CKPT_MAX_MB = int(os.environ.get("PLY_CKPT_MAX_MB", 250))
+
+
+def _ckpt_files(out: Path):
+    for p in sorted(out.iterdir()):
+        # the live view's files come and go on other threads (and are republished anyway): never checkpointed
+        if p.name in CKPT_SKIP or p.name.startswith(("live-", "_live_")) or p.name.endswith(".tmp"):
+            continue
+        yield p
+
+
+def checkpoint_size(out: Path) -> int:
+    total = 0
+    for p in _ckpt_files(out):
+        if p.is_file():
+            total += p.stat().st_size
+        elif p.is_dir():
+            total += sum(f.stat().st_size for f in p.rglob("*") if f.is_file() and not f.is_symlink())
+    return total
+
+
 def save_checkpoint(api, jid: str, out: Path, root: Path, args: list[str], after: str) -> None:
-    tar = root / "checkpoint.tar"
+    tar = root / f"checkpoint-{after}.tar"  # one file per stage: two checkpoints never share a temp file
     with tarfile.open(tar, "w") as tf:
         meta = json.dumps({"args": args, "after": after, "time": time.time()}).encode()
         info = tarfile.TarInfo("ckpt.json"); info.size = len(meta)
         tf.addfile(info, __import__("io").BytesIO(meta))
-        for p in sorted(out.iterdir()):
-            # the live view's files come and go on other threads (and are republished anyway): never checkpointed
-            if p.name in CKPT_SKIP or p.name.startswith(("live-", "_live_")) or p.name.endswith(".tmp"):
-                continue
+        for p in _ckpt_files(out):
             tf.add(p, arcname=p.name)
     api.upload(f"scenes/{jid}/checkpoint.tar", tar, "application/x-tar")
     tar.unlink(missing_ok=True)
@@ -257,6 +277,8 @@ def run_job(api: Api, job: dict, work: Path, extra: list[str]) -> None:
             p = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1)
             last_err, tail = "", collections.deque(maxlen=40)
             sfm = SfmProgress()  # real progress inside sfm, from COLMAP's own counters
+            ckpts: list[threading.Thread] = []
+            ckpt_lock = threading.Lock()  # checkpoints upload in stage order (the later one replaces the earlier)
             step = {"key": None, "t0": time.time()}
 
             def watchdog():  # stop-loss per stage
@@ -300,11 +322,22 @@ def run_job(api: Api, job: dict, work: Path, extra: list[str]) -> None:
                             state["frac"] = 1.0
                             live.stage_done(st)
                             if st in CHECKPOINT_AFTER and not rehearsal:
-                                try:
-                                    state["msg"] = f"{st}: saving checkpoint"
-                                    save_checkpoint(api, jid, out, root, job["args"], st)
-                                except Exception as e:  # a missed checkpoint only costs time on a retry
-                                    print(f"[worker] checkpoint after {st} failed: {e}", flush=True)
+                                # in the background: a slow upload must never stall reading the pipeline's output
+                                # (a 600 MB checkpoint once blocked this loop and the stage watchdog killed the job)
+                                def ckpt(stage=st):
+                                    with ckpt_lock:
+                                        _ckpt(stage)
+
+                                def _ckpt(stage):
+                                    try:
+                                        size = checkpoint_size(out)
+                                        if size > CKPT_MAX_MB * 2**20:
+                                            print(f"[worker] checkpoint after {stage} skipped: {size / 2**20:.0f} MB > {CKPT_MAX_MB} MB", flush=True)
+                                            return
+                                        save_checkpoint(api, jid, out, root, job["args"], stage)
+                                    except Exception as e:  # a missed checkpoint only costs time on a retry
+                                        print(f"[worker] checkpoint after {stage} failed: {e}", flush=True)
+                                th = threading.Thread(target=ckpt, daemon=True); th.start(); ckpts.append(th)
                         if st == "sfm" and ev.get("images"):
                             sfm.n_images = int(ev["images"])
                         f = frac_from(ev) if ev.get("event") == "progress" else None
@@ -320,6 +353,8 @@ def run_job(api: Api, job: dict, work: Path, extra: list[str]) -> None:
                     if ev.get("event") == "error":
                         last_err = f"{st}: {ev.get('msg')}"
             code = p.wait()
+            for th in ckpts:  # let checkpoints finish uploading (outside the stage watchdog, which only runs while the pipeline does)
+                th.join(timeout=900)
             if state["timeout"]:
                 last_err = state["timeout"]
             return code, last_err, list(tail)

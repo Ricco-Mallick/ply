@@ -99,3 +99,29 @@ def test_rehearsal_dry_run_finishes_without_results(tmp_path, monkeypatch):
     worker.run_job(store, job(("--preset", "quick", "--train-dry-run", "--until", "train")), tmp_path / "w1", [])
     assert store.posts[-1]["status"] == "done" and store.posts[-1]["result"]["rehearsal"] is True
     assert "scenes/j1/checkpoint.tar" not in store.objects
+
+
+def test_a_slow_checkpoint_upload_does_not_trip_the_stage_watchdog(tmp_path, monkeypatch):
+    """Regression (classroom demo, 2026-10-14): a 600 MB checkpoint uploaded inside the output-reading loop stalled it;
+    the watchdog then saw a 2-second stage 'run' past its limit and killed a healthy job."""
+    setup(tmp_path, monkeypatch)
+    import time as _t
+
+    class SlowStore(Store):
+        def upload(self, key, path, ctype):
+            if key.endswith("checkpoint.tar"):
+                _t.sleep(4)
+            super().upload(key, path, ctype)
+    store = SlowStore()
+    monkeypatch.setenv("PLY_STAGE_LIMITS", "occupancy=0.03,align=0.03,sfm=0.03")  # ~2 s each
+    worker.run_job(store, job(), tmp_path / "w", [])
+    assert store.posts[-1]["status"] == "done", store.posts[-1]
+    assert "scenes/j1/checkpoint.tar" in store.objects  # and the checkpoint still made it
+
+
+def test_big_checkpoints_are_skipped(tmp_path, monkeypatch):
+    setup(tmp_path, monkeypatch)
+    monkeypatch.setattr(worker, "CKPT_MAX_MB", 0)
+    store = Store()
+    worker.run_job(store, job(), tmp_path / "w", [])
+    assert store.posts[-1]["status"] == "done" and "scenes/j1/checkpoint.tar" not in store.objects
