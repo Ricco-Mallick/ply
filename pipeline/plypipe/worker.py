@@ -178,7 +178,7 @@ def stage_limits() -> dict:
 
 # checkpoints carry the undistorted frames; above this they cost more (upload time, the bucket's 1 GB/day download
 # allowance on resume) than redoing the stages on a GPU that is not pre-empted
-CKPT_MAX_MB = int(os.environ.get("PLY_CKPT_MAX_MB", 250))
+CKPT_MAX_MB = int(os.environ.get("PLY_CKPT_MAX_MB", 1500))  # results now live on HF (100 GB), not the bucket
 
 
 def _ckpt_files(out: Path):

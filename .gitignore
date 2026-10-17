@@ -11,3 +11,4 @@ work/
 *.spz
 *.ply
 !pipeline/tests/data/*.ply
+pipeline/wheels/
