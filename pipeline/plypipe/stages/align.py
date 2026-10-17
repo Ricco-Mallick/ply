@@ -55,11 +55,11 @@ def run_stage(ctx: Ctx) -> dict:
             h = pts @ g
             floor_h = float(np.percentile(h, 3.0))  # lowest few percent: the floor under the widest spread of points
             inl = np.abs(h - floor_h) < 0.12
-            plane = geometry.Plane(normal=g, offset=floor_h, inliers=inl, tilt_deg=dev)
+            plane = geometry.Plane(normal=g, offset=floor_h, inliers=inl, tilt_deg=0.0)
             ctx.log.emit("align", "warn", f"floor plane looked wrong (support {ratio:.1%}, {dev:.0f} deg off gravity); "
                                           f"levelled from the cameras' gravity instead")
         T, info = geometry.similarity_to_scene(plane, pts, centers, cam_height_m=float(height_cam) if height_cam else None)
-        T, info = geometry.similarity_to_scene(plane, pts, centers, cam_height_m=float(height_cam) if height_cam else None)
+        info["floorPlane"] = "gravity" if float(info.get("floorTiltDeg", 0)) == 0.0 else "ransac"
 
     aligned = colmap_txt.transformed(model, T)
     out_sparse = ctx.data_dir / "sparse" / "0"

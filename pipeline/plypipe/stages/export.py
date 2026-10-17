@@ -134,7 +134,8 @@ def run_stage(ctx: Ctx) -> dict:
             kept = ply_count(probe)
             if total and kept < 0.5 * total:
                 ctx.log.emit("export", "warn", f"floater filter kept only {kept}/{total} splats: skipping it")
-                probe.replace(cleaned)
+                probe.unlink(missing_ok=True)
+                run(base + [str(cleaned)], ctx, "export")  # export unfiltered, not the filtered probe
             else:
                 probe.replace(cleaned)
                 floaters = True
