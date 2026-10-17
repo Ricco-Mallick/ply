@@ -20,7 +20,8 @@ export function PlacesLayer({ engine, base, entered, onMap, onData }: { engine: 
     const n = engine.grid ? new Navigator(engine.grid) : null, o = new Overlay(engine, n); o.allPlaces = places;
     setNav(n); setOv(o); onData?.({ places, nav: n }); return () => o.dispose();
   }, [engine.state.loaded, places]);
-  const shown = useMemo(() => (places ?? []).filter(p => p.pinned), [places]);
+  // hand-placed places first; AI-found ones (pipeline labelling) show as suggestions, dimmer and without the leader line
+  const shown = useMemo(() => (places ?? []).slice(0, 400), [places]);
   useEffect(() => { ov?.setPlaces(shown, 'tag', entered); }, [ov, shown, entered]);
   useEffect(() => { const i = setInterval(() => tick(n => n + 1), 400); return () => clearInterval(i); }, []);
 
