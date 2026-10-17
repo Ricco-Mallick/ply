@@ -88,7 +88,13 @@ def run_stage(ctx: Ctx) -> dict:
     fwd = f2[0].copy()
     fwd[1] = 0
     fwd = fwd / (np.linalg.norm(fwd) or 1)
-    spawn_pos = [float(c2[0][0]), 1.6, float(c2[0][2])]
+    # the first camera can sit just outside the reconstructed bounds (drone starts at a doorway): pull the spawn
+    # inside, so a visitor starts looking into the room rather than at its wall
+    b0 = geometry.robust_bounds(p2)
+    def inside(v, lo, hi):
+        return float(min(max(v, lo), hi))
+    spawn_pos = [inside(float(c2[0][0]), b0["min"][0] + 0.6, b0["max"][0] - 0.6), 1.6,
+                 inside(float(c2[0][2]), b0["min"][2] + 0.6, b0["max"][2] - 0.6)]
     spawn = {"position": spawn_pos, "lookAt": [spawn_pos[0] + float(fwd[0]), 1.6, spawn_pos[2] + float(fwd[2])]}
     scene = update_scene(ctx, {
         "version": 1,
@@ -100,10 +106,10 @@ def run_stage(ctx: Ctx) -> dict:
         "scaleSource": info["scaleSource"],
         "cameraHeight": float(height_cam) if height_cam else None,
         "transform": T.tolist(),
-        "bounds": geometry.robust_bounds(p2),
+        "bounds": b0,
         "cameraPath": path,
         "spawn": spawn,
-        "tour": tour.build_tour(c2, geometry.robust_bounds(p2)),
+        "tour": tour.build_tour(c2, b0),
     })
     return {"floorInliers": int(plane.inliers.sum()), "floorInlierRatio": float(plane.inliers.mean()),
             "floorTiltDeg": info["floorTiltDeg"], "yawDeg": info["yawDeg"], "scale": info["scale"],
