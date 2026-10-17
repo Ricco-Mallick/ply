@@ -101,7 +101,7 @@ async function route(req: Request, env: Env, ctx: Ctx): Promise<Response> {
   }
   m = p.match(/^\/v1\/scenes\/([\w-]+)\/([\w.\-]+)$/);
   // the live view's index changes every few seconds while a job runs; everything else is immutable or cache-busted
-  if (m && (req.method === 'GET' || req.method === 'HEAD')) return serve(env, `scenes/${m[1]}/${m[2]}`, req, m[2] === 'live-index.json' ? 'no-store' : 'public, max-age=3600');
+  if (m && (req.method === 'GET' || req.method === 'HEAD')) return serve(env, `scenes/${m[1]}/${m[2]}`, req, m[2] === 'live-index.json' ? 'no-store' : 'public, max-age=3600', ctx);
 
   // ---- uploads (app: captures/, worker: scenes/) ----
   if (p === '/v1/uploads' && req.method === 'POST') {
@@ -192,12 +192,22 @@ async function route(req: Request, env: Env, ctx: Ctx): Promise<Response> {
 }
 
 /** Results for the viewer: fetched from the bucket with a signed URL and streamed through, Range passed along. */
-async function serve(env: Env, key: string, req: Request, cache: string) {
-  const url = await presign(s3(env), req.method === 'HEAD' ? 'HEAD' : 'GET', key, {}, 600);
+async function serve(env: Env, key: string, req: Request, cache: string, ctx?: ExecutionContext) {
+  // Whole-file GETs are cached at Cloudflare's edge. The bucket's free tier counts every download (1 GB/day),
+  // and the same twin is fetched again on every view; a cache hit costs neither bucket bandwidth nor quota.
   const range = req.headers.get('range');
+  const cacheable = !!ctx && !range && req.method === 'GET' && cache !== 'no-store';
+  const cacheKey = cacheable ? new Request(new URL(req.url).toString(), { method: 'GET' }) : null;
+  if (cacheKey) {
+    const hit = await caches.default.match(cacheKey);
+    if (hit) { const h = new Headers(hit.headers); h.set('x-ply-cache', 'hit'); return new Response(hit.body, { status: hit.status, headers: h }); }
+  }
+  const url = await presign(s3(env), req.method === 'HEAD' ? 'HEAD' : 'GET', key, {}, 600);
   const up = await fetch(url, { method: req.method, headers: range ? { range } : {} });
   if (up.status === 404 || up.status === 403) return json({ error: 'not found' }, 404);
-  const h = new Headers({ 'cache-control': cache, 'accept-ranges': 'bytes' });
+  const h = new Headers({ 'cache-control': cache, 'accept-ranges': 'bytes', 'x-ply-cache': 'miss' });
   for (const k of ['content-type', 'content-length', 'content-range', 'etag', 'last-modified']) { const v = up.headers.get(k); if (v) h.set(k, v); }
-  return new Response(up.body, { status: up.status, headers: h });
+  const resp = new Response(up.body, { status: up.status, headers: h });
+  if (cacheKey && up.ok) ctx!.waitUntil(caches.default.put(cacheKey, resp.clone()));
+  return resp;
 }
