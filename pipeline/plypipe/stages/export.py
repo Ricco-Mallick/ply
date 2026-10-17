@@ -127,8 +127,17 @@ def run_stage(ctx: Ctx) -> dict:
     floaters = False
     if clean:
         try:
-            run(base + ["-F", str(cleaned)], ctx, "export")
-            floaters = True
+            # the floater filter voxelises the scene; on a large, sparse capture (a chapel, a drone walk) it can
+            # decide almost everything is a floater. Measure first; keep it only if it leaves most of the twin.
+            probe = ctx.out / "_floater_probe.ply"
+            run(base + ["-F", str(probe)], ctx, "export")
+            kept = ply_count(probe)
+            if total and kept < 0.5 * total:
+                ctx.log.emit("export", "warn", f"floater filter kept only {kept}/{total} splats: skipping it")
+                probe.replace(cleaned)
+            else:
+                probe.replace(cleaned)
+                floaters = True
         except Exception as e:  # no WebGPU adapter in this container: keep the value filters only
             ctx.log.emit("export", "warn", f"floater filter unavailable ({str(e)[-160:]}); exporting without it")
             run(base + [str(cleaned)], ctx, "export")
