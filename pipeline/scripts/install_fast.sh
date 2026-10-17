@@ -22,7 +22,7 @@ log() { printf '{"stage":"install","event":"progress","msg":"%s"}\n' "$*"; }
 
 log "pipeline env: pycolmap-cuda12 4.2.1 + plypipe"
 PYCOLMAP="pycolmap-cuda12==4.2.1"; [ -n "${PLY_CPU:-}" ] && PYCOLMAP="pycolmap==4.2.1"
-$PY -m pip install -q uv "$PYCOLMAP"
+$PY -m pip install -q uv huggingface_hub "$PYCOLMAP"  # hub: results storage (PLY_HF_REPO)
 $PY -m pip install -q -e "$HERE"
 UV="$PY -m uv"
 

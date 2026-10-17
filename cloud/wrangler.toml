@@ -14,6 +14,7 @@ S3_REGION = "eu-central-003"
 S3_BUCKET = "ply-data-bb426385"
 # origins allowed to call the write endpoints from a browser
 ALLOWED_ORIGINS = "https://ricco.codes,http://localhost:5199,https://localhost:5199"
+HF_REPO = "Ricco-Marcelino/ply-data"
 
 # secrets (wrangler secret put): APP_KEY (capture app uploads/jobs), WORKER_TOKEN (GPU worker), S3_KEY_ID, S3_SECRET
 
