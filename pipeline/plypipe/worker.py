@@ -29,6 +29,7 @@ import urllib.request
 from pathlib import Path
 
 from plypipe.live import Live
+from plypipe import hf
 from plypipe.progress import SfmProgress
 
 # rough share of wall time per stage on a T4, for one overall progress number
@@ -76,6 +77,12 @@ class Api:
             time.sleep([1, 3, 8, 20, 40][min(i, 4)])
 
     def download(self, key: str, dest: Path):
+        if key.startswith("scenes/") and hf.configured():  # results: 100 GB, no daily download cap
+            try:
+                hf.download(key, dest)
+                return
+            except hf.Missing:
+                pass  # not there (older job, or HF hiccup): fall through to the bucket
         """The API hands out a signed link; the bytes come straight from the bucket (no auth header on that request).
         'gdrive:<id>:<name>' inputs (large shared clips, e.g. demo footage) come straight from Google Drive instead,
         which keeps multi-GB captures off the bucket's daily download allowance."""
@@ -104,6 +111,12 @@ class Api:
                 raise
 
     def upload(self, key: str, path: Path, ctype: str):
+        if key.startswith("scenes/") and hf.configured():
+            try:
+                hf.upload(key, path)
+                return
+            except Exception as e:  # HF down or the token lost write access: the bucket still has it
+                print(f"[worker] HF upload of {key} failed ({e}); using the bucket", flush=True)
         size = path.stat().st_size
         if size <= 40e6:
             self.req("PUT", "/v1/files?" + urllib.parse.urlencode({"key": key}), path.read_bytes(), ctype)

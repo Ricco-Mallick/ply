@@ -202,8 +202,18 @@ async function serve(env: Env, key: string, req: Request, cache: string, ctx?: E
     const hit = await caches.default.match(cacheKey);
     if (hit) { const h = new Headers(hit.headers); h.set('x-ply-cache', 'hit'); return new Response(hit.body, { status: hit.status, headers: h }); }
   }
-  const url = await presign(s3(env), req.method === 'HEAD' ? 'HEAD' : 'GET', key, {}, 600);
-  const up = await fetch(url, { method: req.method, headers: range ? { range } : {} });
+  let up: Response | null = null;
+  // results live on Hugging Face when configured (100 GB, no daily download cap); inputs and old jobs stay on the bucket
+  if (env.HF_REPO && env.HF_TOKEN && key.startsWith('scenes/')) {
+    const h = new Headers({ authorization: `Bearer ${env.HF_TOKEN}` });
+    if (range) h.set('range', range);
+    up = await fetch(`https://huggingface.co/datasets/${env.HF_REPO}/resolve/main/${key}`, { method: req.method, headers: h });
+    if (up.status === 404 || up.status === 403 || up.status === 401) up = null;
+  }
+  if (!up) {
+    const url = await presign(s3(env), req.method === 'HEAD' ? 'HEAD' : 'GET', key, {}, 600);
+    up = await fetch(url, { method: req.method, headers: range ? { range } : {} });
+  }
   if (up.status === 404 || up.status === 403) return json({ error: 'not found' }, 404);
   const h = new Headers({ 'cache-control': cache, 'accept-ranges': 'bytes', 'x-ply-cache': 'miss' });
   for (const k of ['content-type', 'content-length', 'content-range', 'etag', 'last-modified']) { const v = up.headers.get(k); if (v) h.set(k, v); }
