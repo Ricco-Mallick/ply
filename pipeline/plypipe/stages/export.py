@@ -100,6 +100,24 @@ def run_stage(ctx: Ctx) -> dict:
     if box:
         base += ["-B", box]
     clean = not ctx.opt("no_clean")
+    total = ply_count(ply)
+    # a crop box taken from the solve's bounds can be wrong when the floor fit was poor (a drone walk with little
+    # floor): it then deletes most of the twin. Measure, and drop the crop if it takes more than half.
+    drop_crop = False
+    if box:
+        probe = ctx.out / "_crop_probe.ply"
+        try:
+            run([*st, "-w", str(ply), "-N", "-B", box, str(probe)], ctx, "export")
+            kept = ply_count(probe)
+            if total and kept < 0.5 * total:
+                drop_crop = True
+                ctx.log.emit("export", "warn", f"crop box kept only {kept}/{total} splats: exporting without it")
+                base = [b for i, b in enumerate(base) if not (b == "-B" or (i and base[i - 1] == "-B"))]
+                box = None
+        except Exception as e:
+            ctx.log.emit("export", "warn", f"crop probe failed ({str(e)[-120:]}); using the box as it is")
+        finally:
+            probe.unlink(missing_ok=True)
     if clean:
         base += CLEAN
     full = ctx.out / "scene.spz"
@@ -128,4 +146,4 @@ def run_stage(ctx: Ctx) -> dict:
         run(src + ["-H", "0", str(lite)], ctx, "export")
     update_scene(ctx, {"splat": {"file": "scene.spz", "lite": "scene_lite.spz", "format": "spz"}})
     return {"spz": full.name, "spzMB": round(full.stat().st_size / 2**20, 2), "lite": lite.name, "liteMB": round(lite.stat().st_size / 2**20, 2),
-            "cropBox": box, "gaussiansIn": ply_count(ply), "gaussiansOut": n, "floaterFilter": floaters, "liteGaussians": min(n, LITE_MAX)}
+            "cropBox": box, "cropDropped": drop_crop, "gaussiansIn": ply_count(ply), "gaussiansOut": n, "floaterFilter": floaters, "liteGaussians": min(n, LITE_MAX)}
