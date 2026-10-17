@@ -46,6 +46,19 @@ def run_stage(ctx: Ctx) -> dict:
         T, info, plane = ar
     else:
         plane = geometry.ransac_floor(pts, centers, up_guess, max_tilt_deg=float(ctx.opt("max_tilt_deg", 25.0)))
+        # A drone walk sees little floor: RANSAC can latch onto a tilted surface (pews, a slope) and then the whole
+        # room is rotated, which tips half of it below y=0. Trust gravity instead when the fit is weak or far off it.
+        ratio = float(plane.inliers.mean()) if plane.inliers.size else 0.0
+        dev = float(np.degrees(np.arccos(np.clip(plane.normal @ (up_guess / (np.linalg.norm(up_guess) or 1)), -1, 1))))
+        if ratio < 0.05 or dev > 12.0:
+            g = up_guess / (np.linalg.norm(up_guess) or 1.0)
+            h = pts @ g
+            floor_h = float(np.percentile(h, 3.0))  # lowest few percent: the floor under the widest spread of points
+            inl = np.abs(h - floor_h) < 0.12
+            plane = geometry.Plane(normal=g, offset=floor_h, inliers=inl, tilt_deg=dev)
+            ctx.log.emit("align", "warn", f"floor plane looked wrong (support {ratio:.1%}, {dev:.0f} deg off gravity); "
+                                          f"levelled from the cameras' gravity instead")
+        T, info = geometry.similarity_to_scene(plane, pts, centers, cam_height_m=float(height_cam) if height_cam else None)
         T, info = geometry.similarity_to_scene(plane, pts, centers, cam_height_m=float(height_cam) if height_cam else None)
 
     aligned = colmap_txt.transformed(model, T)
