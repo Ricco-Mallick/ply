@@ -101,6 +101,26 @@ def run_stage(ctx: Ctx) -> dict:
         base += ["-B", box]
     clean = not ctx.opt("no_clean")
     total = ply_count(ply)
+    # the value filters cut splats larger than 1 m; in a big room (a chapel, a hall) big splats are the walls, not
+    # floaters, so scale the cap to the scene and fall back to opacity only if it would still gut the model
+    diag = 10.0
+    b0 = scene.get("bounds") or {}
+    if b0:
+        diag = float(np.linalg.norm(np.array(b0["max"]) - np.array(b0["min"]))) or 10.0
+    clean_flags = ["-V", "opacity,gt,0.03", "-V", f"scale_0,lt,{max(1.0, 0.12 * diag):.2f}",
+                   "-V", f"scale_1,lt,{max(1.0, 0.12 * diag):.2f}", "-V", f"scale_2,lt,{max(1.0, 0.12 * diag):.2f}"]
+    if clean:  # probe the value filters before using them on the real pass
+        probe_v = ctx.out / "_clean_probe.ply"
+        try:
+            run([*st, "-w", str(ply), "-N", *clean_flags, str(probe_v)], ctx, "export")
+            kept_v = ply_count(probe_v)
+            if total and kept_v < 0.6 * total:
+                ctx.log.emit("export", "warn", f"value filters kept only {kept_v}/{total} splats: opacity only")
+                clean_flags = ["-V", "opacity,gt,0.02"]
+        except Exception as e:
+            ctx.log.emit("export", "warn", f"value-filter probe failed ({str(e)[-120:]})")
+        finally:
+            probe_v.unlink(missing_ok=True)
     # a crop box taken from the solve's bounds can be wrong when the floor fit was poor (a drone walk with little
     # floor): it then deletes most of the twin. Measure, and drop the crop if it takes more than half.
     drop_crop = False
@@ -119,7 +139,7 @@ def run_stage(ctx: Ctx) -> dict:
         finally:
             probe.unlink(missing_ok=True)
     if clean:
-        base += CLEAN
+        base += clean_flags
     full = ctx.out / "scene.spz"
     lite = ctx.out / "scene_lite.spz"
     cleaned = ctx.out / "scene_clean.ply"

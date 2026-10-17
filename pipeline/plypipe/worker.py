@@ -422,6 +422,13 @@ def run_job(api: Api, job: dict, work: Path, extra: list[str]) -> None:
             post(status="done", stage=until, progress=1, message="coverage preview ready", result={"preview": True, "base": f"/v1/scenes/{jid}/", "files": files, "report": report})
             return
         state["msg"] = "publishing results"
+        # keep the trained model next to the results: an export-only re-run then costs a minute instead of a retrain
+        ply_path = out / "scene.ply"
+        if ply_path.exists() and ply_path.stat().st_size < 1.2e9:
+            try:
+                api.upload(f"scenes/{jid}/scene.ply", ply_path, "application/octet-stream")
+            except Exception as e:
+                print(f"[worker] keeping scene.ply failed: {e}", flush=True)
         files = {}
         for name in RESULTS:
             f = out / name
