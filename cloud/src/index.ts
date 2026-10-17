@@ -101,7 +101,11 @@ async function route(req: Request, env: Env, ctx: Ctx): Promise<Response> {
   }
   m = p.match(/^\/v1\/scenes\/([\w-]+)\/([\w.\-]+)$/);
   // the live view's index changes every few seconds while a job runs; everything else is immutable or cache-busted
-  if (m && (req.method === 'GET' || req.method === 'HEAD')) return serve(env, `scenes/${m[1]}/${m[2]}`, req, m[2] === 'live-index.json' ? 'no-store' : 'public, max-age=3600', ctx);
+  if (m && (req.method === 'GET' || req.method === 'HEAD')) {
+    // live-index.json and scene.json are small and change when a job is fixed, so never cache them
+    const nocache = m[2] === 'live-index.json' || m[2] === 'scene.json';
+    return serve(env, `scenes/${m[1]}/${m[2]}`, req, nocache ? 'no-store' : 'public, max-age=3600', ctx);
+  }
 
   // ---- uploads (app: captures/, worker: scenes/) ----
   if (p === '/v1/uploads' && req.method === 'POST') {
