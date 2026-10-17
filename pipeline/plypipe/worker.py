@@ -211,6 +211,20 @@ def save_checkpoint(api, jid: str, out: Path, root: Path, args: list[str], after
     tar.unlink(missing_ok=True)
 
 
+def _ckpt_key(args: list[str]) -> list[str]:
+    """Settings that must match for a checkpoint to be reusable. --force/--from only decide where to start, so a
+    resumed run can force a later stage (e.g. redo align) and still reuse an earlier checkpoint."""
+    skip = {"--force", "--from", "--only"}
+    out, i = [], 0
+    while i < len(args):
+        if args[i] in skip:
+            i += 2
+            continue
+        out.append(args[i])
+        i += 1
+    return out
+
+
 def load_checkpoint(api, jid: str, out: Path, root: Path, args: list[str]) -> str | None:
     """Restore the last checkpoint if it was made with exactly these settings; returns the stage it covers."""
     tar = root / "checkpoint.tar"
@@ -218,7 +232,7 @@ def load_checkpoint(api, jid: str, out: Path, root: Path, args: list[str]) -> st
         api.download(f"scenes/{jid}/checkpoint.tar", tar)
         with tarfile.open(tar) as tf:
             meta = json.load(tf.extractfile("ckpt.json"))
-            if meta.get("args") != args:
+            if _ckpt_key(meta.get("args") or []) != _ckpt_key(args):
                 return None
             out.mkdir(parents=True, exist_ok=True)
             tf.extractall(out, filter="data")
