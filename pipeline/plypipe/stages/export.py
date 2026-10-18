@@ -13,8 +13,9 @@ The phone file is SH0 and, above LITE_MAX Gaussians, decimated (phones crash on 
 If a PLY from elsewhere (trained on the unaligned model) is given via --ply, pass --apply-align
 and the stage applies scene.json's transform with splat-transform's translate/rotate/scale.
 """
-
 from __future__ import annotations
+
+import os
 
 import math
 import shutil
@@ -101,6 +102,8 @@ def run_stage(ctx: Ctx) -> dict:
         base += ["-B", box]
     clean = not ctx.opt("no_clean")
     total = ply_count(ply)
+    # each probe is a full pass over the model; a 4M-splat export can spend more time probing than exporting
+    probes = os.environ.get("PLY_EXPORT_PROBES", "1") != "0"
     # the value filters cut splats larger than 1 m; in a big room (a chapel, a hall) big splats are the walls, not
     # floaters, so scale the cap to the scene and fall back to opacity only if it would still gut the model
     diag = 10.0
@@ -109,7 +112,7 @@ def run_stage(ctx: Ctx) -> dict:
         diag = float(np.linalg.norm(np.array(b0["max"]) - np.array(b0["min"]))) or 10.0
     clean_flags = ["-V", "opacity,gt,0.03", "-V", f"scale_0,lt,{max(1.0, 0.12 * diag):.2f}",
                    "-V", f"scale_1,lt,{max(1.0, 0.12 * diag):.2f}", "-V", f"scale_2,lt,{max(1.0, 0.12 * diag):.2f}"]
-    if clean:  # probe the value filters before using them on the real pass
+    if clean and probes:  # probe the value filters before using them on the real pass
         probe_v = ctx.out / "_clean_probe.ply"
         try:
             run([*st, "-w", str(ply), "-N", *clean_flags, str(probe_v)], ctx, "export")
@@ -124,7 +127,7 @@ def run_stage(ctx: Ctx) -> dict:
     # a crop box taken from the solve's bounds can be wrong when the floor fit was poor (a drone walk with little
     # floor): it then deletes most of the twin. Measure, and drop the crop if it takes more than half.
     drop_crop = False
-    if box:
+    if box and probes:
         probe = ctx.out / "_crop_probe.ply"
         try:
             run([*st, "-w", str(ply), "-N", "-B", box, str(probe)], ctx, "export")
@@ -150,6 +153,10 @@ def run_stage(ctx: Ctx) -> dict:
             # the floater filter voxelises the scene; on a large, sparse capture (a chapel, a drone walk) it can
             # decide almost everything is a floater. Measure first; keep it only if it leaves most of the twin.
             probe = ctx.out / "_floater_probe.ply"
+            if not probes:  # straight run: no measurement pass
+                run(base + ["-F", str(cleaned)], ctx, "export")
+                floaters = True
+                raise StopIteration
             run(base + ["-F", str(probe)], ctx, "export")
             kept = ply_count(probe)
             if total and kept < 0.5 * total:
@@ -159,6 +166,8 @@ def run_stage(ctx: Ctx) -> dict:
             else:
                 probe.replace(cleaned)
                 floaters = True
+        except StopIteration:
+            pass
         except Exception as e:  # no WebGPU adapter in this container: keep the value filters only
             ctx.log.emit("export", "warn", f"floater filter unavailable ({str(e)[-160:]}); exporting without it")
             run(base + [str(cleaned)], ctx, "export")
