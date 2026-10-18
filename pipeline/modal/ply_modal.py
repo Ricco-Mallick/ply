@@ -19,6 +19,11 @@ import modal
 PIPE = Path(__file__).resolve().parents[1]
 GPU = os.environ.get("PLY_MODAL_GPU", "L4")
 HF_REPO = os.environ.get("PLY_HF_REPO", "Ricco-Marcelino/ply-data")  # results storage (private dataset repo)
+# read HERE, at deploy time on the developer's machine: values read inside work() see the container's env,
+# which never has these, so deploy-time flags like PLY_STAGE_LIMITS were silently ignored before
+STAGE_LIMITS = os.environ.get("PLY_STAGE_LIMITS", "sfm=100")
+EXPORT_PROBES = os.environ.get("PLY_EXPORT_PROBES", "1")
+WORKER_NAME = f"modal-{GPU.lower()}"
 
 # CUDA extensions come prebuilt from CI (.github/workflows/wheels.yml, python 3.12, sm_89 for L4 / L40S):
 #   gh run download <run> -R Ricco-Mallick/ply -D pipeline/wheels   (flattened: one folder of .whl files)
@@ -65,7 +70,7 @@ def work():
     """Claim and run jobs until the queue has been empty for 3 minutes. The worker only starts a job it can finish
     before this container's timeout (PLY_DEADLINE); later work waits for the next wake-up (API trigger or cron)."""
     import time
-    env = dict(os.environ, PYTHONPATH="/root/pipeline", PLY_WORKER_NAME=f"modal-{GPU.lower()}", PLY_WORK_DIR="/tmp/work", PLY_HF_REPO=HF_REPO, PLY_MODAL_GPU=GPU, PLY_STAGE_LIMITS=os.environ.get("PLY_STAGE_LIMITS", "sfm=100"), PLY_EXPORT_PROBES=os.environ.get("PLY_EXPORT_PROBES", "1"),
+    env = dict(os.environ, PYTHONPATH="/root/pipeline", PLY_WORKER_NAME=WORKER_NAME, PLY_WORK_DIR="/tmp/work", PLY_HF_REPO=HF_REPO, PLY_MODAL_GPU=GPU, PLY_STAGE_LIMITS=STAGE_LIMITS, PLY_EXPORT_PROBES=EXPORT_PROBES,
                PLY_IDLE_EXIT_MIN="3", MPLBACKEND="Agg", PLY_DEADLINE=str(time.time() + TIMEOUT_S - 300))
     subprocess.run(["nvidia-smi", "--query-gpu=name,memory.total", "--format=csv,noheader"], check=False)
     return subprocess.run([sys.executable, "-m", "plypipe.worker"], env=env, check=False).returncode
