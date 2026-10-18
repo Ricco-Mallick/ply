@@ -70,7 +70,7 @@ def work():
     """Claim and run jobs until the queue has been empty for 3 minutes. The worker only starts a job it can finish
     before this container's timeout (PLY_DEADLINE); later work waits for the next wake-up (API trigger or cron)."""
     import time
-    env = dict(os.environ, PYTHONPATH="/root/pipeline", PLY_WORKER_NAME=WORKER_NAME, PLY_WORK_DIR="/tmp/work", PLY_HF_REPO=HF_REPO, PLY_MODAL_GPU=GPU, PLY_STAGE_LIMITS=STAGE_LIMITS, PLY_EXPORT_PROBES=EXPORT_PROBES,
+    env = dict(os.environ, PYTHONPATH="/root/pipeline", PLY_WORKER_NAME="modal-l40s", PLY_WORK_DIR="/tmp/work", PLY_HF_REPO=HF_REPO, PLY_MODAL_GPU=GPU, PLY_STAGE_LIMITS="sfm=170,export=45", PLY_EXPORT_PROBES="0",
                PLY_IDLE_EXIT_MIN="3", MPLBACKEND="Agg", PLY_DEADLINE=str(time.time() + TIMEOUT_S - 300))
     subprocess.run(["nvidia-smi", "--query-gpu=name,memory.total", "--format=csv,noheader"], check=False)
     return subprocess.run([sys.executable, "-m", "plypipe.worker"], env=env, check=False).returncode
