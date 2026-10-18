@@ -49,7 +49,7 @@ image = (
     .env({"HF_HOME": "/opt/hf"})
     .run_commands("python -c \"from huggingface_hub import snapshot_download; snapshot_download('facebook/sam3', allow_patterns=['*.json', '*.txt', 'model.safetensors'])\"",
                   secrets=[modal.Secret.from_name("ply-hf")])
-    .env({"PLY_IMAGE_REV": "8"})  # bump to force the code layer to rebuild when Modal reuses a cached image
+    .env({"PLY_IMAGE_REV": "9"})  # bump to force the code layer to rebuild when Modal reuses a cached image
     .add_local_dir(PIPE / "plypipe", "/root/pipeline/plypipe")
 )
 app = modal.App("ply", image=image)
@@ -60,7 +60,7 @@ hf = modal.Secret.from_name("ply-hf")  # HF_TOKEN: gated facebook/sam3 weights f
 TIMEOUT_S = int(4.5 * 3600)  # longer than the longest job (all stage limits, ~3.7 h) so a started job always finishes
 
 
-@app.function(gpu=GPU, cpu=4, memory=16384, timeout=TIMEOUT_S, max_containers=1, secrets=[secret, hf])  # L4 + 4 cores + 16 GB = ~$1.12/h
+@app.function(gpu=GPU, cpu=8, memory=32768, timeout=TIMEOUT_S, max_containers=1, secrets=[secret, hf])  # 8 cores + 32 GB: 2560 px frames and ~800 of them  # L4 + 4 cores + 16 GB = ~$1.12/h
 def work():
     """Claim and run jobs until the queue has been empty for 3 minutes. The worker only starts a job it can finish
     before this container's timeout (PLY_DEADLINE); later work waits for the next wake-up (API trigger or cron)."""
