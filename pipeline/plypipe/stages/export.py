@@ -153,10 +153,8 @@ def run_stage(ctx: Ctx) -> dict:
             # the floater filter voxelises the scene; on a large, sparse capture (a chapel, a drone walk) it can
             # decide almost everything is a floater. Measure first; keep it only if it leaves most of the twin.
             probe = ctx.out / "_floater_probe.ply"
-            if not probes:  # straight run: no measurement pass
-                run(base + ["-F", str(cleaned)], ctx, "export")
-                floaters = True
-                raise StopIteration
+            # the floater filter is the destructive one (it gutted a 4M chapel to 5k splats), so it is always measured,
+            # even when the other probes are off: the pass costs minutes, a twin with 0.15 MB costs the demo
             run(base + ["-F", str(probe)], ctx, "export")
             kept = ply_count(probe)
             if total and kept < 0.5 * total:
