@@ -30,10 +30,23 @@ export class WalkEngine {
     this.dprCap = Math.min(devicePixelRatio, 1.5);
     this.scene.background = new THREE.Color('#070B14');
     this.camera = new THREE.PerspectiveCamera(70, innerWidth / innerHeight, .03, 500); this.camera.rotation.order = 'YXZ';
-    this.spark = new SparkRenderer({ renderer: this.renderer }); this.scene.add(this.spark);
+    // Spark's LOD budget defaults to 2.5M splats on desktop, i.e. it renders our whole 1.35M twin every frame and
+    // there is nothing to stream down. Pin the budget lower and shape it: detail in front, coarse behind and at the
+    // edges (this is the part that makes the twin feel smooth while walking). lodSplatScale can be raised again from
+    // the Views menu on a fast machine.
+    const mobile = matchMedia('(pointer: coarse), (max-width: 720px)').matches;
+    this.spark = new SparkRenderer({
+      renderer: this.renderer,
+      lodSplatCount: mobile ? 500_000 : 900_000,
+      coneFov0: 55, coneFov: 110, coneFoveate: 0.55, behindFoveate: 0.15,
+    }); this.scene.add(this.spark);
     setGlassSource(canvas);
     this.bind(); this.loop();
   }
+
+  /** 0.5 = fewer splats, 1 = Spark's platform default, 2 = double */
+  setSplatScale(k: number) { (this.spark as unknown as { lodSplatScale?: number }).lodSplatScale = k; this.emit(); }
+  get splatScale() { return (this.spark as unknown as { lodSplatScale?: number }).lodSplatScale ?? 1; }
 
   on(fn: () => void) { this.listeners.add(fn); return () => { this.listeners.delete(fn); }; }
   emit() { this.listeners.forEach(f => f()); }

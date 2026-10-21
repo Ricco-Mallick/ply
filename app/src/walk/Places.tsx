@@ -9,6 +9,28 @@ import { Navigator, pathLength, steps, type Place } from '../lab/places';
 import { Overlay } from '../lab/overlay';
 import { Palette, SearchIco } from '../lab/search';
 
+const MERGE_M = 2.5; // pins of the same kind closer than this share one badge
+const MAX_STACK = 6; // ...up to six per badge, so a long row still shows where the benches are
+/** 200 labelled places would mean 200 floating labels over the room. Same-kind neighbours merge into one pin
+ *  ("Bench ×6") placed on the nearest real instance; the palette and routing still see every individual place. */
+function clusterPlaces(places: Place[]): Place[] {
+  const base = (n: string) => n.replace(/\s*\d+$/, '');
+  const groups: { name: string; cat: string; members: Place[] }[] = [];
+  for (const p of places) {
+    const name = base(p.name), cat = (p as { cat?: string }).cat ?? '';
+    const g = groups.find(q => q.name === name && q.cat === cat && q.members.length < MAX_STACK && q.members.some(m => Math.hypot(m.p[0] - p.p[0], m.p[2] - p.p[2]) <= MERGE_M));
+    if (g) g.members.push(p); else groups.push({ name, cat, members: [p] });
+  }
+  const out: Place[] = [];
+  for (const g of groups) {
+    if (g.members.length === 1) { out.push(g.members[0]); continue; }
+    const cx = g.members.reduce((a, m) => a + m.p[0], 0) / g.members.length, cz = g.members.reduce((a, m) => a + m.p[2], 0) / g.members.length;
+    const at = g.members.reduce((b, m) => (Math.hypot(m.p[0] - cx, m.p[2] - cz) < Math.hypot(b.p[0] - cx, b.p[2] - cz) ? m : b), g.members[0]);
+    out.push({ ...at, name: `${g.name} ×${g.members.length}` });
+  }
+  return out.slice(0, 400);
+}
+
 export function PlacesLayer({ engine, base, entered, onMap, onData }: { engine: WalkEngine; base: URL | null; entered: boolean; onMap: (m: MapExtras) => void; onData?: (d: { places: Place[]; nav: Navigator | null }) => void }) {
   const [places, setPlaces] = useState<Place[] | null>(null);
   const [ov, setOv] = useState<Overlay | null>(null); const [nav, setNav] = useState<Navigator | null>(null);
@@ -20,8 +42,9 @@ export function PlacesLayer({ engine, base, entered, onMap, onData }: { engine: 
     const n = engine.grid ? new Navigator(engine.grid) : null, o = new Overlay(engine, n); o.allPlaces = places;
     setNav(n); setOv(o); onData?.({ places, nav: n }); return () => o.dispose();
   }, [engine.state.loaded, places]);
-  // hand-placed places first; AI-found ones (pipeline labelling) show as suggestions, dimmer and without the leader line
-  const shown = useMemo(() => (places ?? []).slice(0, 400), [places]);
+  // 200 labelled places means 200 floating labels over the room. Stack neighbours of the same kind into one pin
+  // ("Bench ×6"); the palette and the routing still see every individual place.
+  const shown = useMemo(() => clusterPlaces(places ?? []), [places]);
   useEffect(() => { ov?.setPlaces(shown, 'tag', entered); }, [ov, shown, entered]);
   useEffect(() => { const i = setInterval(() => tick(n => n + 1), 400); return () => clearInterval(i); }, []);
 
