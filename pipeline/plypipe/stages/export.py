@@ -110,7 +110,8 @@ def run_stage(ctx: Ctx) -> dict:
     b0 = scene.get("bounds") or {}
     if b0:
         diag = float(np.linalg.norm(np.array(b0["max"]) - np.array(b0["min"]))) or 10.0
-    clean_flags = ["-V", "opacity,gt,0.03", "-V", f"scale_0,lt,{max(1.0, 0.12 * diag):.2f}",
+    min_op = float(ctx.opt("min_opacity", 0.03))
+    clean_flags = ["-V", f"opacity,gt,{min_op:.3f}", "-V", f"scale_0,lt,{max(1.0, 0.12 * diag):.2f}",
                    "-V", f"scale_1,lt,{max(1.0, 0.12 * diag):.2f}", "-V", f"scale_2,lt,{max(1.0, 0.12 * diag):.2f}"]
     if clean and probes:  # probe the value filters before using them on the real pass
         probe_v = ctx.out / "_clean_probe.ply"

@@ -87,7 +87,10 @@ async function normalise(raw: any, base: URL): Promise<SceneManifest> {
   const m: SceneManifest = {
     name: raw.name ?? decodeURIComponent(base.pathname.split('/').filter(Boolean).slice(-2, -1)[0] ?? 'Captured space'),
     splat: phone && raw.splat?.lite ? raw.splat.lite : raw.splat?.file ?? 'scene.spz',
-    lod: raw.splat?.lod ?? undefined,
+    // Streaming LOD shows a coarse twin first and refines it, which reads as "garbage that slowly improves" while
+    // chunks come in. The single SPZ is edge-cached, so it arrives whole and sharp: use it by default and keep the
+    // LOD behind ?lod=1 until the chunk path is as fast as a plain download.
+    lod: (raw.splat?.lod && new URLSearchParams(location.search).has('lod')) ? raw.splat.lod : undefined,
     floorY: raw.floorY ?? 0, eyeHeight: raw.spawn?.position?.[1] ?? 1.6, bounds: raw.bounds, cameraPath: raw.cameraPath, tour: raw.tour,
   };
   if (raw.spawn?.position) {

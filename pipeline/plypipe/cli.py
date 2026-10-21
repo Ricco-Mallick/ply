@@ -90,6 +90,8 @@ def build_parser() -> argparse.ArgumentParser:
     g.add_argument("--iterations", type=int, help="override the preset's training steps")
     g.add_argument("--sh-degree", type=int, choices=[0, 1, 2, 3], help="override the preset's SH degree")
     g.add_argument("--cap-max", type=int, help="override the preset's MCMC splat cap")
+    g.add_argument("--min-opacity", type=float, default=0.03,
+                   help="export drops splats below this activated opacity (0.03 default; lower keeps fine detail)")
     g.add_argument("--train-dry-run", action="store_true", help="rehearsal: load the scene in the trainer but skip GPU training")
     g.add_argument("--antialiased", action="store_true")
     g.add_argument("--gsplat-dir", type=Path, help="gsplat checkout (default $PLY_GSPLAT_DIR or /opt/gsplat)")

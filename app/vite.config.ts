@@ -22,6 +22,7 @@ export default defineConfig({
         capture: resolve(__dirname, 'capture.html'),
         walk: resolve(__dirname, 'walk.html'),
         guide: resolve(__dirname, 'guide.html'),
+        tutorial: resolve(__dirname, 'tutorial.html'),
         lab: resolve(__dirname, 'lab.html'),
         'ar-test': resolve(__dirname, 'ar-test.html'),
       },

@@ -1,0 +1,73 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <title>Tutorial · Ply</title>
+  <meta name="description" content="How to film a room so the twin comes out clean: steady passes, held level, each one overlapping the last." />
+  <link rel="stylesheet" href="/ply/src/tokens.css" />
+  <style>
+    :root { color-scheme: dark; }
+    body { margin: 0; background: #070b14; color: #e8ecf5; font-family: Manrope, system-ui, sans-serif; }
+    .wrap { max-width: 1080px; margin: 0 auto; padding: 64px 24px 96px; }
+    .eyebrow { font-family: "Space Mono", monospace; font-size: 12px; letter-spacing: .18em; text-transform: uppercase; color: #7f8ba4; }
+    h1 { font-family: "Instrument Serif", Georgia, serif; font-weight: 400; font-size: clamp(34px, 5vw, 58px); line-height: 1.04; margin: 10px 0 18px; }
+    h1 em { font-style: italic; color: #b8c4dd; }
+    p.lede { max-width: 62ch; color: #aab4c8; font-size: 17px; line-height: 1.6; }
+    .fig { margin: 40px 0 12px; border-radius: 22px; overflow: hidden; border: 1px solid #1b2436; background: #0b1020; }
+    .fig iframe { display: block; width: 100%; height: 620px; border: 0; background: #0b1020; }
+    .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 18px; margin: 36px 0 0; }
+    .card { border: 1px solid #1b2436; border-radius: 16px; padding: 20px 22px; background: #0a0f1c; }
+    .card h3 { margin: 0 0 8px; font-size: 15px; font-family: "Space Mono", monospace; letter-spacing: .06em; text-transform: uppercase; color: #8ea0ff; }
+    .card p { margin: 0; color: #aab4c8; font-size: 15px; line-height: 1.55; }
+    .cta { display: flex; gap: 12px; flex-wrap: wrap; margin-top: 36px; }
+    .cta a { display: inline-flex; align-items: center; gap: 8px; padding: 13px 20px; border-radius: 999px; text-decoration: none; font-size: 15px; }
+    .cta .primary { background: #e8ecf5; color: #0a0f1c; }
+    .cta .ghost { border: 1px solid #263149; color: #c8d2e6; }
+    footer { margin-top: 56px; color: #66718a; font-size: 13px; }
+    @media (max-width: 720px) { .fig iframe { height: 460px; } .wrap { padding-top: 40px; } }
+  </style>
+</head>
+<body>
+  <main class="wrap">
+    <div class="eyebrow">Ply · capture tutorial</div>
+    <h1>Film it like you'd <em>mow a lawn.</em></h1>
+    <p class="lede">
+      A reel mower cuts only while its wheels turn, and every pass has to lap the one before it — miss the overlap and a
+      strip is left standing. A room is the same: walk slowly, hold the phone level, and let each pass overlap the last.
+      What you skip is what the twin will have a hole in.
+    </p>
+
+    <figure class="fig">
+      <iframe src="/ply/figures/mower.html" title="Reel mower on a lawn, an isometric figure: move along the lawn to push a pass" loading="lazy"></iframe>
+    </figure>
+
+    <div class="grid">
+      <div class="card">
+        <h3>Slow, not clever</h3>
+        <p>The reel only cuts while the wheels turn. In the capture, motion blur is what breaks frames — half your walking speed doubles the sharp frames the solver can use.</p>
+      </div>
+      <div class="card">
+        <h3>Overlap each pass</h3>
+        <p>Lap the previous pass by about a third. The matcher needs shared views between passes to stitch them into one model; a gap becomes a hole you can see straight through.</p>
+      </div>
+      <div class="card">
+        <h3>Keep it level</h3>
+        <p>Hold the phone upright and at the same height. The pipeline's scale comes from that height, so a bouncing hand makes the room the wrong size.</p>
+      </div>
+      <div class="card">
+        <h3>Corners last</h3>
+        <p>Do the walls first, then step into each corner and turn slowly. Corners are where the model folds, and a fold is the one failure retraining cannot fix.</p>
+      </div>
+    </div>
+
+    <div class="cta">
+      <a class="primary" href="/ply/capture.html">Start a capture</a>
+      <a class="ghost" href="/ply/guide.html">Read the full SOP</a>
+      <a class="ghost" href="/ply/walk.html">See a finished twin</a>
+    </div>
+
+    <footer>Figure built with the isometric kit in <code>app/figures</code> — rebuild with <code>node app/figures/build-mower.mjs</code>.</footer>
+  </main>
+</body>
+</html>
