@@ -5,6 +5,8 @@ export interface Occupancy { image: string; origin: [number, number]; cell: numb
 export interface SceneManifest {
   name: string;
   splat: string;
+  /** Spark's prebuilt LOD tree (.rad + .radc chunks): streamed, so the twin appears before it has all downloaded */
+  lod?: string;
   splatQuaternion?: [number, number, number, number];
   splatPosition?: [number, number, number];
   floorY?: number;
@@ -85,6 +87,7 @@ async function normalise(raw: any, base: URL): Promise<SceneManifest> {
   const m: SceneManifest = {
     name: raw.name ?? decodeURIComponent(base.pathname.split('/').filter(Boolean).slice(-2, -1)[0] ?? 'Captured space'),
     splat: phone && raw.splat?.lite ? raw.splat.lite : raw.splat?.file ?? 'scene.spz',
+    lod: raw.splat?.lod ?? undefined,
     floorY: raw.floorY ?? 0, eyeHeight: raw.spawn?.position?.[1] ?? 1.6, bounds: raw.bounds, cameraPath: raw.cameraPath, tour: raw.tour,
   };
   if (raw.spawn?.position) {

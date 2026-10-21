@@ -55,8 +55,13 @@ export class WalkEngine {
     this.floorY = m.floorY ?? 0; this.eye = m.eyeHeight ?? 1.55;
     const p = m.start?.position ?? [0, 0, 0]; this.state.pos.set(p[0], this.floorY, p[2]); this.state.yaw = m.start?.yaw ?? 0;
     if (m.occupancy) { try { this.grid = (await OccupancyGrid.load(base, m.occupancy)).grid; } catch { this.grid = null; } }
-    const url = new URL(m.splat, base).href;
-    this.splat = new SplatMesh({ url, lod: true, onProgress: (e: ProgressEvent) => { if (e.lengthComputable) { this.state.progress = e.loaded / e.total; this.emit(); } } });
+    // a prebuilt LOD tree streams: the small header arrives first, then only the chunks this camera needs. That is
+    // what keeps a 1.3M-splat twin smooth and fast to open; without one, Spark builds the tree in a worker.
+    const lodUrl = m.lod ? new URL(m.lod, base).href : null;
+    const url = lodUrl ?? new URL(m.splat, base).href;
+    this.splat = lodUrl
+      ? new SplatMesh({ url, paged: true, onProgress: (e: ProgressEvent) => { if (e.lengthComputable) { this.state.progress = e.loaded / e.total; this.emit(); } } })
+      : new SplatMesh({ url, lod: true, onProgress: (e: ProgressEvent) => { if (e.lengthComputable) { this.state.progress = e.loaded / e.total; this.emit(); } } });
     if (m.splatQuaternion) this.splat.quaternion.set(...m.splatQuaternion);
     if (m.splatPosition) this.splat.position.set(...m.splatPosition);
     this.scene.add(this.splat);
