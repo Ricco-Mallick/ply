@@ -269,23 +269,37 @@ export class Overlay {
   }
 
   // ---------- per frame ----------
+  private acc = 0;
+  /** orbit the dollhouse (runs every frame, it is the camera) */
+  dollStep(dt: number) {
+    if (!this.doll) return;
+    const cam = this.engine.camera, d = this.doll;
+    d.t = Math.min(1, d.t + dt * .8); const k = 1 - (1 - d.t) ** 3;
+    this.dollYaw += dt * .05;
+    const want = new THREE.Vector3(d.target.x + Math.sin(this.dollYaw) * d.dist, d.target.y + d.dist * .78, d.target.z + Math.cos(this.dollYaw) * d.dist);
+    cam.position.lerp(want, k < 1 ? k * .2 : .12); cam.lookAt(d.target); cam.updateMatrixWorld();
+  }
   frame = (dt: number, t: number) => {
     const e = this.engine, cam = e.camera, W = innerWidth, H = innerHeight, me = e.state.pos;
+    // the pin pass projects and writes DOM for every place: at 194 places that is the frame budget on its own,
+    // so it runs at 20 Hz while the splats keep the full frame rate
+    this.acc += dt;
+    if (this.acc < 0.05) { if (this.doll) this.dollStep(dt); return; }
+    this.acc = 0;
     // draw after the splats: Spark composites the splat layer in the same pass, and depth-less overlays drawn
     // before it get painted over (this hid the route in some views)
     this.root.traverse(o => { if (o.renderOrder < 10) o.renderOrder = 10; });
     for (const g of [this.ai, this.measure]) for (const o of g.children) if ((o as LineSegments2).material instanceof LineMaterial) ((o as LineSegments2).material as LineMaterial).resolution.set(W, H);
-    if (this.doll) { // orbit the dollhouse
-      this.doll.t = Math.min(1, this.doll.t + dt * .8); const k = 1 - (1 - this.doll.t) ** 3, d = this.doll;
-      this.dollYaw += dt * .05; const want = new THREE.Vector3(d.target.x + Math.sin(this.dollYaw) * d.dist, d.target.y + d.dist * .78, d.target.z + Math.cos(this.dollYaw) * d.dist);
-      cam.position.lerp(want, k < 1 ? k * .2 : .12); cam.lookAt(d.target); cam.updateMatrixWorld();
-    }
+    this.dollStep(dt);
     const proj = (p: THREE.Vector3 | [number, number, number]) => { this.v.set(...(Array.isArray(p) ? p : p.toArray()) as [number, number, number]).project(cam); return this.v.z < 1 ? [(this.v.x + 1) / 2 * W, (1 - this.v.y) / 2 * H] as const : null; };
     // pins: projected each frame; fade with distance, show distance in metres
     for (const p of this.places) {
       const el = this.pinEls.get(p.id); if (!el) continue;
+      const dist = Math.hypot(p.p[0] - me.x, p.p[2] - me.z);
+      // 200 labelled places is a lot of DOM: only the ones near you (or the destination) are laid out at all
+      if (dist > 26 && this.dest !== p.id) { if (el.style.opacity !== '0') el.style.opacity = '0'; continue; }
       const anchor: [number, number, number] = this.pinStyle === 'beacon' ? [p.p[0], e.floorY + 2.25, p.p[2]] : p.p;
-      const s = proj(anchor), dist = Math.hypot(p.p[0] - me.x, p.p[2] - me.z);
+      const s = proj(anchor);
       if (!s || this.ar === 'doll' && this.pinStyle === 'dot') { el.style.opacity = '0'; continue; }
       const near = this.pinStyle === 'dot' ? Math.hypot(s[0] - W / 2, s[1] - H / 2) < Math.min(W, H) * .22 : true;
       el.style.transform = `translate(${s[0]}px, ${s[1]}px)`; el.style.opacity = String(Math.max(.25, Math.min(1, 1.3 - dist / 9)));

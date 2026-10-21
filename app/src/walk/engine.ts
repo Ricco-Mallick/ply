@@ -21,10 +21,13 @@ export class WalkEngine {
   frameHooks = new Set<(dt: number, t: number) => void>();
   /** Someone else drives the camera (a guided walk, an orbit view): skip the walk controller. */
   manual = false;
+  /** adaptive resolution: a 1.4M-splat twin on a laptop GPU drops frames at retina density */
+  dprCap = 1.5; private fpsAcc = 0; private fpsN = 0; private lastDrop = 0;
 
   constructor(public canvas: HTMLCanvasElement) {
     this.renderer = new THREE.WebGLRenderer({ canvas, antialias: false, powerPreference: 'high-performance' });
     this.renderer.setPixelRatio(Math.min(devicePixelRatio, 1.5)); this.renderer.setSize(innerWidth, innerHeight, false);
+    this.dprCap = Math.min(devicePixelRatio, 1.5);
     this.scene.background = new THREE.Color('#070B14');
     this.camera = new THREE.PerspectiveCamera(70, innerWidth / innerHeight, .03, 500); this.camera.rotation.order = 'YXZ';
     this.spark = new SparkRenderer({ renderer: this.renderer }); this.scene.add(this.spark);
@@ -148,6 +151,17 @@ export class WalkEngine {
     if (!this.manual) this.step(dt);
     for (const f of this.frameHooks) f(dt, now / 1000);
     this.renderer.render(this.scene, this.camera); glassFrame(dt);
+    // drop the render resolution (never below 0.75) when the last second averaged under 42 fps
+    this.fpsAcc += dt; this.fpsN++;
+    if (this.fpsAcc >= 1) {
+      const fps = this.fpsN / this.fpsAcc; this.fpsAcc = 0; this.fpsN = 0;
+      const now = performance.now();
+      if (fps < 42 && this.dprCap > 0.76 && now - this.lastDrop > 2500) {
+        this.lastDrop = now; this.dprCap = Math.max(0.75, this.dprCap - 0.25);
+        this.renderer.setPixelRatio(Math.min(devicePixelRatio, this.dprCap));
+        this.emit();
+      }
+    }
   };
   dispose() { cancelAnimationFrame(this.raf); this.splat?.dispose(); this.renderer.dispose(); }
 }
