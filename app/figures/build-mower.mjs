@@ -6,6 +6,7 @@ import { writeFileSync, mkdirSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import * as k from "./kit/iso-kit.mjs";
+import * as G from "./kit/lathe.mjs";
 import { kitScript } from "./inline-kit.mjs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -24,7 +25,7 @@ const BODY = { x: -22, y: -20, w: 44, d: 40, r: 4 };
 const BODY_Z = 9, BODY_H = 13;
 const WHEEL_R = 13, WHEEL_W = 2.6, WHEEL_X = 24;
 const REEL_R = 8.5, REEL_Z = 12;
-const HANDLE_TOP = 46;
+const HANDLE_TOP = 41;
 
 // fit to the lawn *plus* the mower at both ends of its travel (handle included), or the grip clips off the frame
 const P = k.fitProjection(
@@ -61,59 +62,71 @@ function lawn() {
 }
 
 // --- the mower -------------------------------------------------------------
+// wheels and the reel are turned on a lathe (their axis is horizontal), the frame and grass box are extrusions,
+// and the handle stays are prisms along their own direction.
+const wheelF = (y) => G.frameOf([-WHEEL_X, y, BODY_Z + 4], [0, 1, 0], [1, 0, 0], [0, 0, 1]);
+const WHEEL_XS = [WHEEL_X, -WHEEL_X];
+
+function wheel(y, w) {
+  const F = wheelF(y);
+  const disc = S(G.lathe([[0, 0], [0, WHEEL_R], [w, WHEEL_R], [w, 0]], F, P, { steps: 40 }), { tone: "mid" });
+  const rim = L(G.circleOf(F, w, WHEEL_R, P, 40), { tone: "lo" });
+  const hub = S(G.lathe([[w, 0], [w, 3.4], [w + 1.4, 3.4], [w + 1.4, 0]], F, P, { steps: 20 }), { tone: "hi" });
+  const bolts = D(G.dotsOf(F, w + 1.5, 6.4, 6, P, { all: true }), { size: 0.5, tone: "hi" });
+  return disc + rim + hub + bolts;
+}
+
+function stay(from, to) {
+  return L(k.segment(from, to, P), { tone: "lo", className: "iso-handle" });
+}
+
 function mower() {
-  const out = [];
-  // two side frames, drawn back to front
+  const out = [`<path class="iso-halo" d="${k.haloOf({ x: -WHEEL_X - 4, y: -BODY.d / 2 - 6, w: (WHEEL_X + 4) * 2, d: BODY.d + 12, r: 8 }, 0.4, 0.6, P)}"/>`];
+  // grass box behind the body, with slats
+  out.push(S(k.slabOf({ x: -18, y: BODY.d / 2 - 2, w: 36, d: 15, r: 2 }, BODY_Z + 3, BODY_H - 1, P, 4), { tone: "lo" }));
+  for (let i = -14; i <= 14; i += 7) out.push(L(k.rise([i, BODY.d / 2 + 5.5], BODY_Z + 4, BODY_Z + BODY_H + 1, P), { tone: "faint" }));
+  // the two side plates and the body shell between them
   for (const side of byDepth([[0, -BODY.d / 2 + 3], [0, BODY.d / 2 - 3]])) {
     const y = side[1];
-    out.push(S(k.slabOf({ x: -WHEEL_X - 2, y: y - 1.4, w: (WHEEL_X + 2) * 2, d: 2.8, r: 1 }, BODY_Z, BODY_H, P, 4, 0.6), { tone: "mid" }));
-    // handle post rising from the back of the side frame
-    out.push(S(k.slabOf({ x: -WHEEL_X + 2, y: y - 1.1, w: 3.2, d: 2.2, r: 0.8 }, BODY_Z + BODY_H, 26, P, 3), { tone: "hi" }));
+    out.push(S(k.slabOf({ x: -WHEEL_X - 2, y: y - 1.2, w: (WHEEL_X + 2) * 2, d: 2.4, r: 1 }, BODY_Z, BODY_H, P, 4, 0.6), { tone: "mid" }));
+    out.push(S(k.cylinder(0, y, 1.2, BODY_Z + BODY_H, 1.2, P, 14), { tone: "hi" }));
   }
-  // body shell with a seam and the grass box behind it
   out.push(S(k.slabOf(BODY, BODY_Z, BODY_H, P, 6, 1), { tone: "hi" }));
   out.push(L(k.sideSeam(BODY, BODY_Z + BODY_H, P), { tone: "crease" }));
-  out.push(S(k.slabOf({ x: -16, y: BODY.d / 2 - 1, w: 32, d: 14, r: 2 }, BODY_Z + 4, BODY_H - 2, P, 4), { tone: "mid" }));
-  // reel housing: a half-round cover with five blades you can see the edge of
-  out.push(S(k.cylinder(0, 0, REEL_R + 2.4, REEL_Z - 1, 3, P, 28, 0.6), { tone: "mid" }));
-  const blades = 5;
-  for (let i = 0; i < blades; i++) {
-    const a = (i / blades) * Math.PI * 2;
-    const ring = k.circleRing(0, 0, REEL_R, 18).map(([x, y]) => [x * 0.18 + Math.cos(a) * REEL_R, y * 0.18 + Math.sin(a) * REEL_R]);
-    out.push(L(k.pathOf(k.pointsAt(ring.map(([x, y]) => [x, y, REEL_Z + 3.2]), P), true), { tone: "hi" }));
+  // a wide plate over the top with four screws
+  out.push(S(k.slabOf({ x: -14, y: -BODY.d / 2 + 4, w: 30, d: BODY.d - 8, r: 2 }, BODY_Z + BODY_H, 1.6, P, 4), { tone: "hi" }));
+  for (const [x, y] of [[-11, -14], [13, -14], [-11, 14], [13, 14]]) out.push(S(k.cylinder(x, y, 1.1, BODY_Z + BODY_H + 1.6, 0.7, P, 16), { tone: "lo" }));
+  // the reel: turned drum with five blades cut across its face
+  const reelF = G.frameOf([0, -BODY.d / 2 + 6, REEL_Z], [0, 1, 0], [1, 0, 0], [0, 0, 1]);
+  out.push(S(G.lathe([[0, 0], [0, REEL_R], [BODY.d - 12, REEL_R], [BODY.d - 12, 0]], reelF, P, { steps: 32 }), { tone: "lo" }));
+  for (let i = 0; i < 5; i++) {
+    const a = (i / 5) * Math.PI * 2;
+    out.push(L(k.pathOf(k.pointsAt([[Math.cos(a) * REEL_R, -BODY.d / 2 + 6, REEL_Z + Math.sin(a) * REEL_R], [Math.cos(a) * REEL_R, BODY.d / 2 - 6, REEL_Z + Math.sin(a) * REEL_R]].map(([x, y, z]) => [x, y, z]), P)), { tone: "hi" }));
   }
-  // wheels, a hub bolt each, and a tread tick every 30°
-  for (const side of byDepth([[0, -BODY.d / 2 + 2], [0, BODY.d / 2 - 2]])) {
-    const y = side[1] - Math.sign(side[1]) * WHEEL_W;
-    const hub = [-WHEEL_X, 0, BODY_Z + 4];
-    out.push(`<g transform="${k.translateAlong(P, [hub[0], hub[1], hub[2]])}">`);
-    out.push(S(k.cylinder(0, y + WHEEL_W, WHEEL_R, 0, WHEEL_W * 2, P, 30, 0.5), { tone: "mid" }));
-    out.push("</g>");
-    const tread = [];
-    for (let i = 0; i < 12; i++) {
-      const a = (i / 12) * Math.PI * 2;
-      tread.push(...k.pointsAt([[Math.cos(a) * (WHEEL_R - 1.4), y + WHEEL_W, Math.sin(a) * (WHEEL_R - 1.4)]], P));
-    }
-    out.push(D(tread, { size: 0.55, tone: "hi" }));
+  // wheels: one each side, outside the plates
+  out.push(...byDepth([-BODY.d / 2 + 2, BODY.d / 2 - 2]).map((y) => wheel(y - 2, WHEEL_W)));  // y is a number here
+  // cutting bar in front with three bolts
+  out.push(S(k.slabOf({ x: -WHEEL_X + 2, y: -BODY.d / 2 - 1, w: WHEEL_X * 2 - 4, d: 2.6, r: 0.6 }, 3, 3.2, P, 3), { tone: "hi" }));
+  for (const x of [-12, 0, 12]) out.push(S(k.cylinder(x, -BODY.d / 2, 1.0, 6.2, 0.7, P, 14), { tone: "lo" }));
+  // handle: two stays to a grip, with plates at the frame
+  const gripZ = HANDLE_TOP, gripX = -WHEEL_X - 24;
+  for (const yy of byDepth([-BODY.d / 2 + 7, BODY.d / 2 - 7])) {
+    out.push(stay([-WHEEL_X + 3, yy, BODY_Z + BODY_H + 2], [gripX + 2, yy, gripZ]));
+    out.push(S(k.cylinder(-WHEEL_X + 3, yy, 1.3, BODY_Z + BODY_H + 2, 1.2, P, 14), { tone: "hi" }));
+    out.push(S(k.slabOf({ x: -WHEEL_X + 1, y: yy - 2.4, w: 5, d: 4.8, r: 0.8 }, BODY_Z + BODY_H, 2, P, 3), { tone: "mid" }));
   }
-  // cutting bar in front, with its bolts
-  out.push(S(k.slabOf({ x: -WHEEL_X, y: -BODY.d / 2 + 2, w: WHEEL_X * 2, d: 3, r: 0.6 }, 3, 3.4, P, 3), { tone: "lo" }));
-  for (const x of [-14, 0, 14]) out.push(S(k.cylinder(x, -BODY.d / 2 + 3.5, 1.1, 6.4, 0.8, P, 16), { tone: "hi" }));
-  // the handle: two stays, a grip, and the plates that hold them
-  for (const y of byDepth([[-BODY.d / 2 + 4], [BODY.d / 2 - 4]])) {
-    const yy = y[0];
-    out.push(L(k.segment([-WHEEL_X + 4, yy, BODY_Z + BODY_H + 24], [-WHEEL_X - 26, yy, HANDLE_TOP], P), { tone: "edge" }));
-  }
-  out.push(S(k.cylinder(-WHEEL_X - 26, 0, 1.7, HANDLE_TOP, 6, P, 18, 0.4), { tone: "hi", className: "iso-grip" }));
-  // measuring wheel at the side: the "distance walked" readout, with a dial plate
-  out.push(S(k.cylinder(-6, BODY.d / 2 + 6, 3.2, 4, 1.4, P, 20), { tone: "mid" }));
-  out.push(L(k.ring(-6, BODY.d / 2 + 6, 2.4, 5.4, P, 18), { tone: "crease" }));
+  out.push(L(k.segment([gripX + 2, -BODY.d / 2 + 7, gripZ], [gripX + 2, BODY.d / 2 - 7, gripZ], P), { tone: "hi", className: "iso-handle" }));
+  // a small measuring wheel on the side: the distance walked
+  out.push(wheel(BODY.d / 2 + 5.4, 1.6));
   return out.join("");
 }
 
+const O = at([0, 0, 0]);
+const ART_S = 1.25;  // a touch larger than life so the parts read; the lawn keeps its true 2.2 m
+const artTransform = `translate(${O[0].toFixed(2)} ${O[1].toFixed(2)}) scale(${ART_S}) translate(${(-O[0]).toFixed(2)} ${(-O[1]).toFixed(2)})`;
 const svg = `<svg class="iso-svg" viewBox="0 0 ${W} ${H}" role="img" aria-label="A reel mower on a lawn, drawn in isometric, cutting a stripe as it is pushed along one pass.">
   <g id="lawn">${lawn()}</g>
-  <g id="mower">${mower()}</g>
+  <g id="mower"><g id="mower-art" transform="${artTransform}">${mower()}</g></g>
 </svg>`;
 
 // --- behaviour -------------------------------------------------------------
@@ -124,7 +137,7 @@ const LAWN = ${JSON.stringify(LAWN)};
 const PASS_Y = ${JSON.stringify(PASS_Y)};
 const PASS_D = ${PASS_D.toFixed(3)};
 const CUT_W = ${CUT_W};
-const X0 = ${(LAWN.x + 8).toFixed(2)}, X1 = ${(LAWN.x + LAWN.w - 8).toFixed(2)};
+const X0 = ${(LAWN.x + 44).toFixed(2)}, X1 = ${(LAWN.x + LAWN.w - 44).toFixed(2)};
 const mower = document.getElementById("mower");
 const plate = document.querySelector(".iso-plate");
 const readout = document.querySelector('[data-corner="readout"]');
@@ -191,9 +204,11 @@ const body = k.plateHtml({
          --anatomy-shade-0:#0a1120; --anatomy-shade-1:#0d1526; --anatomy-shade-2:#101a2e; --anatomy-shade-3:#132038;
          --anatomy-lit-top:#2b3f6d; --anatomy-lit-shade:#1e2c4e; --anatomy-hi:#e2e9fb; --anatomy-mid:#93a6cd;
          --anatomy-lo:#5d6f95; --anatomy-faint:#354463; --anatomy-lit:#a8d4ff; --anatomy-halo-opacity:.55; }
-  .iso-turf { fill: #101c31; stroke: #1b2b47; stroke-width: .35; }
-  .iso-turf.cut { fill: #1e3559; stroke: #2b4a7a; }
+  .iso-turf { fill: #0d1830; stroke: #17263f; stroke-width: .4; }
+  .iso-turf.cut { fill: #26476f; stroke: #3f6ba3; stroke-width: .5; }
   .iso-svg { max-height: 540px; }
+  .iso-grip { stroke: var(--anatomy-lit); }
+  .iso-handle { stroke: var(--anatomy-lo); stroke-width: 2.8px; stroke-linecap: round; }
 </style><div class="iso-stage" tabindex="0" role="application" aria-label="Reel mower on a lawn: move the pointer along the lawn to push a pass">${svg}</div>`,
 });
 
