@@ -30,15 +30,15 @@ export class WalkEngine {
     this.dprCap = Math.min(devicePixelRatio, 1.5);
     this.scene.background = new THREE.Color('#070B14');
     this.camera = new THREE.PerspectiveCamera(70, innerWidth / innerHeight, .03, 500); this.camera.rotation.order = 'YXZ';
-    // Spark's LOD budget defaults to 2.5M splats on desktop, i.e. it renders our whole 1.35M twin every frame and
-    // there is nothing to stream down. Pin the budget lower and shape it: detail in front, coarse behind and at the
-    // edges (this is the part that makes the twin feel smooth while walking). lodSplatScale can be raised again from
-    // the Views menu on a fast machine.
+    // No foveation and no fixed budget by default: the twin is drawn at full detail from the first frame, because a
+    // budget that re-selects splats as the camera settles reads as "blurry, then it sharpens when you stare" — which
+    // makes the whole model feel cheap at a glance. The budget only comes down if the frame rate actually suffers
+    // (see the fps block below), so a fast machine never trades detail for a rate it already has.
     const mobile = matchMedia('(pointer: coarse), (max-width: 720px)').matches;
     this.spark = new SparkRenderer({
       renderer: this.renderer,
-      lodSplatCount: mobile ? 500_000 : 900_000,
-      coneFov0: 55, coneFov: 110, coneFoveate: 0.55, behindFoveate: 0.15,
+      lodSplatCount: mobile ? 1_600_000 : 2_500_000,
+      coneFov0: 0, coneFov: 0, coneFoveate: 1, behindFoveate: 1,
     }); this.scene.add(this.spark);
     setGlassSource(canvas);
     this.bind(); this.loop();
@@ -174,10 +174,19 @@ export class WalkEngine {
     if (this.fpsAcc >= 1) {
       const fps = this.fpsN / this.fpsAcc; this.fpsAcc = 0; this.fpsN = 0;
       const now = performance.now();
-      if (fps < 42 && this.dprCap > 0.76 && now - this.lastDrop > 2500) {
-        this.lastDrop = now; this.dprCap = Math.max(0.75, this.dprCap - 0.25);
-        this.renderer.setPixelRatio(Math.min(devicePixelRatio, this.dprCap));
-        this.emit();
+      const spark = this.spark as unknown as { lodSplatCount?: number };
+      const budget = spark.lodSplatCount ?? 2_500_000;
+      if (now - this.lastDrop > 2500) {
+        if (fps < 38) {
+          this.lastDrop = now;
+          // first give back resolution cheaply, then thin the splats, and only then go below native density
+          if (this.dprCap > 1.0) { this.dprCap = Math.max(1.0, this.dprCap - 0.25); this.renderer.setPixelRatio(Math.min(devicePixelRatio, this.dprCap)); }
+          else if (budget > 700_000) spark.lodSplatCount = Math.max(700_000, Math.round(budget * 0.75));
+          else this.dprCap = Math.max(0.75, this.dprCap - 0.25), this.renderer.setPixelRatio(Math.min(devicePixelRatio, this.dprCap));
+          this.emit();
+        } else if (fps > 55 && budget < 2_500_000) {
+          this.lastDrop = now; spark.lodSplatCount = Math.min(2_500_000, Math.round(budget * 1.15)); this.emit();
+        }
       }
     }
   };
