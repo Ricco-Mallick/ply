@@ -107,6 +107,12 @@ export function buildRoom(THREE, shell) {
     }
     o.material = m;
   });
+  const windows = buildWindows(THREE);
+  windows.name = 'windows';
+  const daylight = new THREE.MeshBasicMaterial({ color: 0xcfe4f2 });   // daylight behind the grille, not a black hole
+  windows.traverse((o) => {
+    if (o.isMesh && /glas|pane/i.test(o.name + ((o.material && o.material.name) || ''))) o.material = daylight;
+  });
   g.add(walls, ceiling, windows);
   return g;
 }
