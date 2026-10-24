@@ -36,11 +36,11 @@ from plypipe.progress import SfmProgress
 # rough share of wall time per stage on a T4, for one overall progress number
 WEIGHTS = {"frames": .05, "sfm": .20, "align": .02, "occupancy": .02, "label": .04, "train": .62, "export": .05}
 ORDER = list(WEIGHTS)
-RESULTS = ["scene.spz", "scene_lite.spz", "scene.json", "occupancy.png", "occupancy.json", "places.json", "report.json"]
+RESULTS = ["scene.spz", "scene_lite.spz", "scene.json", "occupancy.png", "occupancy.json", "places.json", "report.json", "mesh.ply"]
 PART = 32 * 1024 * 1024
 # stop-loss: a stage that runs past its limit is killed and the job fails with a clear message (minutes;
 # PLY_STAGE_LIMITS="sfm=30,train=60" overrides). Generous for a T4; they exist to cap a stuck run, not to race.
-STAGE_LIMITS_MIN = {"frames": 15, "sfm": 45, "align": 5, "occupancy": 5, "label": 15, "train": 120, "export": 15}
+STAGE_LIMITS_MIN = {"frames": 15, "sfm": 45, "align": 5, "occupancy": 5, "label": 15, "train": 120, "export": 15, "mesh": 70}
 # the most a job can take (frames..export limits): a worker with a hard deadline (Modal timeout) never starts a job
 # it could not finish
 JOB_MAX_MIN = sum(STAGE_LIMITS_MIN.values())
@@ -141,7 +141,7 @@ class Api:
         self.req("POST", "/v1/uploads/complete", {"key": up["key"], "uploadId": up["uploadId"], "parts": parts})
 
 
-CTYPE = {".spz": "application/octet-stream", ".json": "application/json", ".png": "image/png"}
+CTYPE = {".spz": "application/octet-stream", ".ply": "application/octet-stream", ".json": "application/json", ".png": "image/png"}
 
 
 def overall(stage: str | None, frac: float) -> float:

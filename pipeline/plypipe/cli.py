@@ -39,6 +39,9 @@ def _stage_fn(name: str):
     if name == "label":
         from plypipe.stages import label
         return label.run_stage
+    if name == "mesh":
+        from plypipe.stages import mesh
+        return mesh.run_stage
     if name == "train":
         from plypipe.stages import train
         return train.run_stage

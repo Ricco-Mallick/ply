@@ -47,7 +47,7 @@ image = (
                   " && python -m uv pip install --system -r /tmp/reqs.txt 'git+https://github.com/nerfstudio-project/nerfview@4538024fe0d15fd1a0e4d760f3695fc44ca72787'"
                   " jaxtyping nvtx 'rich>=12' ninja 'torch==2.11.0' 'torchvision==0.26.0' --index-strategy unsafe-best-match"
                   " --extra-index-url https://download.pytorch.org/whl/cu128")
-    .run_commands("python -m uv pip install --system pycolmap-cuda12==4.2.1 'opencv-python-headless>=4.9' 'transformers==5.19.0' 'accelerate>=1.1.0' pillow")
+    .run_commands("python -m uv pip install --system pycolmap-cuda12==4.2.1 'opencv-python-headless>=4.9' 'transformers==5.19.0' 'accelerate>=1.1.0' pillow trimesh")
     .run_commands("python -c \"import torch, gsplat, pycolmap, ppisp, fused_ssim, transformers; print('versions', torch.__version__, gsplat.__version__, pycolmap.__version__, transformers.__version__)\"")
     # SAM 3 weights baked in (3.4 GB, fetched once at build with the HF token): no download on every wake-up, and no
     # Modal Volume (Volumes bill storage even under a $0 spend limit)

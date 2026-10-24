@@ -10,4 +10,4 @@ Output frame ("scene frame"), shared with the web viewer:
 
 __version__ = "0.1.0"
 
-STAGES = ("frames", "sfm", "align", "occupancy", "label", "train", "export")
+STAGES = ("frames", "sfm", "align", "occupancy", "label", "train", "export", "mesh")
