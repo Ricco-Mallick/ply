@@ -54,7 +54,7 @@ image = (
     .env({"HF_HOME": "/opt/hf"})
     .run_commands("python -c \"from huggingface_hub import snapshot_download; snapshot_download('facebook/sam3', allow_patterns=['*.json', '*.txt', 'model.safetensors'])\"",
                   secrets=[modal.Secret.from_name("ply-hf")])
-    .env({"PLY_IMAGE_REV": "10"})  # bump to force the code layer to rebuild when Modal reuses a cached image
+    .env({"PLY_IMAGE_REV": "11"})  # bump to force the code layer to rebuild when Modal reuses a cached image
     .add_local_dir(PIPE / "plypipe", "/root/pipeline/plypipe")
 )
 app = modal.App("ply", image=image)
