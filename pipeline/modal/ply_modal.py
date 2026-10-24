@@ -62,7 +62,10 @@ secret = modal.Secret.from_name("ply-worker")
 hf = modal.Secret.from_name("ply-hf")  # HF_TOKEN: gated facebook/sam3 weights for the label stage
 
 
-TIMEOUT_S = int(4.5 * 3600)  # longer than the longest job (all stage limits, ~3.7 h) so a started job always finishes
+# longer than the longest possible job: the sum of every stage limit (JOB_MAX_MIN, 290 min once the dense mesh
+# stage was added). The worker refuses any job it cannot finish inside the remaining deadline, so a timeout
+# shorter than that sum makes it refuse everything.
+TIMEOUT_S = int(6.0 * 3600)
 
 
 @app.function(gpu=GPU, cpu=8, memory=32768, timeout=TIMEOUT_S, max_containers=1, secrets=[secret, hf])  # 8 cores + 32 GB: 2560 px frames and ~800 of them  # L4 + 4 cores + 16 GB = ~$1.12/h
