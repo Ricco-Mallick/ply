@@ -5,6 +5,7 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { GLTFExporter } from 'three/examples/jsm/exporters/GLTFExporter.js';
+import { PLYLoader } from 'three/examples/jsm/loaders/PLYLoader.js';
 import { buildObjects, buildRoom, drawable } from './build';
 import type { Obj, Shell } from './types';
 
@@ -60,6 +61,8 @@ let objectsRoot: THREE.Group | null = null;
 let shell: Shell | null = null;
 let view: View = (params.get('view') as View) ?? 'walk';
 let wire = false;
+let meshLayer: THREE.Mesh | null = null;
+let meshLoading = false;
 let selected: THREE.Object3D | null = null;
 let hidden = new Set<string>();
 let deleted = new Set<string>();
@@ -252,6 +255,33 @@ el('#export').addEventListener('click', async () => {
   a.href = url; a.download = `${(shell as unknown as { name?: string })?.name ?? 'ply-model'}.glb`; a.click();
   URL.revokeObjectURL(url);
 });
+
+async function toggleMesh() {
+  const btn = document.querySelector<HTMLButtonElement>('[data-mesh]');
+  if (meshLayer) { meshLayer.visible = !meshLayer.visible; btn?.classList.toggle('on', meshLayer.visible); return; }
+  if (meshLoading) return;
+  meshLoading = true;
+  show('loading dense mesh…');
+  const url = new URL('mesh.ply', sceneBase).href;
+  try {
+    const geo = await new PLYLoader().loadAsync(url);
+    geo.computeVertexNormals();
+    const material = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.85, metalness: 0.02, side: THREE.DoubleSide });
+    meshLayer = new THREE.Mesh(geo, material);
+    meshLayer.name = 'dense-mesh';
+    meshLayer.position.y = 0;
+    meshLayer.castShadow = meshLayer.receiveShadow = true;
+    scene.add(meshLayer);
+    // show the surface on its own: the proxies would z-fight with it
+    if (room) room.visible = false;
+    if (objectsRoot) objectsRoot.visible = false;
+    btn?.classList.add('on');
+    show(`dense mesh · ${(geo.attributes.position.count / 1e6).toFixed(2)}M vertices`);
+  } catch (e) {
+    show('no dense mesh for this job yet (the stage runs after export)');
+  } finally { meshLoading = false; }
+}
+document.querySelector<HTMLButtonElement>('[data-mesh]')?.addEventListener('click', toggleMesh);
 
 // ---------------------------------------------------------------- outliner: every object on its own
 function buildOutliner(s: Shell) {
