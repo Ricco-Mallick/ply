@@ -95,6 +95,10 @@ export function buildRoom(THREE, shell) {
   ceiling.name = 'ceiling';
   const windows = buildWindows(THREE);
   windows.name = 'windows';
+  const glass = new THREE.MeshBasicMaterial({ color: 0xcfe4f2 });   // daylight behind the grille, not a black hole
+  windows.traverse((o) => {
+    if (o.isMesh && /glas|pane/i.test(o.name + (o.material && o.material.name || ''))) { o.material = glass; }
+  });
   g.add(walls, ceiling, windows);
   return g;
 }
@@ -116,6 +120,21 @@ export function buildObjects(THREE, shell) {
   // the room is a chair-desk room: every "table"/"chair" detection is one chair with its writing tablet
   const seats = objects.filter((o) => ['chair', 'table', 'desk'].includes((o.kind || '').toLowerCase()));
   const tables = objects.filter((o) => ['table', 'desk'].includes((o.kind || '').toLowerCase()));
+  const desks = objects.filter((o) => ['table', 'desk'].includes((o.kind || '').toLowerCase()));
+  const rowKey = (o) => Math.round(o.center[2] / 0.85) * 0.85;
+  const rows = new Map();
+  for (const o of desks) {
+    const k = rowKey(o);
+    (rows.get(k) || rows.set(k, []).get(k)).push(o);
+  }
+  for (const [z, row] of rows) {
+    row.sort((a, b) => a.center[0] - b.center[0]);
+    const n = row.length;
+    const span = Math.min(8.4, Math.max(1.2, n * 1.25));
+    row.forEach((o, i) => {
+      o.center = [n === 1 ? o.center[0] : -span / 2 + (span * i) / (n - 1), o.center[1], z];
+    });
+  }
   for (const o of objects) {
     if (!['table', 'desk'].includes((o.kind || '').toLowerCase())) continue;
     const w = Math.min(2.4, Math.max(0.9, o.half[0] * 2)), d = Math.min(0.6, Math.max(0.42, o.half[2] * 2));
