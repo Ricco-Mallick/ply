@@ -229,9 +229,11 @@ export function buildObjects(THREE, shell) {
   for (const o of objects) {
     if (handled.has(o.id)) continue;
     const w = Math.max(0.15, Math.min(2.4, o.half[0] * 2)), h = Math.max(0.15, Math.min(2.2, o.half[1] * 2)), d = Math.max(0.15, Math.min(2.4, o.half[2] * 2));
-    const m = add(new THREE.Group(), new THREE.Mesh(new THREE.BoxGeometry(w, h, d), M.fabric));
-    m.children[0].position.y = h / 2;
-    place(m, o);
+    const g = new THREE.Group();
+    const body = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), M.fabric);
+    body.position.y = h / 2;
+    add(g, body);
+    place(g, o);
   }
   return root;
 }
