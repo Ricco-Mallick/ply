@@ -125,6 +125,10 @@ function setView(next: View) {
   grid.visible = next !== 'walk';
   if (!room) return;
   const ghost = next === "doll";
+  // the ceiling (and anything else named so) lifts off in the dollhouse view, or you are looking at a lid
+  room.traverse((o) => {
+    if (/^ceiling/i.test(o.name)) o.visible = !ghost;
+  });
   room.traverse((o) => {
     if (!(o instanceof THREE.Mesh)) return;
     const m = o.material as THREE.MeshStandardMaterial;
