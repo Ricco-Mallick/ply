@@ -117,7 +117,7 @@ def main(argv: list[str] | None = None) -> int:
 
     order = list(STAGES)
     lo = order.index(a.only or a.from_stage or "frames")
-    hi = order.index(a.only or a.until or "export")
+    hi = order.index(a.only or a.until or order[-1])  # default: run to the last stage (mesh comes after export)
     if a.force:
         clear_from(ctx, order[order.index(a.force):])
     (out / "job.json").write_text(json.dumps({"input": str(a.input), "opts": opts, "version": __version__}, indent=2, default=str))
