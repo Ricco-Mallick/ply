@@ -8,6 +8,8 @@ import { buildWalls } from './parts/walls.js';
 import { buildCeiling } from './parts/ceiling.js';
 import { buildFurniture } from './parts/furniture.js';
 import { chairDesk, benchTable } from './parts/chairdesk.js';
+import { buildWindows } from './parts/windows.js';
+import { buildLectern } from './parts/lectern.js';
 
 export const ENVELOPE = {
   floorY: 0,
@@ -91,7 +93,9 @@ export function buildRoom(THREE, shell) {
   walls.name = 'walls';
   const ceiling = buildCeiling(THREE, s);
   ceiling.name = 'ceiling';
-  g.add(walls, ceiling);
+  const windows = buildWindows(THREE);
+  windows.name = 'windows';
+  g.add(walls, ceiling, windows);
   return g;
 }
 
@@ -101,7 +105,9 @@ export function buildObjects(THREE, shell) {
   g.name = 'objects';
   const fixed = buildFurniture(THREE, s);
   fixed.name = 'furniture';
-  g.add(fixed);
+  const lectern = buildLectern(THREE);
+  lectern.name = 'lectern';
+  g.add(fixed, lectern);
 
   const objects = (s.objects || []).filter((o) => !['door', 'window'].includes((o.kind || '').toLowerCase()));
   const yaw0 = Math.atan2(ENVELOPE.walls[0].b[1] - ENVELOPE.walls[0].a[1], ENVELOPE.walls[0].b[0] - ENVELOPE.walls[0].a[0]);
