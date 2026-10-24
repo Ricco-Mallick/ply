@@ -1,3 +1,4 @@
+// Copyright (c) 2026 Ricco Marcelino. All rights reserved. Proprietary and confidential — see LICENSE.
 /* Landing film: three.js scroll-driven story (ported from the design artifact). */
 import '../shared/tokens.css';
 import './landing.css';

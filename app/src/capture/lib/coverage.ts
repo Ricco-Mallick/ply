@@ -1,3 +1,4 @@
+// Copyright (c) 2026 Ricco Marcelino. All rights reserved. Proprietary and confidential — see LICENSE.
 /* Live coverage from depth: every few frames the depth map (160x90 on the S24 FE) is sampled and unprojected into 8 cm
    cells. A cell is only drawn once depth has hit it twice (single noisy hits never show), samples on depth edges are
    skipped (they produce "flying" points between objects), and only the first 4 m count.

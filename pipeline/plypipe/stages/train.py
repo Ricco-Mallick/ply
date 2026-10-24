@@ -1,3 +1,4 @@
+# Copyright (c) 2026 Ricco Marcelino. All rights reserved. Proprietary and confidential — see LICENSE.
 """train: aligned data_dir -> 3D Gaussian splat PLY (gsplat, MCMC strategy, PPISP appearance).
 
 Needs the GPU environment (torch 2.11+cu128, gsplat built from the pinned SHA, the example

@@ -1,3 +1,4 @@
+# Copyright (c) 2026 Ricco Marcelino. All rights reserved. Proprietary and confidential — see LICENSE.
 """plypipe CLI.
 
     python -m plypipe run <video|frames_dir> --out work/<scene> [options]

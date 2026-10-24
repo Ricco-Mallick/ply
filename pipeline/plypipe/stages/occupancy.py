@@ -1,3 +1,4 @@
+# Copyright (c) 2026 Ricco Marcelino. All rights reserved. Proprietary and confidential — see LICENSE.
 """occupancy: 2D walkable grid for WASD collision in the R1 viewer (R2 replaces it with a navmesh).
 
 From the aligned sparse points (scene frame, metres):

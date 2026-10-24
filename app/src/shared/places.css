@@ -1,3 +1,4 @@
+/* Copyright (c) 2026 Ricco Marcelino. All rights reserved. Proprietary and confidential — see LICENSE. */
 /* Places, search and routes: shared by the walkthrough and the design lab (pins projected over the splat, the
    command palette, the route card). */
 kbd { font: 700 10px/1 var(--font-mono); padding: 3px 6px; border-radius: 5px; border: 1px solid var(--line-2); color: var(--muted); background: rgba(255, 255, 255, .05); }

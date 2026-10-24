@@ -1,3 +1,4 @@
+// Copyright (c) 2026 Ricco Marcelino. All rights reserved. Proprietary and confidential — see LICENSE.
 /* Places, search and routes in the walkthrough (the design lab's picks: glass-tag pins, the command palette, the floor
    ribbon route). Places come from places.json next to the scene: hand-pinned for the demo, written by the labelling
    stage for pipeline twins. No places.json: nothing shows. */

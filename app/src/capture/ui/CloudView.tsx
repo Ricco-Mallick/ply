@@ -1,3 +1,4 @@
+// Copyright (c) 2026 Ricco Marcelino. All rights reserved. Proprietary and confidential — see LICENSE.
 /* Spin-around view of an AR scan's coverage cloud (green / orange / red dots) with the walked path and keyframe
    cameras. Used right after a scan and in Review. Drag to orbit, pinch or scroll to zoom. */
 import { useEffect, useRef } from 'react';

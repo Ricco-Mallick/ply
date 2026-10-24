@@ -1,3 +1,4 @@
+# Copyright (c) 2026 Ricco Marcelino. All rights reserved. Proprietary and confidential — see LICENSE.
 """export: scene.ply -> scene.spz (full) + scene_lite.spz (SH0 only, for phones).
 
 Uses @playcanvas/splat-transform (pinned) through npx. The PLY is already in the scene frame

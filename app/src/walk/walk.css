@@ -1,3 +1,4 @@
+/* Copyright (c) 2026 Ricco Marcelino. All rights reserved. Proprietary and confidential — see LICENSE. */
 /* Walkthrough HUD: full-bleed splat, glass chrome at the edges, a gate that holds the visitor until the scene streams in. */
 body { overflow: hidden; overscroll-behavior: none; }
 .stage { position: fixed; inset: 0; width: 100%; height: 100%; display: block; touch-action: none; }

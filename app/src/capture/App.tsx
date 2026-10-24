@@ -1,3 +1,4 @@
+// Copyright (c) 2026 Ricco Marcelino. All rights reserved. Proprietary and confidential — see LICENSE.
 /* The capture web app: start → permissions → (first time) tutorial → live → review → process.
    Uploaded videos skip the camera and go through the same analysis and review. */
 import { useEffect, useState } from 'react';

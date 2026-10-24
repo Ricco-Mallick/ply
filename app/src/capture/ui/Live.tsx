@@ -1,3 +1,4 @@
+// Copyright (c) 2026 Ricco Marcelino. All rights reserved. Proprietary and confidential — see LICENSE.
 import { useEffect, useRef, useState, useSyncExternalStore } from 'react';
 import { Glass } from '../../shared/Glass';
 import { controls, listLenses, lockCamera, meterAt, openCamera, saveLens, setEv, setZoom, unlock, type CamControls, type CamInfo, type Lens, type LockReport } from '../lib/camera';

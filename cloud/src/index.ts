@@ -1,3 +1,4 @@
+// Copyright (c) 2026 Ricco Marcelino. All rights reserved. Proprietary and confidential — see LICENSE.
 /* Ply API: one Cloudflare Worker for uploads, the job queue (D1) and serving results.
  * Storage is any S3-compatible bucket (Backblaze B2 by default: free 10 GB, no card). Bytes never pass through the
  * Worker on the way in: it signs short-lived URLs and the phone / GPU worker PUT parts straight to the bucket.

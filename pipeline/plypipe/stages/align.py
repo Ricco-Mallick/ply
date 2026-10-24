@@ -1,3 +1,4 @@
+# Copyright (c) 2026 Ricco Marcelino. All rights reserved. Proprietary and confidential — see LICENSE.
 """align: put the reconstruction in the scene frame the viewer expects.
 
     right-handed, +Y up, floor plane at y = 0, metres, walls along X / Z,

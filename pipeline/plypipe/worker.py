@@ -1,3 +1,4 @@
+# Copyright (c) 2026 Ricco Marcelino. All rights reserved. Proprietary and confidential — see LICENSE.
 """GPU worker: pull jobs from the Ply API (cloud/src/index.ts), run the pipeline, publish the results.
 
     PLY_API=https://ply-api.<you>.workers.dev PLY_WORKER_TOKEN=... python -m plypipe.worker

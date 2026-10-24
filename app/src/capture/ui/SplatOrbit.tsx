@@ -1,3 +1,4 @@
+// Copyright (c) 2026 Ricco Marcelino. All rights reserved. Proprietary and confidential — see LICENSE.
 /* A Gaussian splat on a turntable (Spark): the live view's training snapshots and the finished twin. Drag to orbit,
    scroll or pinch to zoom; it turns slowly until touched. */
 import { useEffect, useRef, useState } from 'react';

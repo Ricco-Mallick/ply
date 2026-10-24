@@ -1,3 +1,4 @@
+// Copyright (c) 2026 Ricco Marcelino. All rights reserved. Proprietary and confidential — see LICENSE.
 /* Liquid glass: a port of the portfolio's glass-rect.js (refraction) + glass-touch.js (light and press springs).
    Refraction: rounded-box SDF lens, IOR 1.5, fresnel^4, R/B chromatic split, golden-angle frost, adaptive dimming where
    the scene behind is bright, and it materialises by bending harder while it appears. Every panel samples one shared

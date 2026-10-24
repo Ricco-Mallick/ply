@@ -1,3 +1,4 @@
+# Copyright (c) 2026 Ricco Marcelino. All rights reserved. Proprietary and confidential — see LICENSE.
 """label: find objects with SAM 3 and place them in 3D -> places.json (the walkthrough's pins, search and AI tint).
 
 1. SAM 3 (facebook/sam3 through transformers, text prompts) runs on up to --label-frames undistorted frames, each frame

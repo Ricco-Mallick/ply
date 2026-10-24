@@ -1,3 +1,4 @@
+// Copyright (c) 2026 Ricco Marcelino. All rights reserved. Proprietary and confidential — see LICENSE.
 /* Walkthrough engine: three.js + Spark splat renderer, a walk/fly controller with WASD, mouse look, touch joystick,
    and collision against the pipeline's occupancy grid. The React HUD reads `state` and calls the methods. */
 import * as THREE from 'three';

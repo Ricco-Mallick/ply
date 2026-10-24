@@ -1,3 +1,4 @@
+// Copyright (c) 2026 Ricco Marcelino. All rights reserved. Proprietary and confidential — see LICENSE.
 /* Capture visualisations: the walked path coloured by quality, the ring of directions filmed, and the quality timeline. */
 import { useEffect, useRef } from 'react';
 import type { Quality } from '../lib/analyzer';

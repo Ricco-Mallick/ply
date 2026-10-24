@@ -1,3 +1,4 @@
+// Copyright (c) 2026 Ricco Marcelino. All rights reserved. Proprietary and confidential — see LICENSE.
 import { useEffect, useRef, useState } from 'react';
 import QRCode from 'qrcode';
 import { Glass } from '../../shared/Glass';

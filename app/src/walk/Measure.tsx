@@ -1,3 +1,4 @@
+// Copyright (c) 2026 Ricco Marcelino. All rights reserved. Proprietary and confidential — see LICENSE.
 /* The measured layer: walls, floor outline and object boxes recovered from the solve (shell.json next to the scene).
    The splats show what the room looks like; this shows what it measures — the layer an editor selects from, and the
    structure AR occlusion and pathfinding want. Toggle it from the HUD; W A S D stays live underneath. */

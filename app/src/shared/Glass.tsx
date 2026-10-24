@@ -1,3 +1,4 @@
+// Copyright (c) 2026 Ricco Marcelino. All rights reserved. Proprietary and confidential — see LICENSE.
 import { useEffect, useRef, type ReactNode } from 'react';
 import { attachGlass, type GlassOptions } from './glass';
 

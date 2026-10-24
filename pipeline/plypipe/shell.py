@@ -1,3 +1,4 @@
+# Copyright (c) 2026 Ricco Marcelino. All rights reserved. Proprietary and confidential — see LICENSE.
 """Measured shell: wall segments, openings and object boxes, the editable layer under the splats.
 
 A Gaussian twin is a photograph you can walk through; it cannot tell you how wide the room is, where the door is, or

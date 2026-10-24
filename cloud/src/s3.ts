@@ -1,3 +1,4 @@
+// Copyright (c) 2026 Ricco Marcelino. All rights reserved. Proprietary and confidential — see LICENSE.
 /* Minimal S3 client for Workers (AWS Signature V4 on WebCrypto): enough for Backblaze B2 / R2 / any S3-compatible store.
    - presign(): query-string signed URLs, so the phone and the GPU worker move bytes directly to and from storage
    - signedFetch(): header-signed calls for the few control requests (create / complete multipart, small puts, reads) */

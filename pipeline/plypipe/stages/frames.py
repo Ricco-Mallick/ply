@@ -1,3 +1,4 @@
+# Copyright (c) 2026 Ricco Marcelino. All rights reserved. Proprietary and confidential — see LICENSE.
 """frames: video (or a folder of photos) -> sharp, evenly spaced, resized JPEGs in <out>/frames.
 
 Video path: ffmpeg oversamples at `fps * oversample` (auto-rotated, long side capped), then

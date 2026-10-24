@@ -1,3 +1,4 @@
+// Copyright (c) 2026 Ricco Marcelino. All rights reserved. Proprietary and confidential — see LICENSE.
 /* One-minute AR capability check for the live-coverage capture: does this phone's WebXR give depth (for the live
    mesh), the camera image (for keyframes) and at what size, and how steady is tracking? Prints a report to copy. */
 import '../shared/tokens.css';

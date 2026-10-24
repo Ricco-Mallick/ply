@@ -1,3 +1,4 @@
+// Copyright (c) 2026 Ricco Marcelino. All rights reserved. Proprietary and confidential — see LICENSE.
 /* AR capture (Android Chrome WebXR): Polycam / RealityScan-style live coverage.
    - ARCore tracks the phone (metres, gravity-aligned, floor at y = 0 with 'local-floor').
    - Coverage from depth (coverage.ts): 8 cm cells on the surfaces depth hits, drawn as dots once confirmed, coloured by

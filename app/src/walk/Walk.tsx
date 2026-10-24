@@ -1,3 +1,4 @@
+// Copyright (c) 2026 Ricco Marcelino. All rights reserved. Proprietary and confidential — see LICENSE.
 import { useEffect, useRef, useState, useSyncExternalStore } from 'react';
 import { WalkEngine, type Mode } from './engine';
 import { loadManifest, type SceneManifest } from './scene';

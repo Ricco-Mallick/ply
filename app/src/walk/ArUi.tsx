@@ -1,3 +1,4 @@
+// Copyright (c) 2026 Ricco Marcelino. All rights reserved. Proprietary and confidential — see LICENSE.
 /* AR controls for the walkthrough: an "AR" menu (Android Chrome only) and the overlay shown over the camera during an
    AR session: two-tap alignment, destination picker and turn-by-turn for navigation; place / turn for the dollhouse. */
 import { useEffect, useRef, useState, useSyncExternalStore } from 'react';

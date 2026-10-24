@@ -1,3 +1,4 @@
+// Copyright (c) 2026 Ricco Marcelino. All rights reserved. Proprietary and confidential — see LICENSE.
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { marked } from 'marked';
 

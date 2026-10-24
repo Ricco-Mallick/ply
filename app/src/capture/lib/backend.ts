@@ -1,3 +1,4 @@
+// Copyright (c) 2026 Ricco Marcelino. All rights reserved. Proprietary and confidential — see LICENSE.
 /* Getting a capture to the processing pipeline (cloud/src/index.ts is the other side).
    With VITE_API set, clips go straight to the bucket as resumable multipart uploads (the Ply API signs each part) and a job is queued for
    the GPU worker. The team key gates writes; it is entered once and kept on the device (or arrives as ?key=).

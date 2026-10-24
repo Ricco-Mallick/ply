@@ -1,3 +1,4 @@
+# Copyright (c) 2026 Ricco Marcelino. All rights reserved. Proprietary and confidential — see LICENSE.
 """sfm: frames -> camera poses + sparse points (COLMAP 4.2.1 via pycolmap), undistorted to PINHOLE.
 
 Features: ALIKED (N16ROT) + LightGlue by default, falling back to SIFT if the ONNX models cannot

@@ -1,3 +1,4 @@
+// Copyright (c) 2026 Ricco Marcelino. All rights reserved. Proprietary and confidential — see LICENSE.
 /* AR scan screen: an intro, then the phone's camera with the live coverage dots (drawn by WebXR) and this HUD as the
    DOM overlay, then a spin-around preview of what was covered before keeping the scan. */
 import { useEffect, useRef, useState, useSyncExternalStore } from 'react';

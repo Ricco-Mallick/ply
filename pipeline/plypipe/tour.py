@@ -1,3 +1,4 @@
+# Copyright (c) 2026 Ricco Marcelino. All rights reserved. Proprietary and confidential — see LICENSE.
 """Cinematic tour: camera keyframes for the viewer's "Play tour", generated from the room and the capture path.
 
 Shots (scene frame: +y up, floor y = 0, metres):

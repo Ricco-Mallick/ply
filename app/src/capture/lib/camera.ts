@@ -1,3 +1,4 @@
+// Copyright (c) 2026 Ricco Marcelino. All rights reserved. Proprietary and confidential — see LICENSE.
 /* Camera: which rear lens, and how exposure behaves.
    Chrome on Android lists every rear sensor as its own device ("camera2 0, facing back" is the main one on Samsung and
    most others) and exposes exposure / focus / white balance as MediaTrack constraints (Image Capture spec). Safari and

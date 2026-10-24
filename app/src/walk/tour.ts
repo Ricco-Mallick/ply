@@ -1,3 +1,4 @@
+// Copyright (c) 2026 Ricco Marcelino. All rights reserved. Proprietary and confidential — see LICENSE.
 /* Cinematic tour: camera keyframes (from the pipeline's scene.json "tour", or made here from the walkable floor when a
    scene has none) played as one smooth move. Positions and look-at targets follow centripetal Catmull-Rom splines,
    timed by each keyframe's duration with ease-in-out per shot. Any key, click or touch hands control back. */

@@ -1,3 +1,4 @@
+// Copyright (c) 2026 Ricco Marcelino. All rights reserved. Proprietary and confidential — see LICENSE.
 /* Live view of a processing job (worker side: pipeline/plypipe/live.py). Polls live-index.json and shows what each
    stage has made so far, interactively: the kept frames, the camera-solving point cloud with the camera path, and the
    twin itself at each training snapshot, plus the loss curve. When the job is done it shows the finished twin. */

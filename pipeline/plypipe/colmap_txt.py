@@ -1,3 +1,4 @@
+# Copyright (c) 2026 Ricco Marcelino. All rights reserved. Proprietary and confidential — see LICENSE.
 """Read / transform / write COLMAP text models (cameras.txt, images.txt, points3D.txt).
 
 Only numbers that change under a similarity transform are parsed; everything else (camera

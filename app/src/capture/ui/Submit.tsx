@@ -1,3 +1,4 @@
+// Copyright (c) 2026 Ricco Marcelino. All rights reserved. Proprietary and confidential — see LICENSE.
 import { useRef, useState } from 'react';
 import { Glass } from '../../shared/Glass';
 import { DEFAULT_SETTINGS, PRESETS, backendReady, pipelineArgs, saveToDevice, setTeamKey, teamKey, upload, type Settings } from '../lib/backend';

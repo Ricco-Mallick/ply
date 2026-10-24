@@ -1,3 +1,4 @@
+// Copyright (c) 2026 Ricco Marcelino. All rights reserved. Proprietary and confidential — see LICENSE.
 /* Frame quality from the video itself, on a small grey copy (~160 px wide) several times a second:
    - sharpness: variance of the Laplacian (what the pipeline's frame picker uses), judged against this take's own median
      so a dim room isn't marked blurry everywhere;

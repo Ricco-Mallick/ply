@@ -1,3 +1,4 @@
+# Copyright (c) 2026 Ricco Marcelino. All rights reserved. Proprietary and confidential — see LICENSE.
 """Shared plumbing: run context, stage markers (resumability), scene.json merging, subprocesses."""
 
 from __future__ import annotations

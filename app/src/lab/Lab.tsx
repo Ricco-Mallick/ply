@@ -1,3 +1,4 @@
+// Copyright (c) 2026 Ricco Marcelino. All rights reserved. Proprietary and confidential — see LICENSE.
 /* Design lab: the next walkthrough features on the real twin, each with switchable designs, so they can be picked
    before the real build. Places + search, routes, AI labels, measure / share / screenshot, and AR mock-ups
    (navigation, capture guide, dollhouse) shown inside a phone frame. */

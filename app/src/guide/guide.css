@@ -1,3 +1,4 @@
+/* Copyright (c) 2026 Ricco Marcelino. All rights reserved. Proprietary and confidential — see LICENSE. */
 /* Capture guide: a long-read page. Serif headings, Manrope body, a sticky contents rail with the pre-flight progress. */
 body { background: radial-gradient(1200px 600px at 80% -10%, rgba(255, 107, 0, .10), transparent 60%), var(--bg); }
 .pill { border-radius: 999px; }

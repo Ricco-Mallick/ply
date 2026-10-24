@@ -1,3 +1,4 @@
+// Copyright (c) 2026 Ricco Marcelino. All rights reserved. Proprietary and confidential — see LICENSE.
 /* The command-palette search (the lab's pick): shared by the design lab and the walkthrough. */
 import { useState } from 'react';
 import { Glass } from '../shared/Glass';

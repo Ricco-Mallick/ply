@@ -1,3 +1,4 @@
+// Copyright (c) 2026 Ricco Marcelino. All rights reserved. Proprietary and confidential — see LICENSE.
 /* Coverage check for any capture (videos or AR scans): a quick camera-solving run on the GPU worker, then the sparse
    point cloud in 3D (coloured by how many frames saw each point) and, per clip, the stretches where solving lost track,
    each with "Replace this part". Clips stay uploaded, so processing afterwards starts straight away. */

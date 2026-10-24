@@ -1,3 +1,4 @@
+// Copyright (c) 2026 Ricco Marcelino. All rights reserved. Proprietary and confidential — see LICENSE.
 /* Real AR on Android Chrome (WebXR immersive-ar, 'local-floor', hit-test, DOM overlay).
 
    Navigation: the phone and the twin are lined up with two taps on the floor at two known places (both spaces are in

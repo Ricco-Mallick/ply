@@ -1,3 +1,4 @@
+// Copyright (c) 2026 Ricco Marcelino. All rights reserved. Proprietary and confidential — see LICENSE.
 /* Where takes live on the phone: Origin Private File System (survives reloads, not limited by RAM), chunks streamed in
    as MediaRecorder produces them. Browsers without OPFS writable streams keep the chunks in memory instead.
    A small index in localStorage lists the captures on this device. */

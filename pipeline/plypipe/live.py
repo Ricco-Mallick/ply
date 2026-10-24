@@ -1,3 +1,4 @@
+# Copyright (c) 2026 Ricco Marcelino. All rights reserved. Proprietary and confidential — see LICENSE.
 """Live view of a running job: what each stage has produced so far, published next to the results for the status page.
 
     live-index.json        what exists, with timestamps (the status page polls this; served uncached)

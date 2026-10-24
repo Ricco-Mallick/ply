@@ -1,3 +1,4 @@
+# Copyright (c) 2026 Ricco Marcelino. All rights reserved. Proprietary and confidential — see LICENSE.
 """Run gsplat's examples/simple_trainer.py (pinned SHA) with a Ply preset, in-process.
 
 Invoked by the `train` stage as a subprocess inside the GPU environment:

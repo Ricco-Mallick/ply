@@ -1,3 +1,4 @@
+// Copyright (c) 2026 Ricco Marcelino. All rights reserved. Proprietary and confidential — see LICENSE.
 import { useEffect, useState } from 'react';
 import { Glass } from '../../shared/Glass';
 import { getHealth, getJob, sceneUrl, type Health, type Job } from '../lib/backend';

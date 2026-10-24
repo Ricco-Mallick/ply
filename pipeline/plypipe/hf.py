@@ -1,3 +1,4 @@
+# Copyright (c) 2026 Ricco Marcelino. All rights reserved. Proprietary and confidential — see LICENSE.
 """Results storage on the Hugging Face Hub (a private dataset repo) instead of the bucket.
 
 Why: the bucket's free tier counts every download against 1 GB a day and caps storage at 10 GB, while a private

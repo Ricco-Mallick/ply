@@ -1,3 +1,4 @@
+# Copyright (c) 2026 Ricco Marcelino. All rights reserved. Proprietary and confidential — see LICENSE.
 """Coverage preview: what camera solving made of a capture, small enough to send to a phone.
 
     preview.bin   uint32 n, then n x float32 xyz, n x uint8 rgb, n x uint8 views (images that saw the point, capped 255)

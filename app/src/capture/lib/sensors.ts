@@ -1,3 +1,4 @@
+// Copyright (c) 2026 Ricco Marcelino. All rights reserved. Proprietary and confidential — see LICENSE.
 /* Motion sensors: turn rate (blur risk), tilt (framing), heading and steps (a dead-reckoned path for the coverage map).
    iOS asks for permission from a tap; Android grants it silently on https. Absent sensors (desktop) leave `available` false
    and the guidance falls back to what the video alone can tell. */

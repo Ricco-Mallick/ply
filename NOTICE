@@ -1,0 +1,59 @@
+Third-party components
+======================
+
+Ply itself is proprietary (see LICENSE). It stands on the following open-source work, which
+stays under its own licence. Nothing here narrows those licences, and nothing in the project's
+proprietary terms applies to these components.
+
+Where a licence requires attribution, the required notice is reproduced or preserved here and
+in the vendored directories noted below.
+
+Build and runtime
+-----------------
+- three.js 0.186 — MIT — https://github.com/mrdoob/three.js
+- @sparkjsdev/spark 2.3.1 (Gaussian splat renderer) — MIT — https://github.com/sparkjsdev/spark
+- React 19 / React DOM — MIT — https://github.com/facebook/react
+- Vite, TypeScript, Tailwind CSS — MIT / Apache-2.0
+- marked — MIT; qrcode — MIT
+
+Editor
+------
+- SuperSplat v3.5.2 — MIT — Copyright (c) 2011-2026 PlayCanvas Ltd.
+  Built unmodified from tag v3.5.2 and served at /editor/.
+  Licence text: app/public/editor/LICENSE.supersplat.txt
+
+Figures
+-------
+- Anatomy isometric kit (wheresryan22/anatomy) — MIT — Copyright (c) 2026 Ryan
+  Vendored at app/figures/kit/. Licence text: app/figures/kit/LICENSE.anatomy.txt
+  The figure scripts in app/figures/ (build-mower.mjs) are Ply's own work.
+
+Pipeline
+--------
+- gsplat — Apache-2.0 — https://github.com/nerfstudio-project/gsplat (pinned commit 512d366)
+- COLMAP — BSD-3-Clause — https://github.com/colmap/colmap
+- pycolmap / pycolmap-cuda12 — BSD-3-Clause
+- PyTorch / torchvision — BSD-3-Clause
+- numpy — BSD-3-Clause; OpenCV (opencv-python-headless) — Apache-2.0
+- Hugging Face transformers — Apache-2.0
+- @playcanvas/splat-transform 3.10.1 — MIT — used to write SPZ for the viewer
+
+Model weights
+-------------
+- SAM 3 / SAM 3.1 (facebook/sam3, facebook/sam3.1) — SAM License, last updated 2025-11-19,
+  Copyright Meta Platforms. Downloaded at image build time and used only for the labelling
+  stage; the weights are not redistributed by this repository.
+  Terms: https://github.com/facebookresearch/sam3/blob/main/LICENSE
+  Note for commercial use: the SAM License permits commercial use, requires the licence to
+  accompany any redistribution of the materials, and prohibits certain end uses (including
+  military and ITAR-restricted uses). Redistributing the weights or a container image that
+  contains them means shipping that licence too.
+
+Services
+--------
+Cloudflare Workers/D1, Modal, Backblaze B2, Hugging Face Hub and Kaggle are used as services
+under their own terms; no part of their code is included here.
+
+If you add a dependency, add its licence to this file in the same pull request. Code with a
+licence that conflicts with a proprietary product (for example a strong copyleft licence such
+as AGPL, or a non-commercial licence) must not be added without the Owner's written approval.

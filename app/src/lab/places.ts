@@ -1,3 +1,4 @@
+// Copyright (c) 2026 Ricco Marcelino. All rights reserved. Proprietary and confidential — see LICENSE.
 /* Places in a twin, and routes between them on the occupancy grid.
    The lab ships hand-placed places for two scenes (found by hit-testing the splat from probe views, see
    app/scripts/probe-pick.mjs): the bundled demo bedroom and the first real capture (job 0ffc07fb).

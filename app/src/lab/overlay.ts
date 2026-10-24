@@ -1,3 +1,4 @@
+// Copyright (c) 2026 Ricco Marcelino. All rights reserved. Proprietary and confidential — see LICENSE.
 /* Everything the lab draws on top of the splat: place pins (HTML, projected every frame), routes (three.js, three
    styles), AI detections (wire boxes or a tint inside the splat via Spark's SDF edits), the tape measure, and the AR
    mock-ups (floor arrows, path line, coverage paint, dollhouse cut). One instance per engine; Lab.tsx sets options. */

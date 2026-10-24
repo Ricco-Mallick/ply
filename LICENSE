@@ -1,0 +1,58 @@
+Copyright (c) 2026 Ricco Marcelino. All rights reserved.
+
+PLY — PROPRIETARY AND CONFIDENTIAL
+
+This repository and everything in it — source code, shaders, figures, diagrams, scene
+format definitions, pipeline stages, model weights we trained, documentation, and all
+other material authored for this project (together, the "Software") — is the exclusive
+property of Ricco Marcelino (the "Owner").
+
+NO LICENCE IS GRANTED.
+
+No permission is given to use, copy, reproduce, modify, adapt, translate, merge,
+publish, distribute, sublicense, sell, rent, lease, host, serve, deploy, or create
+derivative works from the Software, in whole or in part, for any purpose, commercial
+or otherwise, except:
+
+  (a) under a separate written agreement signed by the Owner; or
+  (b) for the third-party components listed in NOTICE, which remain under their own
+      licences (MIT, Apache-2.0, BSD and similar) and whose terms govern those files.
+
+Without limiting the above, you may not:
+
+  1. use the Software, or any derivative of it, to provide a product or service to
+     third parties, whether paid or free, without a written agreement with the Owner;
+  2. copy the Software into another project, or reuse its code, scene format, pipeline
+     design or trained weights, outside this repository;
+  3. distribute the Software or any part of it to any third party, including as part
+     of a fork, archive, container image, package, or hosted endpoint;
+  4. use the Software or its outputs to train, fine-tune or evaluate other models;
+  5. remove or alter this notice, the copyright line, or any attribution in the files.
+
+CONTRIBUTIONS
+
+Any contribution submitted to this repository is governed by CLA.md. By opening a pull
+request, you agree that your contribution becomes the property of the Owner, and that
+you have the right to grant it.
+
+THIRD-PARTY MATERIAL
+
+This project uses third-party components under their own licences; see NOTICE. Those
+licences apply to those components and are unaffected by this file. Where a third-party
+licence conflicts with this file for a particular file, the third-party licence governs
+that file only.
+
+NO WARRANTY
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED,
+INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR
+PURPOSE, TITLE AND NON-INFRINGEMENT. IN NO EVENT SHALL THE OWNER BE LIABLE FOR ANY CLAIM,
+DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
+FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OF IT.
+
+GOVERNING LAW
+
+This notice is governed by the laws of India, and the courts at Kolkata, India have
+exclusive jurisdiction.
+
+Contact: ricco@ricco.codes

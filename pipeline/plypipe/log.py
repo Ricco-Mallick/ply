@@ -1,3 +1,4 @@
+# Copyright (c) 2026 Ricco Marcelino. All rights reserved. Proprietary and confidential — see LICENSE.
 """JSON-lines progress log: one object per line on stdout and in <out>/log.jsonl.
 
 A worker can tail either stream. Fields: t (ISO time), stage, event

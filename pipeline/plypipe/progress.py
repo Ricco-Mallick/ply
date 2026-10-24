@@ -1,3 +1,4 @@
+# Copyright (c) 2026 Ricco Marcelino. All rights reserved. Proprietary and confidential — see LICENSE.
 """Progress inside the sfm stage, read from COLMAP's own log lines (pycolmap logs to stderr, which the worker reads).
 
 Without this the status page sits at the start of "Solving camera positions" for the whole of matching, which can take

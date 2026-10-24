@@ -1,3 +1,4 @@
+// Copyright (c) 2026 Ricco Marcelino. All rights reserved. Proprietary and confidential — see LICENSE.
 /* Writing tar archives in the browser (the AR scan streams keyframes into one file). Checked against Python's
    tarfile by app/scripts/tar-check.mjs. */
 /** Minimal ustar writer: one header block per file, data padded to 512 bytes, two zero blocks at the end. */

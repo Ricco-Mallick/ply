@@ -1,3 +1,4 @@
+// Copyright (c) 2026 Ricco Marcelino. All rights reserved. Proprietary and confidential — see LICENSE.
 /* Scene manifest: what the pipeline hands the viewer (pipeline/README.md has the producing side).
    Convention: metres, +Y up, floor at floorY (0 for pipeline output), splat already aligned unless splatQuaternion says otherwise. */
 

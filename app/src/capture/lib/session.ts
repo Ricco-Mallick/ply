@@ -1,3 +1,4 @@
+// Copyright (c) 2026 Ricco Marcelino. All rights reserved. Proprietary and confidential — see LICENSE.
 /* One live recording: MediaRecorder into the store, the quality loop on the preview, sensors logged at the same clock,
    and a screen wake lock so the phone doesn't dim mid-walk. The UI subscribes and redraws from `live`. */
 import { Analyzer, TIP, type Issue, type Quality } from './analyzer';

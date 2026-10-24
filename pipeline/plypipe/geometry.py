@@ -1,3 +1,4 @@
+# Copyright (c) 2026 Ricco Marcelino. All rights reserved. Proprietary and confidential — see LICENSE.
 """Pure-numpy geometry used by the align and occupancy stages.
 
 Conventions
