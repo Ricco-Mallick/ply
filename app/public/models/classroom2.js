@@ -93,6 +93,18 @@ export function buildRoom(THREE, shell) {
   walls.name = 'walls';
   const ceiling = buildCeiling(THREE, s);
   ceiling.name = 'ceiling';
+  // the ceiling is lit from above by our lights, so its underside rendered nearly black; the capture shows bright
+  // mottled white plaster. Give the plaster a little self-lit warmth instead of adding a light that would wash the room.
+  ceiling.traverse((o) => {
+    if (!o.isMesh || !o.material || !o.material.color) return;
+    if (/ceil|plaster|slab/i.test(o.name)) {
+      o.material = o.material.clone();
+      o.material.color.setHex(0xf1ece1);
+      o.material.emissive = new THREE.Color(0x4a4842);
+      o.material.emissiveIntensity = 0.55;
+      o.material.roughness = 1;
+    }
+  });
   const windows = buildWindows(THREE);
   windows.name = 'windows';
   const glass = new THREE.MeshBasicMaterial({ color: 0xcfe4f2 });   // daylight behind the grille, not a black hole
