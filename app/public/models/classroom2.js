@@ -27,6 +27,28 @@ function withEnvelope(shell) {
   return Object.assign({}, shell, ENVELOPE, { objects: shell.objects || [] });
 }
 
+function plaster(THREE) {
+  // the walls in the capture are not flat paint: old plaster with damp mottling and a soft dado line
+  const size = 256;
+  const c = document.createElement('canvas');
+  c.width = c.height = size;
+  const ctx = c.getContext('2d');
+  ctx.fillStyle = '#e9e2d4';
+  ctx.fillRect(0, 0, size, size);
+  for (let i = 0; i < 260; i++) {
+    const g = 210 + Math.random() * 34 | 0;
+    ctx.fillStyle = `rgba(${g},${g - 6},${g - 18},${0.05 + Math.random() * 0.12})`;
+    const r = 8 + Math.random() * 46;
+    ctx.beginPath();
+    ctx.arc(Math.random() * size, Math.random() * size, r, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  const tex = new THREE.CanvasTexture(c);
+  tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
+  tex.repeat.set(4, 2);
+  return tex;
+}
+
 function terrazzo(THREE) {
   // speckled terrazzo, drawn into a canvas so the floor is not a flat grey
   const size = 512;
@@ -91,6 +113,16 @@ export function buildRoom(THREE, shell) {
   g.add(line);
   const walls = buildWalls(THREE, s);
   walls.name = 'walls';
+  const plasterMap = plaster(THREE);
+  walls.traverse((o) => {
+    if (!o.isMesh || !o.material || !o.material.color) return;
+    const c = o.material.color;
+    if (c.r > 0.75 && c.g > 0.7 && c.b > 0.6) {   // the cream plaster faces, not the dado, trim or frames
+      o.material = o.material.clone();
+      o.material.map = plasterMap;
+      o.material.roughness = 0.97;
+    }
+  });
   const ceiling = buildCeiling(THREE, s);
   ceiling.name = 'ceiling';
   // the ceiling is lit from above by our lights, so its underside rendered dark; the capture shows bright mottled
