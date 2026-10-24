@@ -15,6 +15,7 @@ from __future__ import annotations
 import argparse
 import collections
 import json
+import math
 import os
 import re
 import shutil
@@ -139,6 +140,45 @@ class Api:
                             raise
                         time.sleep(3 * (t + 1))
         self.req("POST", "/v1/uploads/complete", {"key": up["key"], "uploadId": up["uploadId"], "parts": parts})
+
+
+def _write_evidence(out: Path, long_edge: int = 1280, count: int = 48) -> None:
+    """A spread of posed frames a modelling agent can look at: downscaled JPEGs plus their camera positions.
+
+    The pipeline keeps every frame until the container dies; the bundle needs a handful that a person (or an agent)
+    can actually open, with enough coverage to judge every wall. Positions come from scene.json's camera path.
+    """
+    from PIL import Image
+
+    frames = sorted((out / "frames").glob("*.jpg"))
+    if not frames:
+        return
+    ev = out / "evidence" / "frames"
+    ev.mkdir(parents=True, exist_ok=True)
+    pick = frames if len(frames) <= count else [frames[int(i)] for i in np.linspace(0, len(frames) - 1, count)]
+    poses = []
+    try:
+        scene = json.loads((out / "scene.json").read_text())
+    except Exception:
+        scene = {}
+    path = scene.get("cameraPath") or []
+    for index, f in enumerate(pick):
+        dest = ev / f"{index:03d}.jpg"
+        try:
+            img = Image.open(f)
+            img.thumbnail((long_edge, long_edge))
+            img.convert("RGB").save(dest, quality=82)
+        except Exception:
+            continue
+        pos = None
+        if path:
+            pos = path[min(len(path) - 1, int(round(index * (len(path) - 1) / max(1, len(pick) - 1))))] if len(path) > 1 else path[0]
+        yaw = 0.0
+        if pos is not None and path:
+            nxt = path[min(len(path) - 1, int(round(index * (len(path) - 1) / max(1, len(pick) - 1))) + 1)]
+            yaw = math.atan2(-(nxt[0] - pos[0]), -(nxt[2] - pos[2]))
+        poses.append({"index": index, "file": f"evidence/frames/{dest.name}", "position": pos or [0, 1.6, 0], "yaw": round(yaw, 4), "fov": 60})
+    (out / "evidence" / "poses.json").write_text(json.dumps({"frames": poses}, indent=1))
 
 
 CTYPE = {".spz": "application/octet-stream", ".ply": "application/octet-stream", ".json": "application/json", ".png": "image/png"}
@@ -430,6 +470,24 @@ def run_job(api: Api, job: dict, work: Path, extra: list[str]) -> None:
                 api.upload(f"scenes/{jid}/scene.ply", ply_path, "application/octet-stream")
             except Exception as e:
                 print(f"[worker] keeping scene.ply failed: {e}", flush=True)
+        # evidence for a modelling agent: a spread of the posed frames plus their camera positions, so a room can be
+        # rebuilt as editable geometry later without re-running the capture
+        try:
+            _write_evidence(out)
+        except Exception as e:
+            print(f"[worker] evidence frames failed: {e}", flush=True)
+        try:
+            ev = out / "evidence"
+            frames = ev / "frames"
+            have = sorted(frames.glob("*.jpg")) if frames.exists() else []
+            picked = have if len(have) <= 48 else [have[int(i)] for i in np.linspace(0, len(have) - 1, 48)]
+            for f in picked:
+                api.upload(f"scenes/{jid}/evidence/frames/{f.name}", f, "image/jpeg")
+            poses = ev / "poses.json"
+            if poses.exists():
+                api.upload(f"scenes/{jid}/evidence/poses.json", poses, "application/json")
+        except Exception as e:
+            print(f"[worker] evidence upload failed: {e}", flush=True)
         files = {}
         for name in RESULTS:
             f = out / name

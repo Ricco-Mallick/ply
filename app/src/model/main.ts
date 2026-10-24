@@ -82,7 +82,16 @@ async function load() {
   const objects = s.objects?.length ?? 0;
   show(`${walls} walls · ${(s.openings ?? []).length} openings · ${objects} objects`);
   buildOutliner(s);
-  setView(view);
+  const pose = params.get('pose');
+  if (pose) {
+    const [x, y, z, yw, pt] = pose.split(',').map(Number);
+    view = 'walk';
+    document.querySelectorAll<HTMLButtonElement>('[data-view]').forEach((b) => b.classList.toggle('on', false));
+    walked.set(x, 0, z);
+    shell && (shell.floorY = y - EYE);
+    yawPitch.yaw = yaw = yw || 0; yawPitch.pitch = pitch = pt || 0;
+    document.body.classList.add('posing');
+  } else setView(view);
   addEventListener('resize', resize);
   resize();
   loop();
