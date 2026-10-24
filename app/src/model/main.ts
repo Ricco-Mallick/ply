@@ -5,7 +5,7 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { GLTFExporter } from 'three/examples/jsm/exporters/GLTFExporter.js';
-import { buildObjects, buildRoom } from './build';
+import { buildObjects, buildRoom, drawable } from './build';
 import type { Obj, Shell } from './types';
 
 const BASE = '/ply/';
@@ -235,7 +235,7 @@ function buildOutliner(s: Shell) {
   const list = el<HTMLDivElement>('#outliner-list');
   list.innerHTML = '';
   const groups = new Map<string, Obj[]>();
-  for (const o of s.objects ?? []) {
+  for (const o of drawable(s)) {
     const k = (o.kind ?? 'object').toLowerCase();
     (groups.get(k) ?? groups.set(k, []).get(k)!).push(o);
   }
@@ -256,7 +256,7 @@ function buildOutliner(s: Shell) {
     }
     list.appendChild(row);
   }
-  el('#outliner-count').textContent = `${s.objects?.length ?? 0}`;
+  el('#outliner-count').textContent = `${drawable(s).length}`;
 }
 
 function refreshOutliner() {

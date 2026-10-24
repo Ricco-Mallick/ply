@@ -149,14 +149,34 @@ export function roomAngle(shell: Shell) {
   return Math.atan2(longest.b[1] - longest.a[1], longest.b[0] - longest.a[0]);
 }
 
+export function drawable(shell: Shell) {
+  return (shell.objects ?? []).filter((o) => !['door', 'window'].includes((o.kind ?? '').toLowerCase()));
+}
+
 export function buildObjects(shell: Shell): THREE.Group {
   const root = new THREE.Group();
   root.name = 'objects';
   const base = roomAngle(shell);
-  for (const o of shell.objects ?? []) {
-    const kind = (o.kind ?? '').toLowerCase();
-    if (kind === 'door' || kind === 'window') continue;  // wall features: the openings in buildRoom draw them
-    root.add(proxy(o, shell.floorY ?? 0, shell.ceilingY ?? 3, base));
+  const objects = drawable(shell);
+  // a chair's detector box often sits inside the desk it belongs to: push it out to the aisle side so the row reads
+  const tables = objects.filter((o) => ['table', 'desk'].includes((o.kind ?? '').toLowerCase()));
+  const shifts = new Map<string, [number, number]>();
+  for (const o of objects) {
+    if ((o.kind ?? '').toLowerCase() !== 'chair') continue;
+    const [cx, , cz] = o.center;
+    for (const t of tables) {
+      if (Math.abs(cx - t.center[0]) < t.half[0] && Math.abs(cz - t.center[2]) < t.half[2]) {
+        const push = (t.half[2] + o.half[2] + 0.12) * (cz >= t.center[2] ? 1 : -1);
+        shifts.set(o.id, [0, push - (cz - t.center[2])]);
+        break;
+      }
+    }
+  }
+  for (const o of objects) {
+    const g = proxy(o, shell.floorY ?? 0, shell.ceilingY ?? 3, base);
+    const s = shifts.get(o.id);
+    if (s) g.position.z += s[1];
+    root.add(g);
   }
   return root;
 }
