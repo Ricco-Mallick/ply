@@ -1,0 +1,86 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <title>Model · Ply</title>
+  <meta name="description" content="A captured room as an editable Three.js model: walls, openings and every object on its own." />
+  <style>
+    :root { color-scheme: dark; --ink: #e8ecf5; --muted: #93a0bb; --line: #223052; --glass: rgba(12, 18, 32, .78); --accent: #6ea8ff; }
+    * { box-sizing: border-box; }
+    html, body { margin: 0; height: 100%; background: #0b1020; color: var(--ink); font: 14px/1.45 Manrope, system-ui, sans-serif; overflow: hidden; }
+    #stage { position: fixed; inset: 0; width: 100%; height: 100%; display: block; }
+    .bar { position: fixed; top: 16px; left: 16px; right: 16px; display: flex; gap: 10px; align-items: center; pointer-events: none; }
+    .bar > * { pointer-events: auto; }
+    .pill { display: inline-flex; align-items: center; gap: 8px; padding: 9px 14px; border-radius: 999px; background: var(--glass);
+      border: 1px solid var(--line); backdrop-filter: blur(14px); color: var(--ink); font-size: 13px; text-decoration: none; }
+    .brand { font-family: "Space Mono", ui-monospace, monospace; letter-spacing: .18em; font-size: 12px; }
+    .brand i { width: 8px; height: 8px; border-radius: 50%; background: var(--accent); display: inline-block; }
+    .views { margin-left: auto; display: flex; gap: 6px; padding: 5px; border-radius: 999px; background: var(--glass); border: 1px solid var(--line); backdrop-filter: blur(14px); }
+    .views button { border: 0; background: transparent; color: var(--muted); padding: 7px 12px; border-radius: 999px; cursor: pointer; font: inherit; font-size: 13px; }
+    .views button.on { background: #e8ecf5; color: #0b1020; }
+    #status { position: fixed; left: 16px; bottom: 16px; color: var(--muted); font-family: "Space Mono", monospace; font-size: 12px; letter-spacing: .04em; }
+    #hint { position: fixed; left: 50%; bottom: 18px; transform: translateX(-50%); color: var(--muted); font-size: 12.5px; background: var(--glass);
+      border: 1px solid var(--line); border-radius: 999px; padding: 7px 14px; backdrop-filter: blur(12px); }
+    body.locked #hint { display: none; }
+    /* outliner */
+    #outliner { position: fixed; top: 74px; right: 16px; width: 268px; max-height: calc(100% - 100px); overflow: auto;
+      background: var(--glass); border: 1px solid var(--line); border-radius: 16px; backdrop-filter: blur(16px); padding: 12px; }
+    #outliner h2 { margin: 2px 0 10px; font: 600 12px/1 "Space Mono", monospace; letter-spacing: .16em; text-transform: uppercase; color: var(--muted); display: flex; justify-content: space-between; }
+    #outliner details { border-top: 1px solid #1b2540; padding: 4px 0; }
+    #outliner summary { cursor: pointer; display: flex; justify-content: space-between; padding: 6px 2px; font-size: 13px; }
+    #outliner summary em { color: var(--muted); font-style: normal; }
+    #outliner .item { display: flex; justify-content: space-between; gap: 8px; width: 100%; border: 0; background: transparent;
+      color: var(--ink); text-align: left; padding: 6px 8px; border-radius: 8px; cursor: pointer; font: inherit; font-size: 12.5px; }
+    #outliner .item:hover { background: #16213a; }
+    #outliner .item em { color: var(--muted); font-style: normal; font-family: "Space Mono", monospace; font-size: 11px; }
+    #outliner .item.gone { opacity: .35; text-decoration: line-through; }
+    /* selection panel */
+    #panel { position: fixed; left: 16px; top: 74px; width: 268px; background: var(--glass); border: 1px solid var(--line); border-radius: 16px;
+      backdrop-filter: blur(16px); padding: 14px; }
+    #panel h3 { margin: 0; font-size: 15px; }
+    #panel .kind { color: var(--accent); font: 600 11px/1 "Space Mono", monospace; letter-spacing: .16em; text-transform: uppercase; margin: 6px 0; }
+    #panel .size { color: var(--muted); font-family: "Space Mono", monospace; font-size: 12px; margin-bottom: 10px; }
+    #panel .row { display: flex; flex-wrap: wrap; gap: 6px; }
+    #panel button { border: 1px solid var(--line); background: #101a2e; color: var(--ink); border-radius: 9px; padding: 6px 10px; cursor: pointer; font: inherit; font-size: 12px; }
+    #panel button:hover { border-color: var(--accent); }
+    .sel { outline: 2px solid var(--accent); outline-offset: 2px; }
+  </style>
+</head>
+<body>
+  <canvas id="stage" aria-label="Editable Three.js model of a captured room"></canvas>
+
+  <div class="bar">
+    <a class="pill brand" href="/ply/index.html"><i></i>PLY · MODEL</a>
+    <button class="pill" id="export">Export GLB</button>
+    <div class="views" role="group" aria-label="View">
+      <button data-view="walk" class="on">Walk</button>
+      <button data-view="doll">Dollhouse</button>
+      <button data-view="plan">Plan</button>
+    </div>
+  </div>
+
+  <aside id="outliner">
+    <h2>Objects <span id="outliner-count">0</span></h2>
+    <div id="outliner-list"></div>
+  </aside>
+
+  <div id="panel" hidden>
+    <h3 id="panel-name">—</h3>
+    <div class="kind" id="panel-kind">—</div>
+    <div class="size" id="panel-size">—</div>
+    <div class="row">
+      <button id="focus">Focus</button>
+      <button id="hide">Hide</button>
+      <button id="delete">Delete</button>
+      <button id="grow">＋ size</button>
+      <button id="shrink">－ size</button>
+    </div>
+  </div>
+
+  <div id="status">loading…</div>
+  <div id="hint">Walk: <b>W A S D</b> · look: click to capture the mouse · <b>X</b> wireframe · click an object to select</div>
+
+  <script type="module" src="./src/model/main.ts"></script>
+</body>
+</html>
