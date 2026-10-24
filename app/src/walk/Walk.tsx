@@ -5,6 +5,7 @@ import { Glass } from '../shared/Glass';
 import { Tour, autoTour, SHOT_NAMES } from './tour';
 import { PlacesLayer } from './Places';
 import { ArLauncher } from './ArUi';
+import { MeasureLayer, useShell } from './Measure';
 import type { Navigator, Place } from '../lab/places';
 
 const TOUCH = matchMedia('(pointer: coarse)').matches;
@@ -26,6 +27,8 @@ export function Walk() {
   const [arData, setArData] = useState<{ places: Place[]; nav: Navigator | null }>({ places: [], nav: null });
   useEngine(engine);
   // cinematic tour: the pipeline's keyframes, or ones made from the walkable floor
+  const [measured, setMeasured] = useState(false);
+  const shell = useShell(base);
   const [tour, setTour] = useState<Tour | null>(null); const [, tourTick] = useState(0); const [views, setViews] = useState(false);
   useEffect(() => {
     if (!engine?.state.loaded || tour) return;
@@ -58,6 +61,7 @@ export function Walk() {
           {tour && entered && <Glass as="button" className={`tour-btn pill ${tour.playing ? 'on' : ''}`} opts={{ shader: false, press: true }} onClick={() => { if (tour.playing) tour.stop(); else { setViews(false); document.exitPointerLock?.(); tour.play(); } }}>{tour.playing ? '■ Stop tour' : '▶ Tour'}</Glass>}
           {tour && entered && <div className="views-wrap"><Glass as="button" className="tour-btn pill" opts={{ shader: false, press: true }} aria-expanded={views} onClick={() => setViews(v => !v)}>Views</Glass>
             {views && <Glass className="views-menu" opts={{ radius: 14, shader: false }}>{tour.keys.map((_, i) => <button key={i} onClick={() => { setViews(false); document.exitPointerLock?.(); tour.goTo(i); }}><span className="mono">{String(i + 1).padStart(2, '0')}</span>{SHOT_NAMES[i] ?? `View ${i + 1}`}</button>)}</Glass>}</div>}
+          {entered && shell?.walls?.length && <Glass as="button" className={`tour-btn pill ${measured ? 'on' : ''}`} opts={{ shader: false, press: true }} aria-pressed={measured} title="Measured shell: walls and object boxes from the solve" onClick={() => setMeasured(v => !v)}>Measured</Glass>}
           {entered && manifest && base && <Glass as="a" className="tour-btn pill" opts={{ shader: false, press: true }} title="Open this twin in the editor (SuperSplat)"
             href={`${BASE}editor/index.html?load=${encodeURIComponent(new URL(manifest.splat.replace('_lite', ''), base).href)}&filename=${encodeURIComponent((manifest.name || 'twin').replace(/[^\w.-]+/g, '_'))}.spz`}>Edit</Glass>}
           {entered && engine && manifest && base && <ArLauncher places={arData.places.filter(p => p.pinned).map(p => ({ id: p.id, name: p.name, x: p.p[0], z: p.p[2] }))} nav={arData.nav}
@@ -81,6 +85,7 @@ export function Walk() {
       </Glass>
 
       {TOUCH && entered && engine && <Joystick engine={engine} />}
+      {engine && <MeasureLayer engine={engine} shell={shell} on={measured} showObjects={measured} />}
       {engine && <PlacesLayer engine={engine} base={base} entered={entered} onMap={setMapX} onData={setArData} />}
       {engine && <Minimap engine={engine} manifest={manifest} extras={mapX} />}
 

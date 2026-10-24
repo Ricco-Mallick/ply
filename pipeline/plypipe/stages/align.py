@@ -62,6 +62,12 @@ def run_stage(ctx: Ctx) -> dict:
         info["floorPlane"] = "gravity" if float(info.get("floorTiltDeg", 0)) == 0.0 else "ransac"
 
     aligned = colmap_txt.transformed(model, T)
+    try:  # measured shell: wall segments through the mid-height band, drawn as an editable layer in the viewer
+        from plypipe import shell as shell_mod
+        ceiling = float(np.percentile(aligned.xyz[:, 1], 98.0))
+        (ctx.out / "shell.json").write_text(json.dumps(shell_mod.build(aligned.xyz, 0.0, ceiling, []), indent=1))
+    except Exception as e:
+        ctx.log.emit("align", "warn", f"measured shell skipped: {e}")
     out_sparse = ctx.data_dir / "sparse" / "0"
     if out_sparse.exists():
         shutil.rmtree(out_sparse)
@@ -110,6 +116,7 @@ def run_stage(ctx: Ctx) -> dict:
         "cameraPath": path,
         "spawn": spawn,
         "tour": tour.build_tour(c2, b0),
+        "shell": "shell.json",
     })
     return {"floorInliers": int(plane.inliers.sum()), "floorInlierRatio": float(plane.inliers.mean()),
             "floorTiltDeg": info["floorTiltDeg"], "yawDeg": info["yawDeg"], "scale": info["scale"],

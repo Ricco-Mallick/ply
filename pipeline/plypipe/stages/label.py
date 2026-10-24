@@ -139,6 +139,19 @@ def run_stage(ctx: Ctx) -> dict:
     objects = lift(dets, xyz)
     places = places_from(objects)
     out_file.write_text(json.dumps({"version": 1, "source": "sam3", "places": places}, indent=1))
+    # the measured shell learns its openings now that doors and windows are labelled: a span along a wall and a sill
+    try:
+        from plypipe import shell as shell_mod
+        sp = ctx.out / "shell.json"
+        if sp.exists():
+            sh = json.loads(sp.read_text())
+            sh["openings"] = shell_mod.openings([dict(pl, cls=(pl.get("ai") or {}).get("cls"), half=(pl.get("ai") or {}).get("half"))
+                                                 for pl in places], sh.get("walls") or [])
+            sh["objects"] = [{"id": pl["id"], "name": pl["name"], "kind": (pl.get("ai") or {}).get("cls"),
+                              "center": pl["p"], "half": (pl.get("ai") or {}).get("half")} for pl in places]
+            sp.write_text(json.dumps(sh, indent=1))
+    except Exception as e:
+        ctx.log.emit("label", "warn", f"openings skipped: {e}")
     counts: dict[str, int] = defaultdict(int)
     for o in objects:
         counts[o["cls"]] += 1
