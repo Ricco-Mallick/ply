@@ -24,7 +24,7 @@ renderer.setSize(innerWidth, innerHeight, false);
 renderer.shadowMap.enabled = true;
 renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 renderer.toneMapping = THREE.ACESFilmicToneMapping;
-renderer.toneMappingExposure = 1.05;
+renderer.toneMappingExposure = 1.15;
 
 const scene = new THREE.Scene();
 scene.background = new THREE.Color('#0b1020');
@@ -38,7 +38,7 @@ controls.maxPolarAngle = Math.PI * 0.495;
 
 // lights: a soft sky, a key with shadows, a cool fill from the opposite side
 scene.add(new THREE.HemisphereLight('#cfe0ff', '#0a0f1a', 1.1));
-const key = new THREE.DirectionalLight('#fff4e6', 2.1);
+const key = new THREE.DirectionalLight('#fff2df', 2.4);
 key.position.set(9, 14, 7);
 key.castShadow = true;
 key.shadow.mapSize.set(2048, 2048);
@@ -104,6 +104,16 @@ function setView(next: View) {
   view = next;
   document.querySelectorAll<HTMLButtonElement>('[data-view]').forEach((b) => b.classList.toggle('on', b.dataset.view === next));
   grid.visible = next !== 'walk';
+  if (!room) return;
+  const ghost = next === "doll";
+  room.traverse((o) => {
+    if (!(o instanceof THREE.Mesh)) return;
+    const m = o.material as THREE.MeshStandardMaterial;
+    if (o.name.startsWith('wall-') || o.name.startsWith('opening-')) {
+      m.transparent = ghost; m.opacity = ghost ? 0.28 : 1; m.depthWrite = !ghost; m.needsUpdate = true;
+    }
+    if (o.name === 'ceiling') o.visible = !ghost;
+  });
   if (!room) return;
   const b = bounds();
   const size = b.getSize(new THREE.Vector3());

@@ -1,188 +1,219 @@
 // Copyright (c) 2026 Ricco Marcelino. All rights reserved. Proprietary and confidential — see LICENSE.
-/* Geometry for the semantic model: a wall is a solid with a sill and a head, an opening is a frame with glass or a
-   door leaf, and each labelled object becomes a small proxy built to its measured size — a table with legs, a chair
-   with a back, a shelf with boards. Proxies are boxes at heart: what they carry is the object's identity, size and
-   position, which is what an editor and an export need. */
+/* Geometry for the semantic model.
+   Two rules learned the hard way:
+   1. Furniture is built to *plausible furniture proportions* for its class, not to the raw detector box. A SAM box
+      around a chair is 41 x 38 x 66 cm, and a desk often comes back 10 cm tall — extruding those gives slabs, not a
+      room. The box decides where the object stands and roughly how wide it is; the class decides what it is.
+   2. The room is a shell you can see into: floor, walls with baseboards, real openings cut through, and a ceiling
+      at a believable height (the 97th percentile of splat heights is 7.2 m in a classroom, which is the void above
+      the ceiling grid, not the ceiling). */
 import * as THREE from 'three';
 import { PALETTE, type Obj, type Shell } from './types';
 
-const WALL_T = 0.14;   // wall thickness, metres
+const WALL_T = 0.16;                       // wall thickness, metres
+const CEIL_MIN = 2.5, CEIL_MAX = 3.6;
 const mat = (color: number, opts: THREE.MeshStandardMaterialParameters = {}) =>
-  new THREE.MeshStandardMaterial({ color, roughness: 0.82, metalness: 0.02, ...opts });
+  new THREE.MeshStandardMaterial({ color, roughness: 0.8, metalness: 0.02, ...opts });
 
 const mesh = (geo: THREE.BufferGeometry, material: THREE.Material, name: string) => {
   const m = new THREE.Mesh(geo, material);
-  m.name = name;
-  m.castShadow = true;
-  m.receiveShadow = true;
+  m.name = name; m.castShadow = true; m.receiveShadow = true;
   return m;
 };
 
-/** A box with its outline drawn, so a proxy reads as a modelled object rather than a blob. */
-function outlined(m: THREE.Mesh, color = 0x10151f, opacity = 0.35) {
-  const edges = new THREE.LineSegments(new THREE.EdgesGeometry(m.geometry, 24), new THREE.LineBasicMaterial({ color, transparent: true, opacity }));
-  edges.position.copy(m.position);
-  edges.rotation.copy(m.rotation);
-  edges.scale.copy(m.scale);
-  edges.name = `${m.name}:edges`;
-  return edges;
+/** What each class is allowed to measure, in metres. The detector's box picks a value inside the range. */
+const SIZES: Record<string, { h: [number, number]; w: [number, number]; d: [number, number] }> = {
+  chair: { h: [0.82, 1.0], w: [0.42, 0.56], d: [0.44, 0.58] },
+  bench: { h: [0.8, 0.95], w: [1.1, 2.0], d: [0.45, 0.6] },
+  table: { h: [0.68, 0.78], w: [0.7, 2.2], d: [0.6, 0.95] },
+  desk: { h: [0.68, 0.78], w: [1.0, 1.6], d: [0.55, 0.8] },
+  podium: { h: [0.95, 1.15], w: [0.45, 0.7], d: [0.4, 0.6] },
+  cabinet: { h: [1.4, 2.1], w: [0.5, 1.2], d: [0.35, 0.6] },
+  shelf: { h: [1.4, 2.1], w: [0.6, 1.4], d: [0.28, 0.45] },
+  sofa: { h: [0.75, 0.95], w: [1.4, 2.4], d: [0.8, 1.0] },
+  blackboard: { h: [0.85, 1.2], w: [1.2, 4.0], d: [0.04, 0.08] },
+  whiteboard: { h: [0.85, 1.2], w: [1.2, 4.0], d: [0.04, 0.08] },
+  'projector screen': { h: [0.9, 1.6], w: [1.4, 2.2], d: [0.04, 0.08] },
+  door: { h: [1.95, 2.1], w: [0.8, 1.0], d: [0.04, 0.06] },
+  window: { h: [1.0, 1.6], w: [0.7, 1.6], d: [0.04, 0.06] },
+  'ceiling fan': { h: [0.12, 0.2], w: [1.0, 1.4], d: [1.0, 1.4] },
+  lamp: { h: [0.4, 1.6], w: [0.2, 0.5], d: [0.2, 0.5] },
+  'potted plant': { h: [0.35, 1.1], w: [0.3, 0.7], d: [0.3, 0.7] },
+  statue: { h: [0.5, 1.8], w: [0.25, 0.7], d: [0.25, 0.7] },
+};
+const fallback = { h: [0.6, 1.1] as [number, number], w: [0.5, 1.1] as [number, number], d: [0.5, 1.1] as [number, number] };
+
+const clampTo = (v: number, [lo, hi]: [number, number]) => Math.min(hi, Math.max(lo, v));
+
+/** Size from the measured box, clamped into the class's plausible range. */
+export function sizeFor(o: Obj) {
+  const s = SIZES[(o.kind ?? '').toLowerCase()] ?? fallback;
+  const raw = [o.half[0] * 2, o.half[1] * 2, o.half[2] * 2];
+  const w0 = clampTo(raw[0], s.w), h = clampTo(raw[1], s.h), d0 = clampTo(raw[2], s.d);
+  const longIsZ = w0 < d0;                     // put the long side on X, then turn it to the object's long axis
+  return { w: longIsZ ? d0 : w0, h, d: longIsZ ? w0 : d0, yaw: longIsZ ? Math.PI / 2 : 0 };
 }
+
+function outlined(m: THREE.Mesh, color = 0x0d1420, opacity = 0.22) {
+  const e = new THREE.LineSegments(new THREE.EdgesGeometry(m.geometry, 30), new THREE.LineBasicMaterial({ color, transparent: true, opacity }));
+  e.position.copy(m.position); e.rotation.copy(m.rotation); e.scale.copy(m.scale);
+  e.name = `${m.name}:edges`;
+  return e;
+}
+const box = (w: number, h: number, d: number, material: THREE.Material, name: string) => mesh(new THREE.BoxGeometry(w, h, d), material, name);
 
 export function buildRoom(shell: Shell): THREE.Group {
   const root = new THREE.Group();
   root.name = 'room';
   const floorY = shell.floorY ?? 0;
-  const ceiling = shell.ceilingY ?? 2.8;
+  const measured = shell.ceilingY ?? 2.9;
+  const ceiling = Math.min(CEIL_MAX, Math.max(CEIL_MIN, measured > 4.2 ? 3.1 : measured));
   const walls = shell.walls ?? [];
+  if (walls.length < 3) return root;
 
-  // floor: the walls' footprint, extruded a little, so the room reads as a solid even where the hull is a chamfer
-  if (walls.length >= 3) {
-    const shape = new THREE.Shape(walls.map((w) => new THREE.Vector2(w.a[0], -w.a[1])));
-    const geo = new THREE.ExtrudeGeometry(shape, { depth: 0.12, bevelEnabled: false });
-    geo.rotateX(Math.PI / 2);
-    const floor = mesh(geo, mat(PALETTE.floor, { roughness: 0.95 }), 'floor');
-    floor.position.y = floorY;
-    root.add(mesh(geo, mat(PALETTE.floor, { roughness: 0.95, side: THREE.DoubleSide }), 'floor'));
-    root.children[root.children.length - 1].position.y = floorY;
-    const ceil = mesh(new THREE.ShapeGeometry(shape).rotateX(Math.PI / 2), mat(PALETTE.ceiling, { side: THREE.BackSide }), 'ceiling');
-    ceil.position.y = floorY + ceiling;
-    ceiling && root.add(ceil);
-  }
+  const shape = new THREE.Shape(walls.map((w) => new THREE.Vector2(w.a[0], -w.a[1])));
+  const slab = new THREE.ExtrudeGeometry(shape, { depth: 0.14, bevelEnabled: false });
+  slab.rotateX(Math.PI / 2);
+  const floor = mesh(slab, mat(PALETTE.floor, { roughness: 0.95 }), 'floor');
+  floor.position.y = floorY;
+  root.add(floor);
+  const ceil = mesh(new THREE.ShapeGeometry(shape).rotateX(Math.PI / 2), mat(PALETTE.ceiling, { side: THREE.DoubleSide }), 'ceiling');
+  ceil.position.y = floorY + ceiling;
+  root.add(ceil);
+
+  const wallMat = mat(PALETTE.wall, { roughness: 0.92 });
+  const trimMat = mat(PALETTE.wallSide, { roughness: 0.8 });
+  const frameMat = mat(PALETTE.frame, { roughness: 0.55, metalness: 0.15 });
 
   walls.forEach((w, i) => {
     const [ax, az] = w.a, [bx, bz] = w.b;
     const len = Math.hypot(bx - ax, bz - az);
     if (len < 0.3) return;
-    const angle = Math.atan2(bz - az, bx - ax);
-    const group = new THREE.Group();
-    group.name = `wall-${i}`;
-    group.userData = { kind: 'wall', length: len };
-
-    // the wall solid, split only where an opening really cuts through it
-    const openings = (shell.openings ?? []).filter((o) => o.wall === i && Math.abs(o.u) < len);
-    const cuts = openings
-      .map((o) => ({ from: Math.max(0, o.u - o.width / 2), to: Math.min(len, o.u + o.width / 2), ...o }))
-      .sort((p, q) => p.from - q.from);
+    const g = new THREE.Group();
+    g.name = `wall-${i}`;
+    g.userData = { kind: 'wall', length: len };
     const solid = (from: number, to: number, z0: number, z1: number) => {
-      if (to - from < 0.02 || z1 - z0 < 0.02) return null;
-      const g = new THREE.BoxGeometry(to - from, z1 - z0, WALL_T);
-      const m = mesh(g, mat(PALETTE.wall), `wall-${i}`);
+      if (to - from < 0.02 || z1 - z0 < 0.02) return;
+      const m = box(to - from, z1 - z0, WALL_T, wallMat, `wall-${i}`);
       m.position.set((from + to) / 2 - len / 2, (z0 + z1) / 2, 0);
-      return m;
+      g.add(m);
     };
-
+    const openings = (shell.openings ?? []).filter((o) => o.wall === i && o.u > 0 && o.u < len).sort((p, q) => p.u - q.u);
     let cursor = 0;
-    for (const c of cuts) {
-      const pier = solid(cursor, c.from, 0, ceiling);
-      if (pier) group.add(pier);
-      const lintel = solid(c.from, c.to, c.sill + c.height, ceiling);
-      if (lintel) group.add(lintel);
-      const sill = solid(c.from, c.to, 0, Math.max(0, c.sill));
-      if (sill) group.add(sill);
-      // the frame and its leaf or glass
-      const fw = 0.06;
-      const frameMat = mat(PALETTE.frame, { roughness: 0.6 });
-      for (const [x, y, w, h] of [
-        [c.from + fw / 2, c.sill + c.height / 2, fw, c.height],
-        [c.to - fw / 2, c.sill + c.height / 2, fw, c.height],
-        [(c.from + c.to) / 2, c.sill + c.height - fw / 2, c.to - c.from, fw],
-        [(c.from + c.to) / 2, c.sill + fw / 2, c.to - c.from, fw],
+    for (const o of openings) {
+      const from = Math.max(0, o.u - o.width / 2), to = Math.min(len, o.u + o.width / 2);
+      const sill = Math.min(Math.max(o.sill, 0), ceiling - 0.4);
+      const head = Math.min(ceiling, sill + o.height);
+      solid(cursor, from, 0, ceiling);
+      solid(from, to, 0, sill);
+      solid(from, to, head, ceiling);
+      const fw = 0.05;
+      for (const [x, y, w2, h2] of [
+        [from + fw / 2, (sill + head) / 2, fw, head - sill],
+        [to - fw / 2, (sill + head) / 2, fw, head - sill],
+        [(from + to) / 2, head - fw / 2, to - from, fw],
+        [(from + to) / 2, sill + fw / 2, to - from, fw],
       ] as const) {
-        const bar = mesh(new THREE.BoxGeometry(w, h, WALL_T * 1.2), frameMat, `opening-${c.kind}`);
+        const bar = box(w2, h2, WALL_T * 1.15, frameMat, `opening-${o.kind}`);
         bar.position.set(x - len / 2, y, 0);
-        group.add(bar);
+        g.add(bar);
       }
-      if (c.kind === 'window') {
-        const glass = mesh(new THREE.BoxGeometry(c.to - c.from - fw * 2, c.height - fw * 2, 0.02),
-          new THREE.MeshPhysicalMaterial({ color: PALETTE.glass, transparent: true, opacity: 0.28, roughness: 0.05, metalness: 0 }), 'window-glass');
-        glass.position.set((c.from + c.to) / 2 - len / 2, c.sill + c.height / 2, 0);
-        group.add(glass);
+      if (o.kind === 'window') {
+        const glass = mesh(new THREE.BoxGeometry(to - from - fw * 2, head - sill - fw * 2, 0.02),
+          new THREE.MeshPhysicalMaterial({ color: PALETTE.glass, transparent: true, opacity: 0.22, roughness: 0.04 }), 'window-glass');
+        glass.position.set((from + to) / 2 - len / 2, (sill + head) / 2, 0);
+        g.add(glass);
       } else {
-        const leaf = mesh(new THREE.BoxGeometry(c.to - c.from - fw * 2, c.height - fw * 2, 0.04), mat(PALETTE.wood), 'door-leaf');
-        leaf.position.set((c.from + c.to) / 2 - len / 2, c.sill + c.height / 2, 0);
-        group.add(leaf);
+        const leaf = box(to - from - fw * 2, head - sill - fw * 2, 0.045, mat(PALETTE.wood), 'door-leaf');
+        leaf.position.set((from + to) / 2 - len / 2, (sill + head) / 2, 0);
+        g.add(leaf);
       }
-      cursor = c.to;
+      cursor = to;
     }
-    const last = solid(cursor, len, 0, ceiling);
-    if (last) group.add(last);
-
-    group.position.set((ax + bx) / 2, floorY, (az + bz) / 2);
-    group.rotation.y = -angle;
-    group.traverse((o) => { if (o instanceof THREE.Mesh) { o.castShadow = true; o.receiveShadow = true; } });
-    root.add(group);
+    solid(cursor, len, 0, ceiling);
+    const base = box(len, 0.1, WALL_T + 0.02, trimMat, `wall-${i}-base`);
+    base.position.set(0, 0.05, 0);
+    g.add(base);
+    g.position.set((ax + bx) / 2, floorY, (az + bz) / 2);
+    g.rotation.y = -Math.atan2(bz - az, bx - ax);
+    root.add(g);
   });
   return root;
 }
 
-/** One proxy per labelled object, sized to its measured box. */
 export function buildObjects(shell: Shell): THREE.Group {
   const root = new THREE.Group();
   root.name = 'objects';
-  const floorY = shell.floorY ?? 0;
-  for (const o of shell.objects ?? []) root.add(proxy(o, floorY));
+  for (const o of shell.objects ?? []) root.add(proxy(o, shell.floorY ?? 0, shell.ceilingY ?? 3));
   return root;
 }
 
-export function proxy(o: Obj, floorY = 0): THREE.Group {
+/** One piece of furniture, at a believable size for what it is, standing where the capture found it. */
+export function proxy(o: Obj, floorY = 0, ceiling = 3): THREE.Group {
   const g = new THREE.Group();
-  const [cx, , cz] = o.center;
-  const [hx, hy, hz] = o.half.map((v) => Math.max(v, 0.05)) as [number, number, number];
   const kind = (o.kind ?? '').toLowerCase();
-  const w = hx * 2, h = hy * 2, d = hz * 2;
+  const { w, h, d, yaw } = sizeFor(o);
+  const [cx, , cz] = o.center;
   g.name = o.id;
   g.userData = { kind: 'object', id: o.id, label: o.name, type: kind, size: [w, h, d] };
   g.position.set(cx, floorY, cz);
+  g.rotation.y = yaw;
 
-  const wood = mat(PALETTE.wood, { roughness: 0.7 });
+  const wood = mat(PALETTE.wood, { roughness: 0.62 });
   const fabric = mat(PALETTE.fabric, { roughness: 0.95 });
-  const metal = mat(PALETTE.metal, { roughness: 0.45, metalness: 0.6 });
-  const dark = mat(PALETTE.dark, { roughness: 0.6 });
+  const metal = mat(PALETTE.metal, { roughness: 0.4, metalness: 0.55 });
+  const dark = mat(PALETTE.dark, { roughness: 0.55 });
+  const panel = mat(PALETTE.ceiling, { roughness: 0.9 });
+  const add = (m: THREE.Mesh, x = 0, y = 0, z = 0) => { m.position.set(x, y, z); g.add(m, outlined(m)); return m; };
+  const leg = (x: number, z: number, height: number, r = 0.022) => add(mesh(new THREE.CylinderGeometry(r, r, height, 8), metal, `${o.id}-leg`), x, height / 2, z);
 
-  const add = (geo: THREE.BufferGeometry, material: THREE.Material, name: string, x = 0, y = 0, z = 0) => {
-    const m = mesh(geo, material, `${o.id}-${name}`);
-    m.position.set(x, y - hy, z);
-    g.add(m, outlined(m));
-    return m;
-  };
-
-  if (kind === 'table' || kind === 'desk' || kind === 'bench' || kind === 'podium') {
-    add(new THREE.BoxGeometry(w, 0.06, d), wood, 'top', 0, h, 0);
-    const legR = Math.min(0.05, w * 0.05);
-    for (const sx of [-1, 1]) for (const sz of [-1, 1]) {
-      add(new THREE.CylinderGeometry(legR, legR, h - 0.06, 8), metal, 'leg', sx * (w / 2 - legR * 2), (h - 0.06) / 2, sz * (d / 2 - legR * 2));
-    }
+  if (kind === 'table' || kind === 'desk') {
+    add(box(w, 0.04, d, wood, `${o.id}-top`), 0, h - 0.02, 0);
+    for (const sx of [-1, 1]) for (const sz of [-1, 1]) leg(sx * (w / 2 - 0.07), sz * (d / 2 - 0.07), h - 0.04);
   } else if (kind === 'chair') {
-    const seatY = Math.min(0.45, h * 0.55);
-    add(new THREE.BoxGeometry(w, 0.06, d * 0.85), fabric, 'seat', 0, seatY);
-    add(new THREE.BoxGeometry(w, Math.max(0.2, h - seatY - 0.05), 0.05), fabric, 'back', 0, (h + seatY) / 2, -d / 2 + 0.03);
-    for (const sx of [-1, 1]) for (const sz of [-1, 1]) add(new THREE.CylinderGeometry(0.018, 0.018, seatY, 6), metal, 'leg', sx * (w / 2 - 0.05), seatY / 2, sz * (d / 2 - 0.05));
-  } else if (kind === 'cabinet' || kind === 'shelf' || kind === 'bookcase') {
-    add(new THREE.BoxGeometry(w, h, d), wood, 'body');
-    const rows = Math.max(2, Math.round(h / 0.4));
-    for (let i = 1; i < rows; i++) {
-      const board = mesh(new THREE.BoxGeometry(w * 0.96, 0.02, d * 0.96), dark, `${o.id}-board`);
-      board.position.set(0, -hy + (h / rows) * i, 0);
-      g.add(board);
-    }
+    const seatY = 0.45;
+    add(box(w, 0.05, d, fabric, `${o.id}-seat`), 0, seatY, 0);
+    add(box(w, h - seatY, 0.05, fabric, `${o.id}-back`), 0, (h + seatY) / 2, -d / 2 + 0.04);
+    for (const sx of [-1, 1]) for (const sz of [-1, 1]) leg(sx * (w / 2 - 0.04), sz * (d / 2 - 0.04), seatY, 0.018);
+  } else if (kind === 'bench') {
+    const seatY = 0.45;
+    add(box(w, 0.06, d, wood, `${o.id}-seat`), 0, seatY, 0);
+    add(box(w, h - seatY - 0.06, 0.05, wood, `${o.id}-back`), 0, (h + seatY) / 2, -d / 2 + 0.04);
+    for (const sx of [-1, 1]) add(box(0.06, seatY, d * 0.9, metal, `${o.id}-frame`), sx * (w / 2 - 0.05), seatY / 2, 0);
+  } else if (kind === 'sofa') {
+    const seatY = 0.42;
+    add(box(w, 0.16, d, fabric, `${o.id}-seat`), 0, seatY, 0);
+    add(box(w, h - seatY, 0.18, fabric, `${o.id}-back`), 0, (h + seatY) / 2, -d / 2 + 0.09);
+    for (const sx of [-1, 1]) add(box(0.16, h - 0.1, d, fabric, `${o.id}-arm`), sx * (w / 2 - 0.08), (h - 0.1) / 2, 0);
+  } else if (kind === 'cabinet' || kind === 'shelf') {
+    add(box(w, h, d, wood, `${o.id}-body`), 0, h / 2, 0);
+    const rows = Math.max(2, Math.round(h / 0.38));
+    for (let i = 1; i < rows; i++) add(box(w * 0.94, 0.018, d * 0.92, dark, `${o.id}-board`), 0, (h / rows) * i, 0);
+    add(box(0.02, h * 0.35, 0.02, metal, `${o.id}-pull`), w * 0.3, h * 0.55, d / 2 + 0.01);
   } else if (kind === 'blackboard' || kind === 'whiteboard' || kind === 'projector screen') {
-    add(new THREE.BoxGeometry(w, h, 0.05), dark, 'panel');
-    add(new THREE.BoxGeometry(w, 0.04, 0.09), metal, 'rail', 0, h, 0);
+    const y = Math.min(1.55, ceiling - h / 2 - 0.2);
+    add(box(w, h, 0.04, kind === 'whiteboard' ? panel : dark, `${o.id}-panel`), 0, y, 0);
+    add(box(w + 0.08, 0.04, 0.1, metal, `${o.id}-rail`), 0, y + h / 2, 0.02);
   } else if (kind === 'ceiling fan') {
-    add(new THREE.CylinderGeometry(0.09, 0.09, 0.1, 12), metal, 'hub', 0, h / 2);
+    const y = Math.min(2.65, ceiling - 0.25);
+    add(mesh(new THREE.CylinderGeometry(0.07, 0.07, 0.08, 12), metal, `${o.id}-hub`), 0, y, 0);
     for (let i = 0; i < 3; i++) {
-      const blade = mesh(new THREE.BoxGeometry(w * 0.9, 0.02, 0.12), dark, `${o.id}-blade`);
-      blade.position.set(Math.cos((i / 3) * Math.PI * 2) * w * 0.45, 0, Math.sin((i / 3) * Math.PI * 2) * w * 0.45);
+      const blade = box(w * 0.42, 0.015, 0.16, dark, `${o.id}-blade`);
+      blade.position.set(0, y - 0.05, 0);
       blade.rotation.y = (i / 3) * Math.PI * 2;
+      blade.translateX(w * 0.26);
       g.add(blade);
     }
+  } else if (kind === 'potted plant') {
+    add(mesh(new THREE.CylinderGeometry(w * 0.3, w * 0.24, h * 0.35, 12), mat(0x8a5a44), `${o.id}-pot`), 0, h * 0.175, 0);
+    add(mesh(new THREE.SphereGeometry(w * 0.42, 12, 10), mat(0x4e7a52, { roughness: 0.9 }), `${o.id}-leaves`), 0, h * 0.7, 0);
   } else if (kind === 'door' || kind === 'window') {
-    add(new THREE.BoxGeometry(w, h, Math.max(0.04, d)), kind === 'window' ? mat(PALETTE.glass, { transparent: true, opacity: 0.3, roughness: 0.1 }) : wood, 'leaf');
+    add(box(w, h, Math.max(0.04, d), kind === 'window' ? mat(PALETTE.glass, { transparent: true, opacity: 0.25 }) : wood, `${o.id}-leaf`), 0, h / 2 + (kind === 'window' ? 0.9 : 0), 0);
   } else if (kind === 'lamp') {
-    add(new THREE.CylinderGeometry(0.02, 0.02, Math.max(h, 0.4), 6), metal, 'stem', 0, h * 0.5);
-    add(new THREE.ConeGeometry(w * 0.5, 0.18, 14), mat(PALETTE.ceiling), 'shade', 0, h);
+    add(mesh(new THREE.CylinderGeometry(0.015, 0.015, h, 6), metal, `${o.id}-stem`), 0, h / 2, 0);
+    add(mesh(new THREE.ConeGeometry(w * 0.5, 0.16, 14), panel, `${o.id}-shade`), 0, h, 0);
   } else {
-    add(new THREE.BoxGeometry(w, h, d), fabric, 'body');
+    add(box(w, h, d, fabric, `${o.id}-body`), 0, h / 2, 0);
   }
   return g;
 }
