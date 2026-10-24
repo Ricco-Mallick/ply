@@ -16,7 +16,7 @@ import numpy as np
 
 BAND = (0.35, 2.35)          # height band that holds walls, not floor or ceiling
 TOL = 0.06                   # a point is on a wall within 6 cm
-MIN_SUPPORT = 0.05           # a wall needs this share of the band's points
+MIN_SUPPORT = 0.02           # a wall needs this share of the band's points (a splat cloud is mostly furniture)
 MIN_LEN = 0.9                # metres; shorter fits are furniture edges, not walls
 MAX_WALLS = 24
 OPENING_KINDS = {"door", "window", "opening", "archway", "gate"}
@@ -31,9 +31,54 @@ def _line(p: np.ndarray, q: np.ndarray) -> tuple[np.ndarray, np.ndarray, float]:
     return d, normal, float(normal @ p)
 
 
+def _hull(points: np.ndarray) -> np.ndarray:
+    """Convex hull of 2D points (Andrew's monotone chain), counter-clockwise."""
+    pts = np.unique(np.round(points, 3), axis=0)
+    if len(pts) < 3:
+        return pts
+    pts = pts[np.lexsort((pts[:, 1], pts[:, 0]))]
+
+    def cross(o, a, b):
+        return (a[0] - o[0]) * (b[1] - o[1]) - (a[1] - o[1]) * (b[0] - o[0])
+
+    lower, upper = [], []
+    for p in pts:
+        while len(lower) >= 2 and cross(lower[-2], lower[-1], p) <= 0:
+            lower.pop()
+        lower.append(p)
+    for p in pts[::-1]:
+        while len(upper) >= 2 and cross(upper[-2], upper[-1], p) <= 0:
+            upper.pop()
+        upper.append(p)
+    return np.array(lower[:-1] + upper[:-1])
+
+
+def _corners(poly: np.ndarray, tol_deg: float = 9.0) -> np.ndarray:
+    """Split a closed polygon where it actually turns: a hull edge is a wall, a run of collinear vertices is not."""
+    n = len(poly)
+    if n < 3:
+        return poly
+    turn = []
+    for i in range(n):
+        a, b, c = poly[(i - 1) % n], poly[i], poly[(i + 1) % n]
+        d1, d2 = b - a, c - b
+        n1, n2 = np.linalg.norm(d1) or 1, np.linalg.norm(d2) or 1
+        cos = float(np.clip((d1 @ d2) / (n1 * n2), -1, 1))
+        turn.append(math.degrees(math.acos(cos)))
+    keep = [i for i, t in enumerate(turn) if t > tol_deg]
+    if len(keep) < 3:
+        return poly[keep] if len(keep) >= 3 else poly
+    return poly[keep]
+
+
 def fit_walls(pts: np.ndarray, floor_y: float = 0.0, *, band: tuple[float, float] = BAND,
               tol: float = TOL, rng: np.random.Generator | None = None) -> list[dict]:
-    """Wall segments through the points (N x 3, scene frame). Deterministic for a given seed."""
+    """The room's outline as wall segments.
+
+    A room's perimeter is the convex hull of its floor plan — furniture rows and aisle ends sit inside it, so fitting
+    lines through the point cloud finds desks before walls (tried: it produced eleven 11 m "walls" down a classroom).
+    The hull, simplified, is the outline; each long edge becomes a wall with its length and inward normal.
+    """
     rng = rng or np.random.default_rng(7)
     if pts.size == 0:
         return []
@@ -41,55 +86,45 @@ def fit_walls(pts: np.ndarray, floor_y: float = 0.0, *, band: tuple[float, float
     band_pts = pts[(y > band[0]) & (y < band[1])][:, [0, 2]]
     if len(band_pts) < 200:
         return []
-    floor_share = max(1, round(MIN_SUPPORT * len(band_pts)))
+    # a splat cloud has stray splats a long way out (the hull then spans hundreds of metres): work inside the
+    # 1st-99th percentile box, which is where the room actually is
+    lo = np.percentile(band_pts, 1.0, axis=0)
+    hi = np.percentile(band_pts, 99.0, axis=0)
+    inside = np.all((band_pts >= lo) & (band_pts <= hi), axis=1)
+    if inside.sum() >= 200:
+        band_pts = band_pts[inside]
+    if len(band_pts) > 60_000:  # the hull is decided by the extremes: a sample is enough and is 10x faster
+        band_pts = band_pts[rng.choice(len(band_pts), size=60_000, replace=False)]
 
-    rest = band_pts.copy()
+    hull = _hull(band_pts)
+    if len(hull) < 3:
+        return []
+    poly = _corners(hull)
+    poly = np.vstack([poly, poly[:1]])  # close the ring so each edge is consecutive
+    centre = band_pts.mean(axis=0)
+
     walls: list[dict] = []
-    for _ in range(MAX_WALLS):
-        if len(rest) < floor_share:
-            break
-        best: tuple[int, np.ndarray, np.ndarray, float] | None = None
-        for _ in range(240):
-            i, j = rng.integers(0, len(rest), 2)
-            if i == j:
-                continue
-            p, q = rest[i], rest[j]
-            if math.hypot(*(q - p)) < 0.8:
-                continue
-            d, n, off = _line(p, q)
-            inl = np.abs(rest @ n - off) < tol
-            score = int(inl.sum())
-            if best is None or score > best[0]:
-                best = (score, d, n, off)
-        if best is None or best[0] < floor_share:
-            break
-        score, d, n, off = best
-        seg = rest[np.abs(rest @ n - off) < tol]
-        # keep the segment tidy: its extent along the line, trimmed to the 2nd and 98th percentile of the support
-        t = seg @ d
-        t0, t1 = float(np.percentile(t, 0.5)), float(np.percentile(t, 99.5))
-        pad = (t1 - t0) * 0.02  # walls end where the sweep turned, a little past the last inlier
-        t0, t1 = t0 - pad, t1 + pad
-        if t1 - t0 < MIN_LEN:
-            rest = rest[np.abs(rest @ n - off) >= tol]
+    for i in range(len(poly) - 1):
+        a, b = poly[i], poly[i + 1]
+        length = float(np.linalg.norm(b - a))
+        if length < MIN_LEN:
             continue
-        a = d * t0 + n * off
-        b = d * t1 + n * off
-        # the wall's outward normal must point away from the room centre, decided later by the caller's traffic
+        d = (b - a) / length
+        n = np.array([-d[1], d[0]])
+        mid = (a + b) / 2
+        if float(n @ (centre - mid)) < 0:  # normals point into the room
+            n = -n
         walls.append({
             "a": [round(float(a[0]), 3), round(float(a[1]), 3)],
             "b": [round(float(b[0]), 3), round(float(b[1]), 3)],
-            "length": round(float(t1 - t0), 3),
+            "length": round(length, 3),
             "normal": [round(float(n[0]), 3), round(float(n[1]), 3)],
-            "support": int(score),
+            "support": int(len(band_pts)),
         })
-        rest = rest[np.abs(rest @ n - off) >= tol]
-
-    walls = _merge(walls)
-    walls = _orient(walls, band_pts)
-    for w in walls:
+    walls.sort(key=lambda w: -w["length"])
+    for w in walls[:MAX_WALLS]:
         w["angle"] = round(math.degrees(math.atan2(w["b"][1] - w["a"][1], w["b"][0] - w["a"][0])), 1)
-    return sorted(walls, key=lambda w: -w["length"])
+    return walls[:MAX_WALLS]
 
 
 def _merge(walls: list[dict], tol: float = 0.12, angle_tol: float = 4.0) -> list[dict]:
