@@ -73,11 +73,21 @@ async function load() {
     return res.ok ? res.json() : null;
   };
   const s: Shell = await tryFetch('shell.json');
+  const moduleUrl = params.get('module');   // an authored room module (see .agents/skills/ply-room-model)
   if (!s) { show('no shell.json next to this scene — run a capture, then open the model view'); return; }
   shell = s;
-  room = buildRoom(s);
-  objectsRoot = buildObjects(s);
-  scene.add(room, objectsRoot);
+  if (moduleUrl) {
+    // a hand-modelled room: the agent's module gets THREE and the measurements, and returns real geometry
+    const mod = await import(/* @vite-ignore */ moduleUrl);
+    room = mod.buildRoom(THREE, s) ?? buildRoom(s);
+    objectsRoot = mod.buildObjects(THREE, s) ?? buildObjects(s);
+    show(`authored module · ${(s.walls ?? []).length} walls · ${objectsRoot ? objectsRoot.children.length : 0} objects`);
+  } else {
+    room = buildRoom(s);
+    objectsRoot = buildObjects(s);
+  }
+  if (room) scene.add(room);
+  if (objectsRoot) scene.add(objectsRoot);
   const walls = s.walls?.length ?? 0;
   const objects = s.objects?.length ?? 0;
   show(`${walls} walls · ${(s.openings ?? []).length} openings · ${objects} objects`);
