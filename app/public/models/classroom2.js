@@ -122,6 +122,17 @@ export function buildObjects(THREE, shell) {
   const g = new THREE.Group();
   g.name = 'objects';
   const fixed = buildFurniture(THREE, s);
+  // the door leaves and their lattice glass render near-black under our lighting; lift them the way a camera does
+  fixed.traverse((o) => {
+    if (!o.isMesh || !o.material || !o.material.color) return;
+    const c = o.material.color;
+    const dark = c.r < 0.22 && c.g < 0.22 && c.b < 0.22;
+    if (dark && /door|leaf|panel|timber/i.test(o.name)) {
+      o.material = o.material.clone();
+      o.material.color.setHex(0x4a3527);
+      o.material.roughness = 0.55;
+    }
+  });
   fixed.name = 'furniture';
   const lectern = buildLectern(THREE);
   lectern.name = 'lectern';

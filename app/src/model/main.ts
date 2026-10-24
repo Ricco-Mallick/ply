@@ -38,7 +38,7 @@ controls.dampingFactor = 0.08;
 controls.maxPolarAngle = Math.PI * 0.495;
 
 // lights: a soft sky, a key with shadows, a cool fill from the opposite side
-scene.add(new THREE.HemisphereLight('#cfe0ff', '#0a0f1a', 1.1));
+scene.add(new THREE.HemisphereLight('#f4ecdd', '#101724', 1.25));  // warm daylight, not a blue studio
 const key = new THREE.DirectionalLight('#fff2df', 2.4);
 key.position.set(9, 14, 7);
 key.castShadow = true;
@@ -49,7 +49,7 @@ scene.add(key);
 const fill = new THREE.DirectionalLight('#8fb6ff', 0.7);
 fill.position.set(-10, 8, -6);
 scene.add(fill);
-scene.add(new THREE.AmbientLight('#4b5875', 0.5));
+scene.add(new THREE.AmbientLight('#6a6f7d', 0.55));
 
 // grid on the ground, a bench plate under the room
 const grid = new THREE.GridHelper(60, 60, 0x243352, 0x18233a);
