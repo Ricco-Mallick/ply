@@ -93,23 +93,19 @@ export function buildRoom(THREE, shell) {
   walls.name = 'walls';
   const ceiling = buildCeiling(THREE, s);
   ceiling.name = 'ceiling';
-  // the ceiling is lit from above by our lights, so its underside rendered nearly black; the capture shows bright
-  // mottled white plaster. Give the plaster a little self-lit warmth instead of adding a light that would wash the room.
+  // the ceiling is lit from above by our lights, so its underside rendered dark; the capture shows bright mottled
+  // white plaster. Lift every material in the ceiling group with a little self-illumination rather than adding a
+  // light that would wash the room out.
   ceiling.traverse((o) => {
-    if (!o.isMesh || !o.material || !o.material.color) return;
-    if (/ceil|plaster|slab/i.test(o.name)) {
-      o.material = o.material.clone();
-      o.material.color.setHex(0xf1ece1);
-      o.material.emissive = new THREE.Color(0x4a4842);
-      o.material.emissiveIntensity = 0.55;
-      o.material.roughness = 1;
+    if (!o.isMesh || !o.material) return;
+    const m = o.material.clone();
+    if (m.color) {
+      m.color.lerp(new THREE.Color(0xffffff), 0.35);
+      m.emissive = (m.color ? m.color.clone() : new THREE.Color(0xffffff)).multiplyScalar(0.45);
+      m.emissiveIntensity = 0.9;
+      m.roughness = 1;
     }
-  });
-  const windows = buildWindows(THREE);
-  windows.name = 'windows';
-  const glass = new THREE.MeshBasicMaterial({ color: 0xcfe4f2 });   // daylight behind the grille, not a black hole
-  windows.traverse((o) => {
-    if (o.isMesh && /glas|pane/i.test(o.name + (o.material && o.material.name || ''))) { o.material = glass; }
+    o.material = m;
   });
   g.add(walls, ceiling, windows);
   return g;
