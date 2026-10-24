@@ -141,15 +141,28 @@ export function buildRoom(shell: Shell): THREE.Group {
   return root;
 }
 
+export function roomAngle(shell: Shell) {
+  const angles = (shell.walls ?? []).map((w) => Math.atan2(w.b[1] - w.a[1], w.b[0] - w.a[0]));
+  if (!angles.length) return 0;
+  // the longest wall decides the room's grid
+  const longest = [...(shell.walls ?? [])].sort((a, b) => b.length - a.length)[0];
+  return Math.atan2(longest.b[1] - longest.a[1], longest.b[0] - longest.a[0]);
+}
+
 export function buildObjects(shell: Shell): THREE.Group {
   const root = new THREE.Group();
   root.name = 'objects';
-  for (const o of shell.objects ?? []) root.add(proxy(o, shell.floorY ?? 0, shell.ceilingY ?? 3));
+  const base = roomAngle(shell);
+  for (const o of shell.objects ?? []) {
+    const kind = (o.kind ?? '').toLowerCase();
+    if (kind === 'door' || kind === 'window') continue;  // wall features: the openings in buildRoom draw them
+    root.add(proxy(o, shell.floorY ?? 0, shell.ceilingY ?? 3, base));
+  }
   return root;
 }
 
 /** One piece of furniture, at a believable size for what it is, standing where the capture found it. */
-export function proxy(o: Obj, floorY = 0, ceiling = 3): THREE.Group {
+export function proxy(o: Obj, floorY = 0, ceiling = 3, roomYaw = 0): THREE.Group {
   const g = new THREE.Group();
   const kind = (o.kind ?? '').toLowerCase();
   const { w, h, d, yaw } = sizeFor(o);
@@ -157,7 +170,9 @@ export function proxy(o: Obj, floorY = 0, ceiling = 3): THREE.Group {
   g.name = o.id;
   g.userData = { kind: 'object', id: o.id, label: o.name, type: kind, size: [w, h, d] };
   g.position.set(cx, floorY, cz);
-  g.rotation.y = yaw;
+  // snap to the room's grid: a desk row is parallel to a wall, and an AABB's long side is a poor guess on its own
+  const snapped = roomYaw + Math.round((yaw - roomYaw) / (Math.PI / 2)) * (Math.PI / 2);
+  g.rotation.y = snapped;
 
   const wood = mat(PALETTE.wood, { roughness: 0.62 });
   const fabric = mat(PALETTE.fabric, { roughness: 0.95 });
