@@ -38,7 +38,11 @@ def _dense_workspace(ctx):
     if ws.exists():
         shutil.rmtree(ws)
     (ws / "sparse").mkdir(parents=True)
+    # align links data/images to the undistorted frames; when that link is gone (a resumed run, a restored
+    # checkpoint) fall back to the dense directory itself, which always holds them
     images = ctx.data_dir / "images"
+    if not images.exists():
+        images = ctx.dense_dir / "images"
     if not images.exists():
         raise FileNotFoundError(f"{images} missing: the solve must keep its undistorted frames")
     (ws / "images").symlink_to(images.resolve())
