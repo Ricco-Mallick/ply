@@ -94,7 +94,8 @@ def _colour_transfer(mesh_path, fused_path, out_path, cell=0.04):
 def run_stage(ctx):
     import pycolmap
 
-    if not pycolmap.has_cuda():
+    has_cuda = pycolmap.has_cuda if isinstance(pycolmap.has_cuda, bool) else pycolmap.has_cuda()  # it is a flag in 4.x
+    if not has_cuda:
         ctx.log.emit("mesh", "warn", "pycolmap has no CUDA: dense stereo skipped")
         return {"skipped": "no cuda"}
 
