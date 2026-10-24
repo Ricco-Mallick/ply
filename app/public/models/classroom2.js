@@ -76,13 +76,17 @@ function terrazzo(THREE) {
 function longDesk(THREE, w, d) {
   // the rows in this room are long dark bench-desks, not single tables
   const g = new THREE.Group();
-  const topMat = new THREE.MeshStandardMaterial({ color: 0x2f2b28, roughness: 0.55 });
+  const topMat = new THREE.MeshStandardMaterial({ color: 0x4a3b2e, roughness: 0.42, metalness: 0.04 });  // dark wood, not black
   const frameMat = new THREE.MeshStandardMaterial({ color: 0x24262b, roughness: 0.6, metalness: 0.35 });
   const top = new THREE.Mesh(new THREE.BoxGeometry(w, 0.05, d), topMat);
   top.position.y = 0.745;
   const apron = new THREE.Mesh(new THREE.BoxGeometry(w * 0.94, 0.08, d * 0.7), topMat);
   apron.position.y = 0.69;
   g.add(top, apron);
+  // a lighter front edge, which is what makes a desk read in the capture
+  const edge = new THREE.Mesh(new THREE.BoxGeometry(w, 0.012, 0.02), new THREE.MeshStandardMaterial({ color: 0x8a6a4c, roughness: 0.5 }));
+  edge.position.set(0, 0.748, d / 2);
+  g.add(edge);
   for (const sx of [-1, 1]) {
     const leg = new THREE.Mesh(new THREE.BoxGeometry(0.05, 0.74, d * 0.8), frameMat);
     leg.position.set(sx * (w / 2 - 0.08), 0.37, 0);
