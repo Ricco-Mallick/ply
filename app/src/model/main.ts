@@ -362,7 +362,7 @@ async function loadLidar() {
   show('loading point cloud…');
   const geo = await new PLYLoader().loadAsync(lidarUrl);
   geo.computeBoundingBox();
-  const mat = new THREE.PointsMaterial({ size: 0.02, vertexColors: true, sizeAttenuation: true });
+  const mat = new THREE.PointsMaterial({ size: 0.055, vertexColors: true, sizeAttenuation: true });
   const cloud = new THREE.Points(geo, mat);
   cloud.name = 'lidar-cloud';
   scene.add(cloud);
