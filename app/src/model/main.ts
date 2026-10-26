@@ -364,6 +364,9 @@ async function loadLidar() {
   geo.computeBoundingBox();
   const mat = new THREE.PointsMaterial({ size: 0.055, vertexColors: true, sizeAttenuation: true });
   const cloud = new THREE.Points(geo, mat);
+  cloud.frustumCulled = false;   // the scan sits far from the origin, so a stale bound culled the whole cloud
+  controls.minDistance = 0.2;
+  controls.maxDistance = 400;
   view = 'doll';   // orbit, not walk: the walk controller parks the camera at the origin and hides the cloud
   cloud.name = 'lidar-cloud';
   scene.add(cloud);
