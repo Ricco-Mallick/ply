@@ -364,6 +364,7 @@ async function loadLidar() {
   geo.computeBoundingBox();
   const mat = new THREE.PointsMaterial({ size: 0.055, vertexColors: true, sizeAttenuation: true });
   const cloud = new THREE.Points(geo, mat);
+  view = 'doll';   // orbit, not walk: the walk controller parks the camera at the origin and hides the cloud
   cloud.name = 'lidar-cloud';
   scene.add(cloud);
   const b = geo.boundingBox!;
