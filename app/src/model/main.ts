@@ -12,6 +12,7 @@ import type { Obj, Shell } from './types';
 const BASE = '/ply/';
 const params = new URLSearchParams(location.search);
 const sceneBase = params.get('scene') ?? `${BASE}scenes/demo/`;
+const lidarUrl = params.get('lidar');   // a coloured point cloud (PLY) to look at on its own
 
 type View = 'walk' | 'doll' | 'plan';
 const el = <T extends HTMLElement>(sel: string) => document.querySelector(sel) as T;
@@ -356,4 +357,22 @@ canvas.addEventListener('pointerlockchange', () => {
   document.body.classList.toggle('locked', document.pointerLockElement === canvas);
 });
 
-load().catch((e) => show(`could not load: ${e}`));
+async function loadLidar() {
+  if (!lidarUrl) return false;
+  show('loading point cloud…');
+  const geo = await new PLYLoader().loadAsync(lidarUrl);
+  geo.computeBoundingBox();
+  const mat = new THREE.PointsMaterial({ size: 0.02, vertexColors: true, sizeAttenuation: true });
+  const cloud = new THREE.Points(geo, mat);
+  cloud.name = 'lidar-cloud';
+  scene.add(cloud);
+  const b = geo.boundingBox!;
+  const c = b.getCenter(new THREE.Vector3()), sz = b.getSize(new THREE.Vector3());
+  camera.position.copy(c).add(new THREE.Vector3(sz.x * 0.7, sz.y * 0.55, sz.z * 0.7));
+  controls.target.copy(c);
+  controls.enabled = true; controls.update();
+  show(`lidar cloud · ${(geo.attributes.position.count / 1e6).toFixed(2)}M points · ${sz.x.toFixed(1)} × ${sz.y.toFixed(1)} × ${sz.z.toFixed(1)} m`);
+  return true;
+}
+
+loadLidar().then((done) => { if (!done) load().catch((e) => show(`could not load: ${e}`)); });
