@@ -47,6 +47,12 @@ export function Start({ onRecord, onScan, onUpload, onOpen, onJob }: { onRecord:
           <span className="choice-d">One or more clips of the same space. Drop them here or pick from your files.</span>
         </Glass>
         <input ref={file} type="file" accept="video/*" multiple hidden onChange={e => pick(e.target.files)} />
+        <Glass as="div" className="choice soon" aria-disabled="true" opts={{ radius: 22 }}>
+          <span className="choice-ico" aria-hidden="true"><svg viewBox="0 0 24 24" width="26" height="26" fill="none" stroke="currentColor" strokeWidth="1.6"><circle cx="12" cy="12" r="2.6" fill="currentColor" stroke="none" /><path d="M6.4 6.4a7.9 7.9 0 0 0 0 11.2M17.6 17.6a7.9 7.9 0 0 0 0-11.2" /><path d="M3.4 3.4a12.2 12.2 0 0 0 0 17.2M20.6 20.6a12.2 12.2 0 0 0 0-17.2" opacity=".5" /></svg></span>
+          <span className="choice-t">LiDAR + video<i className="pill-ios mono">iPhone Pro</i></span>
+          <span className="choice-d">Depth lidar recorded alongside the video: true metric geometry in dim or textureless rooms, with photo colour on top.</span>
+          <span className="choice-note mono soon-note"><b aria-hidden="true" />Coming soon · in development</span>
+        </Glass>
       </div>
       {!PHONE && <PhoneQR />}
       {jobs.length > 0 && (

@@ -36,6 +36,16 @@ main h1 em { font-style: italic; color: var(--amber); }
 .choice-t { font: 400 26px/1.05 var(--font-display); }
 .choice-d { color: var(--body); font-size: 14.5px; line-height: 1.5; }
 .choice-note { color: var(--amber); font-size: 10px; margin-top: auto; }
+/* the next capture mode: iPhone only, not built yet, so it reads as a promise rather than a button */
+.choice.soon { cursor: default; border-style: dashed; border-color: rgba(255, 255, 255, .16); background: linear-gradient(160deg, rgba(255, 255, 255, .055), rgba(255, 255, 255, .012) 60%), var(--lg-tint); }
+.choice.soon .choice-ico { background: rgba(255, 255, 255, .05); color: rgba(236, 241, 255, .5); }
+.choice.soon .choice-t { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; color: rgba(236, 241, 255, .76); }
+.choice.soon .choice-d { color: rgba(198, 209, 232, .66); }
+.pill-ios { font-family: var(--font-mono); font-size: 9.5px; font-style: normal; letter-spacing: .14em; text-transform: uppercase; padding: 5px 8px 4px; border-radius: 999px; border: 1px solid rgba(255, 255, 255, .2); color: rgba(236, 241, 255, .62); background: rgba(255, 255, 255, .04); white-space: nowrap; }
+.soon-note { display: flex; align-items: center; gap: 7px; color: rgba(255, 190, 120, .82); }
+.soon-note b { width: 5px; height: 5px; border-radius: 50%; background: var(--amber); animation: soonpulse 2.6s ease-out infinite; }
+@keyframes soonpulse { 0% { box-shadow: 0 0 0 0 rgba(255, 190, 120, .45); } 70% { box-shadow: 0 0 0 7px rgba(255, 190, 120, 0); } 100% { box-shadow: 0 0 0 0 rgba(255, 190, 120, 0); } }
+@media (prefers-reduced-motion: reduce) { .soon-note b { animation: none; } }
 .qr { display: flex; gap: 18px; align-items: center; padding: 16px; border-radius: 18px; margin-top: 14px; }
 .qr img { border-radius: 10px; flex: 0 0 auto; }
 .qr p { margin: 6px 0; color: var(--body); font-size: 14px; max-width: 52ch; }

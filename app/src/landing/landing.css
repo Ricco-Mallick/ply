@@ -116,6 +116,11 @@ header > *{pointer-events:auto}
 .final .big{font:600 clamp(48px,10vw,120px)/.9 var(--font-display); font-variation-settings:var(--dv); letter-spacing:.42em; margin-right:-.42em}
 .final .line2{font:300 clamp(18px,3vw,28px)/1.2 var(--font-display); font-variation-settings:var(--dv); font-style:var(--h1-style); letter-spacing:.02em} .final .line2 b{font-weight:700}
 .final .row{display:flex; gap:12px; flex-wrap:wrap; justify-content:center}
+.final .next{display:flex; align-items:center; gap:10px; flex-wrap:wrap; justify-content:center; padding:8px 15px; border:1px dashed rgba(255,255,255,.2); border-radius:999px; background:rgba(255,255,255,.03); color:var(--muted); font-size:10.5px}
+.final .next .dot{width:5px; height:5px; border-radius:50%; background:var(--amber); animation:nextpulse 2.6s ease-out infinite}
+.final .next .sep{color:rgba(255,255,255,.24)}
+@keyframes nextpulse{0%{box-shadow:0 0 0 0 rgba(255,190,120,.45)}70%{box-shadow:0 0 0 7px rgba(255,190,120,0)}100%{box-shadow:0 0 0 0 rgba(255,190,120,0)}}
+@media (prefers-reduced-motion: reduce){.final .next .dot{animation:none}}
 .btn{display:inline-flex; align-items:center; height:46px; padding:0 22px; background:var(--accent); color:#0B1220; text-decoration:none; font:500 12px/1 var(--font-mono); letter-spacing:.18em; text-transform:uppercase; pointer-events:auto}
 .btn.ghost{color:var(--fg); border-radius:0}
 .replay{position:fixed; z-index:16; left:50%; bottom:calc(46px + env(safe-area-inset-bottom,0px)); transform:translateX(-50%); border:0; background:none; color:var(--muted); font:500 11px/1 var(--font-mono); letter-spacing:.16em; text-transform:uppercase; padding:6px 0; opacity:0; pointer-events:none}
