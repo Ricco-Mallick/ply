@@ -18,6 +18,11 @@ from pathlib import Path
 # what a capture has to carry for the appearance fit to have enough constraints
 MIN_VIEWS_PER_SECOND = 1.8
 WARN_VIEWS_PER_SECOND = 2.1
+# with a plan, the floor follows it: a slow walk is planned at ~1.5/s and has as many views per metre as a
+# normal walk at 2.2/s, so failing it against 1.8 would fail a run for doing what it was told
+PLANNED_FAIL_SHARE = 0.8
+PLANNED_WARN_SHARE = 0.9
+ABS_MIN_VIEWS_PER_SECOND = 1.2
 MIN_REGISTERED_RATIO = 0.9
 MIN_SPZ_MB = 3.0
 MIN_KEPT_FRACTION = 0.5
@@ -32,8 +37,21 @@ def _views_per_second(frames: dict) -> float | None:
     return round(kept / seconds, 3) if seconds else None
 
 
-def check(report: dict) -> dict:
-    """Return {"ok", "issues", "metrics"}; issues carry level fail|warn, a code, and a sentence."""
+def view_floors(plan: dict | None) -> tuple[float, float, float | None]:
+    """(fail, warn, planned rate): absolute without a plan, relative to the planned rate with one."""
+    inp = (plan or {}).get("input") or {}
+    planned = inp.get("fpsUsed") or inp.get("keptFps")
+    if not isinstance(planned, (int, float)) or planned <= 0:
+        return MIN_VIEWS_PER_SECOND, WARN_VIEWS_PER_SECOND, None
+    fail = max(ABS_MIN_VIEWS_PER_SECOND, min(MIN_VIEWS_PER_SECOND, PLANNED_FAIL_SHARE * planned))
+    warn = max(fail, min(WARN_VIEWS_PER_SECOND, PLANNED_WARN_SHARE * planned))
+    return round(fail, 2), round(warn, 2), float(planned)
+
+
+def check(report: dict, plan: dict | None = None) -> dict:
+    """Return {"ok", "issues", "metrics"}; issues carry level fail|warn, a code, and a sentence.
+
+    `plan` is <out>/plan.json; with it, the views floor follows the rate the plan chose for this walk."""
     issues: list[dict] = []
 
     def add(level: str, code: str, message: str) -> None:
@@ -41,14 +59,16 @@ def check(report: dict) -> dict:
 
     frames = report.get("frames") or {}
     views = _views_per_second(frames)
+    fail_vps, warn_vps, planned = view_floors(plan)
+    of_plan = f" (planned {planned:.2f}/s)" if planned else ""
     if views is None:
         add("warn", "views-unknown", "the frame report has no duration: views per second could not be checked")
-    elif views < MIN_VIEWS_PER_SECOND:
-        add("fail", "views", f"{views} frames per second of footage, under {MIN_VIEWS_PER_SECOND}. "
+    elif views < fail_vps:
+        add("fail", "views", f"{views} frames per second of footage{of_plan}, under {fail_vps}. "
             "The appearance fit is inventing surface between views. Re-run the clips with the planned frame rate "
             "before training, and check nothing passed --max-frames.")
-    elif views < WARN_VIEWS_PER_SECOND:
-        add("warn", "views-thin", f"{views} frames per second, thin for a room: expect softness on large surfaces.")
+    elif views < warn_vps:
+        add("warn", "views-thin", f"{views} frames per second{of_plan}, thin for a room: expect softness on large surfaces.")
 
     sfm = report.get("sfm") or {}
     ratio = sfm.get("registeredRatio")
@@ -97,7 +117,8 @@ def main(argv: list[str] | None = None) -> int:
         print("usage: python -m plypipe.verify <report.json>", file=sys.stderr)
         return 2
     report = json.loads(Path(args[0]).read_text())
-    result = check(report)
+    from plypipe import plan  # plan.json sits next to report.json in a job folder
+    result = check(report, plan.read(Path(args[0]).parent))
     print(json.dumps(result, indent=1))
     for i in result["issues"]:
         print(f"[{i['level']}] {i['code']}: {i['message']}", file=sys.stderr)
