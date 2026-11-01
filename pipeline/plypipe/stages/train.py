@@ -42,8 +42,17 @@ def run_stage(ctx: Ctx) -> dict:
     # the training budget comes from this model, not from a house number: surface area sets the gaussian
     # cap, the solved views set the steps, and the preset only scales the two
     scene = read_scene(ctx) or {}
-    shell = scene.get("shell") or {}
-    bounds = scene.get("bounds") or {}
+    # scene.json names the shell ("shell.json") rather than inlining it: resolve the name, and treat a
+    # missing or malformed file as "no shell" instead of failing the whole training stage
+    shell = scene.get("shell")
+    if isinstance(shell, str) and shell:
+        try:
+            shell = json.loads((ctx.out / shell).read_text())
+        except (OSError, ValueError):
+            shell = {}
+    shell = shell if isinstance(shell, dict) else {}
+    bounds = scene.get("bounds")
+    bounds = bounds if isinstance(bounds, dict) else {}
     views = len(list(ctx.frames_dir.glob("*.jpg"))) if ctx.frames_dir.exists() else 0
     if not views:  # a resumed job may have the solved frames only
         views = len(list((ctx.data_dir / "images").glob("*.jpg"))) if (ctx.data_dir / "images").exists() else 0
