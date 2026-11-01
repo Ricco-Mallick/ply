@@ -24,6 +24,7 @@ from pathlib import Path
 
 import numpy as np
 
+from plypipe import clean as clean_mod
 from plypipe.util import Ctx, need, read_scene, run, splat_transform_cmd, update_scene
 
 SPLAT_TRANSFORM = "@playcanvas/splat-transform@3.10.1"
@@ -167,31 +168,27 @@ def run_stage(ctx: Ctx) -> dict:
     full = ctx.out / "scene.spz"
     lite = ctx.out / "scene_lite.spz"
     cleaned = ctx.out / "scene_clean.ply"
-    # one cleaned PLY first (floaters filter when WebGPU is there), then both web files from it
+    # one cleaned PLY first, then both web files from it. The floater pass is Python, not WebGPU:
+    # a container without an adapter used to skip it silently, and the blobs shipped with the twin.
     floaters = False
+    clean_stats = None
     if clean:
-        try:
-            # the floater filter voxelises the scene; on a large, sparse capture (a chapel, a drone walk) it can
-            # decide almost everything is a floater. Measure first; keep it only if it leaves most of the twin.
-            probe = ctx.out / "_floater_probe.ply"
-            # the floater filter is the destructive one (it gutted a 4M chapel to 5k splats), so it is always measured,
-            # even when the other probes are off: the pass costs minutes, a twin with 0.15 MB costs the demo
-            run(base + ["-F", str(probe)], ctx, "export")
-            kept = ply_count(probe)
-            if total and kept < 0.5 * total:
-                ctx.log.emit("export", "warn", f"floater filter kept only {kept}/{total} splats: skipping it")
-                probe.unlink(missing_ok=True)
-                run(base + [str(cleaned)], ctx, "export")  # export unfiltered, not the filtered probe
-            else:
-                probe.replace(cleaned)
-                floaters = True
-        except StopIteration:
-            pass
-        except Exception as e:  # no WebGPU adapter in this container: keep the value filters only
-            ctx.log.emit("export", "warn", f"floater filter unavailable ({str(e)[-160:]}); exporting without it")
-            run(base + [str(cleaned)], ctx, "export")
+        run(base + [str(cleaned)], ctx, "export")
+        stats = clean_mod.floater_filter(cleaned, cleaned.with_name("scene_filtered.ply"))
+        scanned = cleaned.with_name("scene_filtered.ply")
+        if stats["keptFraction"] and stats["keptFraction"] >= 0.5:
+            scanned.replace(cleaned)
+            floaters = True
+            clean_stats = stats
+            ctx.log.emit("export", "progress", f"floaters: removed {stats['removedIsolated']} isolated and "
+                         f"{stats['removedFaint']} faint splats, kept {stats['kept']}")
+        else:
+            ctx.log.emit("export", "warn", f"floater pass kept only {stats['keptFraction']}: exporting without it")
+            scanned.unlink(missing_ok=True)
+            clean_stats = {**stats, "skipped": True}
     else:
         run(base + [str(cleaned)], ctx, "export")
+    clipped = clean_mod.clipped_fraction(cleaned)
     src = [*st, "-w", "--spz-version", "3", str(cleaned)]
     run(src + [str(full)], ctx, "export")
     n = ply_count(cleaned)
@@ -206,4 +203,5 @@ def run_stage(ctx: Ctx) -> dict:
     return {"spz": full.name, "spzMB": round(full.stat().st_size / 2**20, 2), "lite": lite.name, "liteMB": round(lite.stat().st_size / 2**20, 2),
             "cropBox": box, "cropDropped": drop_crop, "gaussiansIn": total, "gaussiansOut": n, "floaterFilter": floaters, "liteGaussians": min(n, LITE_MAX),
             "keptFraction": round(n / total, 3) if total else None,
-            "exportFilters": {"opacity": chosen["opacity"], "scaleCap": chosen["scale"], "why": chosen["why"]}}
+            "exportFilters": {"opacity": chosen["opacity"], "scaleCap": chosen["scale"], "why": chosen["why"]},
+            "floaterClean": clean_stats, "clippedFraction": clipped}

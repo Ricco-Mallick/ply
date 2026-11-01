@@ -494,6 +494,17 @@ def run_job(api: Api, job: dict, work: Path, extra: list[str]) -> None:
                 api.upload(f"scenes/{jid}/evidence/poses.json", poses, "application/json")
         except Exception as e:
             print(f"[worker] evidence upload failed: {e}", flush=True)
+        report = json.loads((out / "report.json").read_text()) if (out / "report.json").exists() else {}
+        from plypipe import verify as verify_mod
+        quality = verify_mod.check(report)
+        report["quality"] = quality
+        for issue in quality["issues"]:
+            print(f"[worker] quality {issue['level']}: {issue['message']}", flush=True)
+        hard = [i for i in quality["issues"] if i["level"] == "fail"]
+        if hard:
+            # do not publish a twin we would not accept: the numbers already said it was wrong
+            (out / "report.json").write_text(json.dumps(report, indent=1))
+            raise RuntimeError("quality gate failed, nothing published. " + " | ".join(i["message"] for i in hard))
         files = {}
         for name in RESULTS:
             f = out / name
@@ -502,9 +513,9 @@ def run_job(api: Api, job: dict, work: Path, extra: list[str]) -> None:
                 files[name] = f.stat().st_size
         if "scene.spz" not in files:
             raise RuntimeError("pipeline finished without scene.spz")
-        report = json.loads((out / "report.json").read_text()) if (out / "report.json").exists() else {}
         state["alive"] = False
-        post(status="done", stage="export", progress=1, message="done", result={"base": f"/v1/scenes/{jid}/", "files": files, "report": report})
+        post(status="done", stage="export", progress=1, message="done",
+             result={"base": f"/v1/scenes/{jid}/", "files": files, "report": report, "quality": quality})
     except Exception as e:
         state["alive"] = False
         post(status="failed", message=str(e)[-3800:])  # keep the end: that is where the real error line is

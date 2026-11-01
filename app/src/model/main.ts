@@ -106,9 +106,6 @@ async function load() {
     yawPitch.yaw = yaw = yw || 0; yawPitch.pitch = pitch = pt || 0;
     document.body.classList.add('posing');
   } else setView(view);
-  addEventListener('resize', resize);
-  resize();
-  loop();
 }
 
 function resize() {
@@ -367,7 +364,7 @@ async function loadLidar() {
   cloud.frustumCulled = false;   // the scan sits far from the origin, so a stale bound culled the whole cloud
   controls.minDistance = 0.2;
   controls.maxDistance = 400;
-  view = 'doll';   // orbit, not walk: the walk controller parks the camera at the origin and hides the cloud
+  setView('doll');   // orbit, not walk: the walk controller parks the camera at the origin and hides the cloud
   cloud.name = 'lidar-cloud';
   scene.add(cloud);
   const b = geo.boundingBox!;
@@ -379,4 +376,9 @@ async function loadLidar() {
   return true;
 }
 
+// the loop and the resize handler belong to the page, not to one loader: a lidar-only visit used to
+// load the cloud and then never draw it
+addEventListener('resize', resize);
+resize();
+loop();
 loadLidar().then((done) => { if (!done) load().catch((e) => show(`could not load: ${e}`)); });

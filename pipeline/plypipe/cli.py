@@ -140,6 +140,16 @@ def main(argv: list[str] | None = None) -> int:
         report["seconds"] = round(time.time() - t0, 1)
         mark_done(ctx, name, report)
         log.emit(name, "done", **report)
+    # the same gate the worker applies: say what is wrong with this run, in words that name the cause
+    if hi == len(order) - 1:
+        from plypipe import verify
+        rep = out / "report.json"
+        quality = verify.check(json.loads(rep.read_text()) if rep.exists() else {})
+        for issue in quality["issues"]:
+            log.emit("verify", "warn" if issue["level"] == "warn" else "error", issue["message"])
+        if not quality["ok"]:
+            log.emit("verify", "error", "quality gate failed: this twin should not be published")
+            return 1
     return 0
 
 
