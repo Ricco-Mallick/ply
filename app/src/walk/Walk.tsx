@@ -105,6 +105,12 @@ export function Walk() {
         )}
       </Glass>
 
+      {entered && !new URLSearchParams(location.search).get('scene') && (
+        <div className="demo-note mono" role="note">
+          <b>Demo scene</b> · a public sample model, here to show the viewer. Not a Ply reconstruction.
+          Our own twins are in the <a href={`${BASE}library.html`}>library</a> and the technical abstract.
+        </div>
+      )}
       {TOUCH && entered && engine && <Joystick engine={engine} />}
       {engine && <MeasureLayer engine={engine} shell={shell} on={measured} showObjects={measured} />}
       {engine && <PlacesLayer engine={engine} base={base} entered={entered} onMap={setMapX} onData={setArData} searchOpen={searchOpen} onSearch={setSearchOpen} />}

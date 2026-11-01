@@ -122,6 +122,8 @@ header > *{pointer-events:auto}
 @keyframes nextpulse{0%{box-shadow:0 0 0 0 rgba(255,190,120,.45)}70%{box-shadow:0 0 0 7px rgba(255,190,120,0)}100%{box-shadow:0 0 0 0 rgba(255,190,120,0)}}
 @media (prefers-reduced-motion: reduce){.final .next .dot{animation:none}}
 .btn{display:inline-flex; align-items:center; height:46px; padding:0 22px; background:var(--accent); color:#0B1220; text-decoration:none; font:500 12px/1 var(--font-mono); letter-spacing:.18em; text-transform:uppercase; pointer-events:auto}
+/* the closing card is invisible for most of the film; its links must not be clickable until it shows */
+.final .btn, .final .next, .final a { pointer-events: inherit; }
 .btn.ghost{color:var(--fg); border-radius:0}
 .replay{position:fixed; z-index:16; left:50%; bottom: 46px; bottom:calc(46px + env(safe-area-inset-bottom,0px)); transform:translateX(-50%); border:0; background:none; color:var(--muted); font:500 11px/1 var(--font-mono); letter-spacing:.16em; text-transform:uppercase; padding:6px 0; opacity:0; pointer-events:none}
 .replay::after{content:""; position:absolute; left:0; bottom:0; height:1px; width:0; background:var(--muted); transition:width .45s cubic-bezier(.22,1,.36,1)}

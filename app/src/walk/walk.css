@@ -91,3 +91,9 @@ button { font: inherit; color: inherit; cursor: pointer; }
 .arx-bottom { position: absolute; left: 12px; right: 12px; bottom: 22px; bottom: calc(22px + env(safe-area-inset-bottom, 0px)); display: flex; gap: 8px; justify-content: center; align-items: center; }
 .ar-err { position: fixed; z-index: 30; left: 50%; top: 70px; transform: translateX(-50%); padding: 10px 14px; border-radius: 12px; background: rgba(242, 85, 90, .92); color: #fff; font-size: 10.5px; max-width: 90vw; }
 .views-menu button:disabled { opacity: .4; }
+
+/* the demo notice: quiet, bottom-left, above the hint */
+.demo-note { position: fixed; z-index: 11; left: 18px; bottom: 18px; bottom: calc(18px + env(safe-area-inset-bottom, 0px)); max-width: min(420px, calc(100vw - 220px)); padding: 10px 12px; border-radius: 12px; border: 1px solid var(--line-2); background: rgba(8, 11, 18, .82); color: var(--muted); font-size: 10.5px; line-height: 1.6; letter-spacing: .04em; text-transform: none; }
+.demo-note b { color: var(--fg); }
+.demo-note a { color: var(--accent); }
+@media (max-width: 760px) { .demo-note { right: 18px; bottom: 150px; max-width: none; font-size: 10px; } }
