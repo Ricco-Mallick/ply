@@ -112,7 +112,7 @@ export function PlacesLayer({ engine, base, entered, onMap, onData, searchOpen, 
   return (
     <>
       {open && <Palette places={places} pinned={shown} dist={dist} onPick={id => { setDest(id); setGuide(false); setOpen(false); }} onClose={() => setOpen(false)} />}
-      {dp && <Glass className="route-card rc-palette" opts={{ radius: 20, shader: false }}>
+      {dp && <Glass className="route-card rc-palette" opts={{ radius: 20, shader: false }} style={{ position: 'fixed', left: 18, bottom: 18, top: 'auto', right: 'auto' }}>
         <div className="rc-h"><span className="wide eyebrow">Route</span><button className="rc-x" onClick={() => { setDest(null); setGuide(false); }} aria-label="End route">×</button></div>
         <h2>{dp.name}</h2>
         {path ? <p className="mono rc-m"><b>{L.toFixed(1)} m</b> · {Math.max(1, Math.round(L / 1.2))} s walk · {turns.length - 1} turn{turns.length === 2 ? '' : 's'}</p> : <p className="mono rc-m bad">No walkable route from here</p>}

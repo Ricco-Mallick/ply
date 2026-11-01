@@ -165,5 +165,5 @@ export function Minimap({ engine, manifest, extras }: { engine: WalkEngine; mani
     draw(); return () => cancelAnimationFrame(raf);
   }, [img, engine]);
   if (!img) return null;
-  return <Glass className="map" opts={{ radius: 14 }}><canvas ref={cv} style={{ width: 168, height: 168 }} aria-label="Map of the floor with your position" role="img" /><span className="wide map-l">Floor 01</span></Glass>;
+  return <Glass className="map" opts={{ radius: 14, shader: false }} style={{ position: 'fixed', right: 18, bottom: 18, left: 'auto', top: 'auto' }}><canvas ref={cv} style={{ width: 168, height: 168 }} aria-label="Map of the floor with your position" role="img" /><span className="wide map-l">Floor 01</span></Glass>;
 }
