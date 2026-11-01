@@ -23,6 +23,14 @@ export function Walk() {
   const [manifest, setManifest] = useState<SceneManifest | null>(null);
   const [entered, setEntered] = useState(false);
   const [help, setHelp] = useState(true);
+  // display gain, because the splat's own colour has no tone curve: a capture that clipped will glare
+  const [exposure, setExposure] = useState(() => { const v = +(localStorage.getItem('ply-exposure') ?? 1); return v >= .5 && v <= 1.6 ? v : 1; });
+  useEffect(() => { const el = canvas.current; if (el) el.style.filter = exposure === 1 ? '' : `brightness(${exposure})`; try { localStorage.setItem('ply-exposure', String(exposure)); } catch { /* private mode */ } }, [exposure]);
+  useEffect(() => { const k = (e: KeyboardEvent) => {
+    if (e.key === '[') setExposure(v => Math.max(.5, +(v - .05).toFixed(2)));
+    if (e.key === ']') setExposure(v => Math.min(1.6, +(v + .05).toFixed(2)));
+    if (e.key === '\\') setExposure(1);
+  }; addEventListener('keydown', k); return () => removeEventListener('keydown', k); }, []);
   const [loadErr, setLoadErr] = useState<string | null>(null);
   const [base, setBase] = useState<URL | null>(null); const [mapX, setMapX] = useState<MapExtras>({});
   const [arData, setArData] = useState<{ places: Place[]; nav: Navigator | null }>({ places: [], nav: null });
@@ -67,6 +75,7 @@ export function Walk() {
             href={`${BASE}editor/index.html?load=${encodeURIComponent(new URL(manifest.splat.replace('_lite', ''), base).href)}&filename=${encodeURIComponent((manifest.name || 'twin').replace(/[^\w.-]+/g, '_'))}.spz`}>Edit</Glass>}
           {entered && engine && manifest && base && <ArLauncher places={arData.places.filter(p => p.pinned).map(p => ({ id: p.id, name: p.name, x: p.p[0], z: p.p[2] }))} nav={arData.nav}
             splatUrl={new URL(manifest.splat, base).href} bounds={manifest.bounds ?? null} floorY={engine.floorY} />}
+          {entered && <Glass as="button" className="tour-btn pill" opts={{ shader: false, press: true }} title="Display exposure: [ dimmer, ] brighter, \\ reset" aria-label={`Exposure ${Math.round(exposure * 100)} percent`} onClick={() => setExposure(e => e >= 1.55 ? .7 : +(e + .1).toFixed(2))}>☀ {Math.round(exposure * 100)}%</Glass>}
           <Glass as="button" className="icon pill" opts={{ shader: false, press: true }} aria-label="Controls" aria-pressed={help} onClick={() => setHelp(h => !h)}>?</Glass>
           <Glass as="button" className="icon pill" opts={{ shader: false, press: true }} aria-label="Fullscreen" onClick={() => document.fullscreenElement ? document.exitFullscreen() : document.documentElement.requestFullscreen?.()}>⤢</Glass>
         </div>
@@ -80,7 +89,7 @@ export function Walk() {
         ) : (
           <ul>
             <li><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> move</li><li><kbd>Shift</kbd> run</li><li><kbd>F</kbd> free / walk</li>
-            {s?.mode === 'fly' && <li><kbd>Space</kbd>/<kbd>C</kbd> up / down</li>}<li><kbd>Scroll</kbd> speed {s ? s.speed.toFixed(1) : '1.0'}×</li><li><kbd>Esc</kbd> free the mouse</li>
+            {s?.mode === 'fly' && <li><kbd>Space</kbd>/<kbd>C</kbd> up / down</li>}<li><kbd>Scroll</kbd> speed {s ? s.speed.toFixed(1) : '1.0'}×</li><li><kbd>[</kbd><kbd>]</kbd> exposure</li><li><kbd>Esc</kbd> free the mouse</li>
           </ul>
         )}
       </Glass>

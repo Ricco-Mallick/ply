@@ -51,6 +51,37 @@ Read `report.json` (or `/v1/jobs/<id>`), not the UI:
   opacity-only branch.
 - `plan.model.why` matches the room (surface area within a couple of m² of a tape measure).
 
+## The gate: what a run must pass before anyone sees it
+
+`plypipe/verify.py` reads `report.json` at the end of every run, on the GPU worker and locally, and the
+worker refuses to publish a twin that fails it. The thresholds are the ones the chapel broke:
+
+| Check | Fail | Warn |
+|---|---|---|
+| views per second of footage | below 1.8 | below 2.1 |
+| floater pass recorded (`export.floaterClean`) | missing | — |
+| share of trained splats kept by export | below 0.5 | below 0.85 |
+| twin size | below 3 MB | — |
+| registered frames | — | below 90% |
+| antialiasing | — | off |
+| splats at the top of the colour range | — | above 2% |
+
+A failed run is stopped before upload, so the status page says why instead of linking to a twin nobody
+would accept. Run it by hand on any finished job:
+
+```bash
+python -m plypipe.verify work/my-room/report.json
+```
+
+Two of those checks exist because a stage used to skip itself silently:
+
+- **Floaters** are removed by `plypipe/clean.py`, a numpy pass over the exported PLY. The old `-F`
+  filter needed WebGPU, and a container without an adapter skipped it without failing. The numpy pass
+  either runs or the stage errors.
+- **Colour** is not corrected at export, because a per-splat tweak there changes hue per view. The
+  viewer carries a display gain instead (`[` dimmer, `]` brighter, `\` reset, persisted per browser),
+  which is where a tone curve belongs.
+
 ## Don'ts
 
 - Don't pass `--max-frames` to make a run faster. It silently lowers the kept rate (the classroom ran
@@ -62,3 +93,6 @@ Read `report.json` (or `/v1/jobs/<id>`), not the UI:
   as 1.35M with no check; probes are on by default.
 - Don't compare renders at different exposures and call it quality. Compare a fixed pose, or compare
   `report.json`.
+- Don't edit a finished splat by hand. Every hand edit so far produced a worse file than the pipeline
+  did: colour changes that ignore the higher-order SH shift hue per view. If a post-process is needed,
+  it goes in `plypipe/` with a test, so the next run benefits too.
