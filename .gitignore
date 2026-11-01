@@ -9,6 +9,8 @@ __pycache__/
 .venv/
 work/
 *.spz
+# the one splat that ships with the site: the real scan the landing film streams
+!app/public/models/chapel.spz
 *.ply
 !pipeline/tests/data/*.ply
 pipeline/wheels/
