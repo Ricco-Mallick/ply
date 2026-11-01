@@ -36,3 +36,12 @@ def test_cli_reports_errors_and_exits_nonzero(tmp_path):
     assert main(["run", str(tmp_path / "nothing"), "--out", str(out), "--only", "align", "--quiet"]) == 1
     err = [e for e in events(out) if e["event"] == "error"]
     assert err and "sparse_txt" in err[0]["msg"]
+
+
+def test_frame_rate_and_resolution_default_to_the_plan():
+    """argparse defaults would beat plan.input_plan() (ctx.opt only falls back on None)."""
+    from plypipe import cli as cli_mod
+    a = cli_mod.build_parser().parse_args(["run", "walk.mp4", "--out", "o"])
+    assert a.fps is None and a.long_side is None
+    a = cli_mod.build_parser().parse_args(["run", "walk.mp4", "--out", "o", "--fps", "3", "--long-side", "1920"])
+    assert a.fps == 3.0 and a.long_side == 1920
