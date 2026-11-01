@@ -434,16 +434,42 @@ def run_job(api: Api, job: dict, work: Path, extra: list[str]) -> None:
             return code, last_err, list(tail)
 
         state["msg"] = "starting pipeline"
-        code, last_err, tail = pipeline(job["args"])
-        # a native crash in camera solving (abort/segfault: negative exit code) is usually the learned features or the
-        # global mapper on an unusual capture; retry once from the sfm stage with classic SIFT + incremental mapping
-        if code < 0 and state["stage"] == "sfm" and "incremental" not in job["args"] and not state["timeout"]:
-            base = [a for i, a in enumerate(job["args"]) if a not in ("--features", "--mapper", "--matcher")
-                    and (i == 0 or job["args"][i - 1] not in ("--features", "--mapper", "--matcher"))]
-            retry = [*base, "--features", "sift", "--mapper", "incremental", "--matcher", "sequential", "--force", "sfm"]
-            post(stage="sfm", progress=overall("sfm", 0.0), message=f"sfm crashed (exit {code}); retrying with SIFT + incremental mapper")
+        # one attempt is judged, not trusted: the plan sets the run, the gate reads the result, and a
+        # failure that settings can fix is retried once with those settings changed. Each attempt is
+        # recorded, so the operator sees what was tried and why.
+        from plypipe import orchestrate, verify as verify_mod
+        args = list(job["args"])
+        attempts: list[dict] = []
+        # a coverage preview and a rehearsal are not twins: only a full run is judged and retried
+        judged = "--until" not in job["args"] and not rehearsal
+        for attempt in range(1, (orchestrate.MAX_ATTEMPTS if judged else 1) + 1):
+            state["msg"] = f"attempt {attempt}: starting pipeline"
+            code, last_err, tail = pipeline(args)
+            # a native crash in camera solving (abort/segfault: negative exit code) is usually the learned features
+            # or the global mapper on an unusual capture; retry from sfm with classic SIFT + incremental mapping
+            if code < 0 and state["stage"] == "sfm" and "incremental" not in args and not state["timeout"]:
+                base = [a for i, a in enumerate(args) if a not in ("--features", "--mapper", "--matcher")
+                        and (i == 0 or args[i - 1] not in ("--features", "--mapper", "--matcher"))]
+                retry = [*base, "--features", "sift", "--mapper", "incremental", "--matcher", "sequential", "--force", "sfm"]
+                post(stage="sfm", progress=overall("sfm", 0.0), message=f"sfm crashed (exit {code}); retrying with SIFT + incremental mapper")
+                state["frac"] = 0.0
+                code, last_err, tail = pipeline(retry)
+                args = retry
+            if code != 0:
+                break
+            report = json.loads((out / "report.json").read_text()) if (out / "report.json").exists() else {}
+            quality = verify_mod.check(report)
+            attempts.append({"attempt": attempt, "args": args,
+                             "settings": report.get("plan") or {}, "quality": quality})
+            if not judged or quality["ok"] or attempt == orchestrate.MAX_ATTEMPTS:
+                break
+            refined, notes = orchestrate.refine(report, args, report.get("plan"))
+            if refined == args or not notes:
+                break  # nothing settings can do; the failure is the capture itself
+            args = [*refined, "--force", "frames"]
             state["frac"] = 0.0
-            code, last_err, tail = pipeline(retry)
+            post(stage="frames", progress=0, message="quality gate: " + "; ".join(notes)[:200])
+            print(f"[worker] attempt {attempt} failed the gate, retrying: " + "; ".join(notes), flush=True)
         if code != 0:
             try:  # keep the full log next to the results for debugging
                 api.upload(f"scenes/{jid}/pipeline.log", root / "pipeline.log", "text/plain")
@@ -495,9 +521,9 @@ def run_job(api: Api, job: dict, work: Path, extra: list[str]) -> None:
         except Exception as e:
             print(f"[worker] evidence upload failed: {e}", flush=True)
         report = json.loads((out / "report.json").read_text()) if (out / "report.json").exists() else {}
-        from plypipe import verify as verify_mod
         quality = verify_mod.check(report)
         report["quality"] = quality
+        report["attempts"] = attempts
         for issue in quality["issues"]:
             print(f"[worker] quality {issue['level']}: {issue['message']}", flush=True)
         hard = [i for i in quality["issues"] if i["level"] == "fail"]

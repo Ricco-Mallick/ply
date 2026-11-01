@@ -55,7 +55,7 @@ export function Submit({ capture, onRename, onBack, onQueued }: { capture: Captu
         </Glass>
       )}
 
-      {backendReady && <label className="field"><span className="mono">Team key</span><input value={key} onChange={e => setKey(e.target.value)} placeholder="From the Ply team" autoComplete="off" spellCheck={false} style={{ fontFamily: 'var(--font-mono)', fontSize: 16 }} /></label>}
+      {backendReady && <label className="field"><span className="mono">Invite code</span><input value={key} onChange={e => setKey(e.target.value)} placeholder="From the Ply team (invite only)" autoComplete="off" spellCheck={false} style={{ fontFamily: 'var(--font-mono)', fontSize: 16 }} /></label>}
       {!backendReady && <p className="note"><b>No processing server is connected yet.</b> Ply will save the videos and a capture file (quality and sensor log) to this phone; run them through the pipeline with the command below.</p>}
       <div className="cmd"><code className="mono">{cmd}</code><button className="mono" onClick={() => navigator.clipboard?.writeText(cmd).then(() => { setCopied(true); setTimeout(() => setCopied(false), 1600); })}>{copied ? 'Copied' : 'Copy'}</button></div>
 

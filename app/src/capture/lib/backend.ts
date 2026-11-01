@@ -26,6 +26,17 @@ export function adoptKeyFromUrl() {
   u.searchParams.delete('key'); history.replaceState(history.state, '', u.pathname + u.search + u.hash);
 }
 export function teamKey() { try { return localStorage.getItem(KEY) ?? ''; } catch { return ''; } }
+
+/** Invite only: no signup, no account. A signed code is traded for GPU time; the worker verifies it. */
+export interface WhoAmI { role: 'team' | 'invite'; label: string; expires?: number }
+export async function whoami(code = teamKey()): Promise<WhoAmI> {
+  if (!API) throw new Error('No processing server is connected');
+  if (!code.trim()) throw new Error('Enter an invite code');
+  const r = await fetch(`${API}/v1/whoami`, { headers: { 'x-ply-key': code.trim() } });
+  const body = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(body.error ?? 'that invite is not valid or has expired');
+  return body as WhoAmI;
+}
 export function setTeamKey(k: string) { try { localStorage.setItem(KEY, k.trim()); } catch { /* private mode */ } }
 
 /** CLI flags for `python -m plypipe run`, from the chosen settings. */
@@ -94,7 +105,7 @@ export const DEFAULT_SETTINGS: Settings = { preset: 'standard', advanced: { mapp
 /** Upload every clip (resuming finished parts), then capture.json, then queue the job (or a coverage check). */
 export async function upload(c: Capture, s: Settings, onProgress: (done: number, total: number, label: string) => void, signal: AbortSignal, preview = false) {
   if (!backendReady) throw new Error('No processing server is connected yet');
-  if (!teamKey()) throw Object.assign(new Error('Enter the team key first'), { fatal: true });
+  if (!teamKey()) throw Object.assign(new Error('Enter your invite code first'), { fatal: true });
   const total = c.clips.reduce((a, k) => a + k.size, 0); let before = 0; const keys: string[] = [];
   for (const k of c.clips) {
     const blob = await readFile(k.id, k.mime); if (!blob) throw new Error(`${k.name} is missing from this phone`);

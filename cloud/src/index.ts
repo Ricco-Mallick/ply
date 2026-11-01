@@ -54,10 +54,31 @@ function cors(req: Request, env: Env) {
 }
 
 type Role = 'app' | 'worker' | null;
-function role(req: Request, env: Env): Role {
+
+/* Invite only. There is no signup: an invite is a signed code, label.expiry.mac, minted with the
+   app key (scripts/invite.py), so the Worker can verify one with Web Crypto and no database. Expiry
+   bounds the damage of a leaked code; rotating APP_KEY revokes every outstanding invite at once. */
+const enc = new TextEncoder();
+async function hmacHex(secret: string, msg: string): Promise<string> {
+  const k = await crypto.subtle.importKey('raw', enc.encode(secret), { name: 'HMAC', hash: 'SHA-256' }, false, ['sign']);
+  const sig = new Uint8Array(await crypto.subtle.sign('HMAC', k, enc.encode(msg)));
+  return Array.from(sig, b => b.toString(16).padStart(2, '0')).join('');
+}
+async function inviteOf(code: string, env: Env): Promise<{ label: string; expires: number } | null> {
+  const m = /^([a-z0-9][a-z0-9-]{1,23})\.(\d{10})\.([0-9a-f]{32})$/.exec(code);
+  if (!m || !env.APP_KEY) return null;
+  const [, label, exp, mac] = m;
+  const expires = Number(exp);
+  if (expires * 1000 < Date.now()) return null;
+  const want = await hmacHex(env.APP_KEY, `${label}.${exp}`);
+  return want.slice(0, 32) === mac ? { label, expires } : null;
+}
+async function role(req: Request, env: Env): Promise<Role> {
   if (env.WORKER_TOKEN && req.headers.get('authorization') === `Bearer ${env.WORKER_TOKEN}`) return 'worker';
-  if (env.APP_KEY && req.headers.get('x-ply-key') === env.APP_KEY) return 'app';
-  return null;
+  const key = req.headers.get('x-ply-key') ?? '';
+  if (!key) return null;
+  if (env.APP_KEY && key === env.APP_KEY) return 'app';
+  return (await inviteOf(key, env)) ? 'app' : null;
 }
 /** The app may only write its own captures; the worker may only write results. */
 function keyAllowed(key: string, r: Role) {
@@ -84,7 +105,15 @@ export default {
 };
 
 async function route(req: Request, env: Env, ctx: Ctx): Promise<Response> {
-  const url = new URL(req.url), p = url.pathname, q = url.searchParams, r = role(req, env), now = Date.now();
+  const url = new URL(req.url), p = url.pathname, q = url.searchParams, r = await role(req, env), now = Date.now();
+  // who am I: the app checks an invite before it lets someone record and spend GPU time
+  if (p === '/v1/whoami') {
+    const key = req.headers.get('x-ply-key') ?? '';
+    if (!key) return json({ error: 'no invite' }, 401);
+    if (env.APP_KEY && key === env.APP_KEY) return json({ role: 'team', label: 'team' });
+    const inv = await inviteOf(key, env);
+    return inv ? json({ role: 'invite', label: inv.label, expires: inv.expires }) : json({ error: 'that invite is not valid or has expired' }, 401);
+  }
 
   if (p === '/' || p === '/v1') return json({ ok: true, service: 'ply-api' });
   if (p === '/v1/health' && req.method === 'GET') {

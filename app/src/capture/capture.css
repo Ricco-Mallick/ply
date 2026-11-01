@@ -50,6 +50,13 @@ main h1 em { font-style: italic; color: var(--amber); }
 @keyframes soonpulse { 0% { box-shadow: 0 0 0 0 rgba(255, 190, 120, .45); } 70% { box-shadow: 0 0 0 7px rgba(255, 190, 120, 0); } 100% { box-shadow: 0 0 0 0 rgba(255, 190, 120, 0); } }
 @media (max-width: 760px) { .choice.soon { flex-wrap: wrap; } .soon-note { margin: 0; text-align: left; } }
 @media (prefers-reduced-motion: reduce) { .soon-note b { animation: none; } }
+.invite-card { min-height: 0; max-width: 620px; }
+.invite-input { width: 100%; margin-top: 6px; padding: 12px 14px; border-radius: 12px; border: 1px solid rgba(255,255,255,.18); background: rgba(255,255,255,.05); color: var(--fg); font-family: var(--font-mono); font-size: 14px; }
+.invite-input:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
+.invite-go { margin-top: 10px; align-self: flex-start; border: 0; border-radius: 12px; padding: 11px 18px; font: 500 13px/1 var(--font-mono); letter-spacing: .08em; text-transform: uppercase; background: var(--accent); color: #0B1220; cursor: pointer; }
+.invite-go:disabled { opacity: .45; cursor: default; }
+.invite-err { color: #ffb4a2; font-size: 13px; }
+.invite-foot { margin-top: 22px; color: var(--muted); }
 .qr { display: flex; gap: 18px; align-items: center; padding: 16px; border-radius: 18px; margin-top: 14px; }
 .qr img { border-radius: 10px; flex: 0 0 auto; }
 .qr p { margin: 6px 0; color: var(--body); font-size: 14px; max-width: 52ch; }

@@ -13,6 +13,7 @@ import { Start } from './ui/Start';
 import { Submit } from './ui/Submit';
 import { Status, rememberJob } from './ui/Status';
 import { Tutorial } from './ui/Tutorial';
+import { Invite } from './ui/Invite';
 
 type Screen = 'start' | 'perms' | 'tutorial' | 'live' | 'ar' | 'arvideo' | 'review' | 'submit' | 'analysing' | 'status';
 const SEEN = 'ply-tutorial-seen';
@@ -25,6 +26,8 @@ export function App() {
   const [cap, setCap] = useState<Capture | null>(null);
   const [prog, setProg] = useState<{ name: string; p: number } | null>(null);
   const [err, setErr] = useState<string | null>(null);
+  // no accounts anywhere in Ply: without a valid invite the capture side of the app does not open
+  const [invited, setInvited] = useState(() => !!localStorage.getItem('ply-team-key'));
 
   // the browser back button walks back through the flow instead of leaving the page
   useEffect(() => { history.replaceState({ screen }, ''); const f = (e: PopStateEvent) => setScreen((e.state?.screen as Screen) ?? 'start'); addEventListener('popstate', f); return () => removeEventListener('popstate', f); }, []);
@@ -65,6 +68,7 @@ export function App() {
     await deleteCapture({ ...cap, clips: cap.clips.filter(k => k.id === clipId) }).catch(() => {}); update({ ...cap, clips });
   };
 
+  if (!invited) return <Invite onDone={() => setInvited(true)} />;
   return (
     <>
       {err && <div className="toast" role="alert" onClick={() => setErr(null)}>{err}</div>}
