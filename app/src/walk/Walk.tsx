@@ -22,7 +22,8 @@ export function Walk() {
   const [engine, setEngine] = useState<WalkEngine | null>(null);
   const [manifest, setManifest] = useState<SceneManifest | null>(null);
   const [entered, setEntered] = useState(() => new URLSearchParams(location.search).has('ui'));  // ?ui=1: skip the gate (screenshots, demo kiosks)
-  const [help, setHelp] = useState(true);
+  const [searchOpen, setSearchOpen] = useState(false);
+  const [help, setHelp] = useState(false);  // the controls card is opt-in: ? or the ? button
   // display gain, because the splat's own colour has no tone curve: a capture that clipped will glare
   const [exposure, setExposure] = useState(() => { const v = +(localStorage.getItem('ply-exposure') ?? 1); return v >= .5 && v <= 1.6 ? v : 1; });
   useEffect(() => { const el = canvas.current; if (el) el.style.filter = exposure === 1 ? '' : `brightness(${exposure})`; try { localStorage.setItem('ply-exposure', String(exposure)); } catch { /* private mode */ } }, [exposure]);
@@ -63,6 +64,10 @@ export function Walk() {
 
       <header className="top">
         <Glass as="a" href={BASE} className="brand pill" opts={{ shader: false, press: true }}><span className="mark" aria-hidden="true" />PLY<span className="scene-name">{manifest?.name ?? 'Loading'}</span></Glass>
+        <Glass as="button" className="search-pill pill" opts={{ shader: false, press: true }} onClick={() => { document.exitPointerLock?.(); setSearchOpen(true); }}>
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true"><circle cx="11" cy="11" r="7" /><path d="m20 20-3.5-3.5" /></svg>
+          <span>Search places</span><kbd>⌘K</kbd>
+        </Glass>
         <div className="top-right">
           <Glass className="seg pill" opts={{ shader: false }} role="radiogroup" aria-label="Movement mode">
             {(['fly', 'walk'] as Mode[]).map(m => <button key={m} role="radio" aria-checked={s?.mode === m} className={s?.mode === m ? 'on' : ''} onClick={() => engine?.setMode(m)}>{m === 'fly' ? 'Free' : 'Walk'}</button>)}
@@ -97,7 +102,7 @@ export function Walk() {
 
       {TOUCH && entered && engine && <Joystick engine={engine} />}
       {engine && <MeasureLayer engine={engine} shell={shell} on={measured} showObjects={measured} />}
-      {engine && <PlacesLayer engine={engine} base={base} entered={entered} onMap={setMapX} onData={setArData} />}
+      {engine && <PlacesLayer engine={engine} base={base} entered={entered} onMap={setMapX} onData={setArData} searchOpen={searchOpen} onSearch={setSearchOpen} />}
       {engine && <Minimap engine={engine} manifest={manifest} extras={mapX} />}
 
       <div className={`gate ${entered ? 'gone' : ''}`}>

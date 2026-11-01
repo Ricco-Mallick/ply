@@ -8,7 +8,7 @@ import type { WalkEngine } from './engine';
 import type { MapExtras } from './Walk';
 import { Navigator, pathLength, steps, type Place } from '../lab/places';
 import { Overlay } from '../lab/overlay';
-import { Palette, SearchIco } from '../lab/search';
+import { Palette } from '../lab/search';
 
 const MERGE_M = 2.5; // pins of the same kind closer than this share one badge
 const MAX_STACK = 6; // ...up to six per badge, so a long row still shows where the benches are
@@ -32,10 +32,10 @@ function clusterPlaces(places: Place[]): Place[] {
   return out.slice(0, 400);
 }
 
-export function PlacesLayer({ engine, base, entered, onMap, onData }: { engine: WalkEngine; base: URL | null; entered: boolean; onMap: (m: MapExtras) => void; onData?: (d: { places: Place[]; nav: Navigator | null }) => void }) {
+export function PlacesLayer({ engine, base, entered, onMap, onData, searchOpen, onSearch }: { engine: WalkEngine; base: URL | null; entered: boolean; onMap: (m: MapExtras) => void; onData?: (d: { places: Place[]; nav: Navigator | null }) => void; searchOpen: boolean; onSearch: (v: boolean) => void }) {
   const [places, setPlaces] = useState<Place[] | null>(null);
   const [ov, setOv] = useState<Overlay | null>(null); const [nav, setNav] = useState<Navigator | null>(null);
-  const [open, setOpen] = useState(false); const [dest, setDest] = useState<string | null>(null); const [guide, setGuide] = useState(false); const [, tick] = useState(0);
+  const open = searchOpen, setOpen = onSearch; const [dest, setDest] = useState<string | null>(null); const [guide, setGuide] = useState(false); const [, tick] = useState(0);
 
   useEffect(() => { if (!base) return; fetch(new URL('places.json', base)).then(r => r.ok ? r.json() : null).then(j => setPlaces(j?.places ?? [])).catch(() => setPlaces([])); }, [base]);
   useEffect(() => {
@@ -102,16 +102,15 @@ export function PlacesLayer({ engine, base, entered, onMap, onData }: { engine: 
 
   // Ctrl/Cmd+K opens search, Esc closes it (the pointer lock is released so the palette can be used)
   useEffect(() => {
-    const k = (e: KeyboardEvent) => { if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'k') { e.preventDefault(); document.exitPointerLock?.(); setOpen(v => !v); } if (e.key === 'Escape') setOpen(false); };
+    const k = (e: KeyboardEvent) => { if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'k') { e.preventDefault(); document.exitPointerLock?.(); setOpen(!searchOpen); } if (e.key === 'Escape') setOpen(false); };
     addEventListener('keydown', k); return () => removeEventListener('keydown', k);
-  }, []);
+  }, [searchOpen]);
 
   if (!places?.length || !entered) return null;
   const dist = (p: Place) => Math.hypot(p.p[0] - me.x, p.p[2] - me.z);
   const dp = places.find(p => p.id === dest) ?? null, L = path ? pathLength(path) : 0, turns = path && dp ? steps(path, dp.name) : [];
   return (
     <>
-      <Glass as="button" className="walk-search pill" opts={{ shader: false, press: true }} onClick={() => { document.exitPointerLock?.(); setOpen(true); }}><SearchIco />Search places<kbd>⌘K</kbd></Glass>
       {open && <Palette places={places} pinned={shown} dist={dist} onPick={id => { setDest(id); setGuide(false); setOpen(false); }} onClose={() => setOpen(false)} />}
       {dp && <Glass className="route-card rc-palette" opts={{ radius: 20, shader: false }}>
         <div className="rc-h"><span className="wide eyebrow">Route</span><button className="rc-x" onClick={() => { setDest(null); setGuide(false); }} aria-label="End route">×</button></div>
