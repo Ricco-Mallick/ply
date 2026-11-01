@@ -39,7 +39,10 @@ kbd { font: 700 10px/1 var(--font-mono); padding: 3px 6px; border-radius: 5px; b
 
 /* ---- search A: command palette ---- */
 .pal-wrap { position: fixed; inset: 0; z-index: 30; background: rgba(4, 6, 12, .35); display: grid; justify-items: center; align-items: start; padding: 14vh 16px 16px; animation: fade .2s; }
-.pal { width: min(560px, 100%); padding: 8px; --lg-tint: rgba(8, 11, 18, .72); animation: pop .28s var(--ease-out); }
+.pal { width: min(560px, 100%); padding: 8px; --lg-tint: rgba(8, 11, 18, .72); animation: pop .28s var(--ease-out); display: flex; flex-direction: column; max-height: min(74vh, 700px); }
+.pal-list { overflow-y: auto; overscroll-behavior: contain; min-height: 0; scrollbar-width: thin; scrollbar-color: rgba(255,255,255,.22) transparent; }
+.pal-list::-webkit-scrollbar { width: 8px; }
+.pal-list::-webkit-scrollbar-thumb { background: rgba(255,255,255,.18); border-radius: 4px; }
 .pal-in { display: flex; align-items: center; gap: 12px; padding: 10px 12px 12px; border-bottom: 1px solid var(--line); color: var(--muted); }
 .pal-in input { flex: 1; border: 0; background: none; outline: none; color: var(--fg); font: 500 17px/1.2 var(--font-body); }
 .pal-g { padding: 12px 12px 6px; font-size: 9.5px; color: var(--dim); }

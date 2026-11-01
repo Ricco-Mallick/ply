@@ -1,16 +1,15 @@
 <!DOCTYPE html>
 <html>
     <head>
-        <title>SuperSplat</title>
+        <title>SuperSplat · Ply editor</title>
         <meta charset="utf-8" />
-        <base href="">
         <link rel="manifest" href="./manifest.json">
         <link rel="stylesheet" href="./index.css">
         <link rel="shortcut icon" href="#">
-        <meta name="description" content="SuperSplat is an advanced browser-based editor for manipulating and optimizing 3D Gaussian Splats. It is open source and engine agnostic." />
+        <meta name="description" content="SuperSplat, the open source Gaussian splat editor, served by Ply." />
         <meta name="viewport" content="width=device-width, user-scalable=no, minimum-scale=1.0, maximum-scale=1.0" />
 
-        <!-- Service worker -->
+        <!-- Service worker: caches the editor shell so a reload is quick. -->
         <script>
             const sw = navigator.serviceWorker;
             if (sw) {
@@ -21,31 +20,28 @@
         </script>
     </head>
 
+    <body>
+        <script type="module" src="./index.js"></script>
+
+        <!-- Every twin opens through ?load=. The editor keeps whatever camera state it has, which in a
+             fresh tab is outside the room, so once the splat count leaves zero we press the editor's own
+             focus shortcut to frame it. Same for the second press: the first can land mid-import. -->
         <script>
-            // Every twin opens through ?load=, and the editor's own camera starts wherever it was left,
-            // which for a fresh tab is outside the room. Press the editor's own focus shortcut once the
-            // splat count leaves zero, so the model is framed in the viewport the moment it appears.
             (() => {
                 if (!new URLSearchParams(location.search).has('load')) return;
                 let tries = 0, done = false;
-                const press = (key, code, shift) => {
-                    const ev = new KeyboardEvent('keydown', { key, code, shiftKey: !!shift, bubbles: true, cancelable: true });
-                    document.dispatchEvent(ev);
-                };
+                const press = () => document.dispatchEvent(new KeyboardEvent('keydown', { key: 'f', code: 'KeyF', bubbles: true, cancelable: true }));
                 const poll = () => {
                     if (done) return;
                     const text = document.body ? document.body.innerText : '';
                     const m = text.match(/Splats\s+([\d,]+)/i);
-                    const count = m ? parseInt(m[1].replace(/,/g, ''), 10) : 0;
-                    if (count > 0) {
+                    if (m && parseInt(m[1].replace(/,/g, ''), 10) > 0) {
                         done = true;
-                        // focus on the scene (F), then once more shortly after in case the first lands
-                        // while the import is still settling
-                        setTimeout(() => press('f', 'KeyF'), 250);
-                        setTimeout(() => press('f', 'KeyF'), 1400);
+                        setTimeout(press, 250);
+                        setTimeout(press, 1400);
                         return;
                     }
-                    if (++tries < 900) setTimeout(poll, 200);   // up to three minutes on a slow machine
+                    if (++tries < 900) setTimeout(poll, 200);
                 };
                 addEventListener('DOMContentLoaded', () => setTimeout(poll, 600));
             })();
