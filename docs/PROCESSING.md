@@ -45,7 +45,8 @@ What that ruled out and ruled in:
 
 Read `report.json` (or `/v1/jobs/<id>`), not the UI:
 
-- `frames.kept / frames.clips[].durationSec` ≥ 1.8 kept per second, and no `frame cap` warning in the log.
+- `frames.kept / frames.clips[].durationSec` at or above `quality.metrics.viewsFloor` (80 % of the planned rate), and no
+  `frame cap` warning in the log.
 - `train.antialiased` is `true`.
 - `export.gaussiansOut / export.gaussiansIn` ≥ 0.85, and `exportFilters.why` is not the last-resort
   opacity-only branch.
@@ -58,7 +59,7 @@ worker refuses to publish a twin that fails it. The thresholds are the ones the 
 
 | Check | Fail | Warn |
 |---|---|---|
-| views per second of footage | below 1.8 | below 2.1 |
+| views per second of footage | below 80 % of the planned rate, within 1.2–1.8 (1.8 without `plan.json`) | below 90 % of it (2.1 without a plan) |
 | floater pass recorded (`export.floaterClean`) | missing | — |
 | share of trained splats kept by export | below 0.5 | below 0.85 |
 | twin size | below 3 MB | — |

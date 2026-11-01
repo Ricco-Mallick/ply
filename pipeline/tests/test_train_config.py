@@ -14,8 +14,8 @@ class FakeConfig:
 
 
 class FakeMCMC:
-    def __init__(self, verbose=False, cap_max=1_000_000):
-        self.verbose, self.cap_max = verbose, cap_max
+    def __init__(self, verbose=False, cap_max=1_000_000, refine_stop_iter=25_000):
+        self.verbose, self.cap_max, self.refine_stop_iter = verbose, cap_max, refine_stop_iter
 
 
 st = types.SimpleNamespace(Config=FakeConfig, MCMCStrategy=FakeMCMC)
@@ -65,3 +65,10 @@ def test_gsplat_without_ppisp_falls_back_to_appearance_model():
     assert cfg.app_opt is True and info["ppisp"] is False and not hasattr(cfg, "post_processing")
     cfg, info = train_launcher.build_config(old, "/d", "/r", "quick", None, False)
     assert cfg.app_opt is False and info["ppisp"] is False
+
+
+@pytest.mark.parametrize("steps", [7_000, 18_000, 30_000, 55_000])
+def test_mcmc_stops_relocating_before_the_end(steps):
+    """gsplat stops relocation at 25k of 30k; a fixed 25k never stops an 18k run, so it scales with the run."""
+    cfg, _ = train_launcher.build_config(st, "/d", "/r", "standard", None, True, iterations=steps)
+    assert cfg.strategy.refine_stop_iter == int(steps * 0.83) < steps

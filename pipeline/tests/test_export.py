@@ -49,7 +49,11 @@ def read_gs_ply_xyz(path):
 
 def test_export_writes_full_and_lite_spz_and_crops(tmp_path):
     rng = np.random.default_rng(0)
-    inside = np.c_[rng.uniform(0, 6, 3000), rng.uniform(0, 2.8, 3000), rng.uniform(0, 4, 3000)]
+    # the room as a model has it: surfaces (floor + one wall, 10 cm apart), not points scattered through the air,
+    # which the floater pass rightly removes
+    fx, fz = np.meshgrid(np.arange(0.05, 6, 0.1), np.arange(0.05, 4, 0.1))
+    wy, wz = np.meshgrid(np.arange(0.15, 2.8, 0.1), np.arange(0.05, 4, 0.1))
+    inside = np.r_[np.c_[fx.ravel(), np.zeros(fx.size), fz.ravel()], np.c_[np.full(wy.size, 0.05), wy.ravel(), wz.ravel()]]
     floaters = np.c_[rng.uniform(20, 30, 200), rng.uniform(5, 9, 200), rng.uniform(20, 30, 200)]
     write_gs_ply(tmp_path / "scene.ply", np.concatenate([inside, floaters]), rng)
     ctx = Ctx(out=tmp_path, log=Log(tmp_path, quiet=True), opts={})
@@ -67,7 +71,8 @@ def test_export_writes_full_and_lite_spz_and_crops(tmp_path):
     subprocess.run(["npx", "-y", export.SPLAT_TRANSFORM, "-w", str(tmp_path / "scene.spz"), str(tmp_path / "back.ply")],
                    check=True, capture_output=True)
     back = read_gs_ply_xyz(tmp_path / "back.ply")
-    assert back.shape[0] == 3000
+    assert back.shape[0] == len(inside)
+    assert rep["floaterFilter"] and rep["floaterClean"]["removedIsolated"] == 0
     assert np.allclose(np.sort(back[:, 1]), np.sort(inside[:, 1]), atol=0.01)
 
 
