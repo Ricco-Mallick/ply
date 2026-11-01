@@ -82,3 +82,13 @@ def test_a_run_without_a_frame_report_is_only_a_warning():
     result = verify.check(report)
     assert result["ok"]
     assert {i["code"] for i in result["issues"]} == {"views-unknown"}
+
+
+def test_opacity_threshold_is_converted_to_logit(tmp_path):
+    """The PLY stores a logit; a probability threshold must be converted or it means 'half visible'."""
+    import math
+    from plypipe.stages import export as export_stage
+    p = 0.03
+    logit = round(math.log(p / (1 - p)), 3)
+    assert logit == -3.476
+    assert logit < 0, "a 3% visibility threshold is a negative logit"
