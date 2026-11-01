@@ -41,3 +41,5 @@ main { max-width: 1120px; margin: 0 auto; padding: clamp(26px, 5vw, 60px) clamp(
 .demo .card { min-height: 0; }
 .foot { text-align: center; color: var(--dim); padding: 26px 16px 40px; letter-spacing: .12em; }
 @media (max-width: 620px) { .sec { display: none; } }
+
+.legacy-note { color: #ffb4a0 !important; font: 600 10px/1.4 var(--font-mono); letter-spacing: .06em; text-transform: uppercase; }

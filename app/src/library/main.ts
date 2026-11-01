@@ -52,10 +52,10 @@ app.innerHTML = `
 <footer class="foot mono">Ply · Namma Space · Techfest 2026-27</footer>
 `;
 
-const DEMOS = [
-  { name: 'Classroom', note: '10.5 × 6.3 m · 194 places · free to walk', walk: './walk.html?scene=' + encodeURIComponent(`${API}/v1/scenes/hq-classroom-1/scene.json`), model: './model.html?scene=' + encodeURIComponent(`${API}/v1/scenes/hq-classroom-1/scene.json`) + '&module=/ply/models/classroom2.js' },
-  { name: 'Chapel', note: 'vaulted interior · twin with a tour', walk: './walk.html?scene=' + encodeURIComponent(`${API}/v1/scenes/hq-chapel-1/scene.json`) },
-  { name: 'Office (LiDAR)', note: '6.15 M points · measured shell', walk: './lidar.html' },
+const DEMOS: { name: string; note: string; walk: string; model?: string }[] = [
+  { name: 'Classroom', note: '10.5 × 6.3 m · 194 places · one pipeline version behind the current one', walk: './walk.html?scene=' + encodeURIComponent(`${API}/v1/scenes/hq-classroom-1/scene.json`), model: './model.html?scene=' + encodeURIComponent(`${API}/v1/scenes/hq-classroom-1/scene.json`) + '&module=/ply/models/classroom2.js' },
+  { name: 'Chapel', note: 'vaulted interior · older pipeline, quality below today\'s standard', walk: './walk.html?scene=' + encodeURIComponent(`${API}/v1/scenes/hq-chapel-1/scene.json`) },
+  { name: 'Office (LiDAR)', note: '6.15 M points · measured shell · under development', walk: './lidar.html' },
 ];
 
 $('#demos').innerHTML = DEMOS.map(d => `
@@ -72,8 +72,10 @@ function card(j: Job) {
     : j.status === 'review' ? `<a class="btn sm" href="./capture.html?job=${j.id}">Review</a>`
     : j.status === 'running' || j.status === 'queued' ? `<a class="ghost sm" href="./capture.html?job=${j.id}">Watch</a>`
     : '';
+  const legacy = /demo|rehearsal/i.test(j.name) && !ready ? '' : /demo|rehearsal/i.test(j.name) ? 'legacy' : '';
   return `<article class="card ${ready ? '' : 'dim'}">
     <div class="chead"><h3>${esc(j.name || 'Capture')}</h3><span class="badge ${j.status}">${BADGE[j.status] ?? esc(j.status)}</span></div>
+    ${legacy ? '<p class="meta legacy-note">Bad capture · very old development pipeline</p>' : ''}
     <p class="meta mono">${j.stage ? esc(j.stage) + ' · ' : ''}${j.createdAt ? ago(j.createdAt) : ''}${j.message && j.status !== 'done' ? ' · ' + esc(String(j.message).slice(0, 70)) : ''}</p>
     ${j.status === 'running' || j.status === 'queued' ? `<div class="bar"><i style="transform:scaleX(${(pct / 100).toFixed(3)})"></i></div>` : ''}
     <div class="row">${action}<span class="id mono">${j.id.slice(0, 8)}</span></div>

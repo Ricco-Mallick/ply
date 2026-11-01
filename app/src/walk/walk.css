@@ -97,3 +97,12 @@ button { font: inherit; color: inherit; cursor: pointer; }
 .demo-note b { color: var(--fg); }
 .demo-note a { color: var(--accent); }
 @media (max-width: 760px) { .demo-note { right: 18px; bottom: 150px; max-width: none; font-size: 10px; } }
+
+/* which pipeline produced this twin: a chip under the header, quiet but unmissable */
+.scene-status { position: fixed; z-index: 11; left: 18px; top: 68px; max-width: min(520px, calc(100vw - 36px)); padding: 8px 12px; border-radius: 10px; border: 1px solid var(--line-2); background: rgba(8, 11, 18, .8); color: var(--muted); font-size: 10.5px; line-height: 1.55; letter-spacing: .04em; text-transform: none; }
+.scene-status b { color: var(--fg); }
+.scene-status.old { border-color: rgba(255, 180, 160, .4); } .scene-status.old b { color: #ffb4a0; }
+.scene-status.mid { border-color: rgba(255, 217, 115, .35); } .scene-status.mid b { color: #ffd973; }
+.scene-status.new { border-color: rgba(142, 240, 182, .4); } .scene-status.new b { color: #8ef0b6; }
+.scene-status.dev { border-color: rgba(150, 190, 255, .4); } .scene-status.dev b { color: #a9c6ff; }
+@media (max-width: 760px) { .scene-status { top: 62px; font-size: 10px; } }

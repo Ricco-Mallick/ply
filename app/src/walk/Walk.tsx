@@ -6,6 +6,7 @@ import { Glass } from '../shared/Glass';
 import { Tour, autoTour, SHOT_NAMES } from './tour';
 import { PlacesLayer } from './Places';
 import { ArLauncher } from './ArUi';
+import { sceneStatus } from '../shared/scene-status';
 
 /** The AR walkthrough entry point is hidden until it has been tested on a real phone. */
 const AR_ENABLED = false;
@@ -110,6 +111,14 @@ export function Walk() {
         )}
       </Glass>
 
+      {entered && (() => {
+        const st = sceneStatus(new URLSearchParams(location.search).get('scene'));
+        return st ? (
+          <div className={`scene-status mono ${st.tone}`} role="note">
+            <b>{st.label}</b> · {st.text}
+          </div>
+        ) : null;
+      })()}
       {entered && !new URLSearchParams(location.search).get('scene') && (
         <div className="demo-note mono" role="note">
           <b>Demo scene</b> · a public sample model, here to show the viewer. Not a Ply reconstruction.
