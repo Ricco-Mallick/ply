@@ -62,7 +62,7 @@ export function Walk() {
     <>
       <canvas ref={canvas} className="stage" aria-label={manifest ? `3D walkthrough of ${manifest.name}` : '3D walkthrough'} onClick={() => { if (entered && !s?.locked) engine?.lock(); }} />
 
-      <header className="top">
+      <header className={`top ${entered ? '' : 'pre'}`}>
         <Glass as="a" href={BASE} className="brand pill" opts={{ shader: false, press: true }}><span className="mark" aria-hidden="true" />PLY<span className="scene-name">{manifest?.name ?? 'Loading'}</span></Glass>
         <Glass as="button" className="search-pill pill" opts={{ shader: false, press: true }} onClick={() => { document.exitPointerLock?.(); setSearchOpen(true); }}>
           <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true"><circle cx="11" cy="11" r="7" /><path d="m20 20-3.5-3.5" /></svg>
@@ -103,7 +103,7 @@ export function Walk() {
       {TOUCH && entered && engine && <Joystick engine={engine} />}
       {engine && <MeasureLayer engine={engine} shell={shell} on={measured} showObjects={measured} />}
       {engine && <PlacesLayer engine={engine} base={base} entered={entered} onMap={setMapX} onData={setArData} searchOpen={searchOpen} onSearch={setSearchOpen} />}
-      {engine && <Minimap engine={engine} manifest={manifest} extras={mapX} />}
+      {engine && entered && <Minimap engine={engine} manifest={manifest} extras={mapX} />}
 
       <div className={`gate ${entered ? 'gone' : ''}`}>
         <div className="gate-inner">
