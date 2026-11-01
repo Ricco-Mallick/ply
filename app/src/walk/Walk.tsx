@@ -21,7 +21,7 @@ export function Walk() {
   const canvas = useRef<HTMLCanvasElement>(null);
   const [engine, setEngine] = useState<WalkEngine | null>(null);
   const [manifest, setManifest] = useState<SceneManifest | null>(null);
-  const [entered, setEntered] = useState(false);
+  const [entered, setEntered] = useState(() => new URLSearchParams(location.search).has('ui'));  // ?ui=1: skip the gate (screenshots, demo kiosks)
   const [help, setHelp] = useState(true);
   // display gain, because the splat's own colour has no tone curve: a capture that clipped will glare
   const [exposure, setExposure] = useState(() => { const v = +(localStorage.getItem('ply-exposure') ?? 1); return v >= .5 && v <= 1.6 ? v : 1; });
