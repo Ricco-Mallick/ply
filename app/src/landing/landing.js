@@ -401,7 +401,7 @@ $('skip').addEventListener('click', () => {
 /* ================= cursor ================= */
 const cur = $('cursor'), orb = $('orb'), hintEl = $('hint'); let mx = innerWidth / 2, my = innerHeight / 2, cx = mx, cy = my, mN = new THREE.Vector2(9, 9), lastX = null, rotT = 0, rotV = 0, rot = 0;
 let hintTxt = ''; function setHint(t) { if (t === hintTxt) return; hintTxt = t; if (!t) { hintEl.textContent = ''; return; } scramble(hintEl, t, 1.4); }
-addEventListener('pointermove', e => { const dx = lastX === null ? 0 : e.clientX - lastX; lastX = e.clientX; mx = e.clientX; my = e.clientY; mN.set(mx / innerWidth * 2 - 1, -(my / innerHeight * 2 - 1)); if (dragging) { if (scan && scan.ready && scanK(pNow) > .2) scan.yaw -= dx * .0042; else rotV += dx * .0045; } });
+addEventListener('pointermove', e => { const dx = lastX === null ? 0 : e.clientX - lastX; lastX = e.clientX; mx = e.clientX; my = e.clientY; mN.set(mx / innerWidth * 2 - 1, -(my / innerHeight * 2 - 1)); if (dragging) rotV += dx * .0045; });
 const exploring = p => p > .445 && p < .535;
 $('gl').addEventListener('pointerdown', e => { lastX = e.clientX; if (exploring(pNow)) { dragging = true; $('gl').setPointerCapture(e.pointerId); sfx('blip'); } });
 addEventListener('pointerup', () => dragging = false); addEventListener('pointercancel', () => dragging = false);
@@ -511,6 +511,23 @@ document.querySelectorAll('.btn.ghost').forEach(b => glassAttach(b, { shader: fa
    starts downloading a third of the way through the scroll, not on load. */
 const scanEl = $('scan');
 const scanK = p => clamp(Math.min((p - .447) / .012, (.534 - p) / .014));
+/* The scan is Z-up, and its own sample path is written in that frame as [x, y, height] in metres.
+   three.js wants Y up, so every point and every camera goes through (x, y, z) -> (x, z, -y). */
+const SCAN_KF = [
+  { p: [8.3, 2.15, 0], l: [2.0, 1.5, 0], fov: 65, dur: 0 },
+  { p: [7.6, 1.85, 0], l: [-2.0, 1.45, 0], fov: 63, dur: 2500 },
+  { p: [7.0, 1.65, 0], l: [-6.0, 1.45, 0], fov: 62, dur: 2500 },
+  { p: [4.5, 1.62, 0], l: [-7.0, 1.4, 0], fov: 60, dur: 2500 },
+  { p: [1.5, 1.6, 0], l: [-7.5, 1.35, 0], fov: 58, dur: 2500 },
+  { p: [-1.8, 1.58, 0], l: [-8.0, 1.3, 0], fov: 56, dur: 2500 },
+  { p: [-5.8, 1.55, 1.0], l: [-6.0, 2.0, -3.5], fov: 58, dur: 2500 },
+  { p: [-7.5, 1.7, -0.5], l: [2.5, 1.8, 0], fov: 65, dur: 2500 },
+  { p: [-2.0, 3.8, -0.5], l: [1.0, 2.5, 3.5], fov: 66, dur: 2500 },
+  { p: [2.5, 5.8, 0], l: [-7.0, 1.5, 0], fov: 75, dur: 2500 },
+];
+const SCAN_TOTAL = SCAN_KF.reduce((a, k) => a + k.dur, 0);
+const V3 = (a) => new THREE.Vector3(a[0], a[1], a[2]);
+
 /* Spark only starts pulling splats once its renderer has drawn a frame, so the scan renders from the
    first moment even while the canvas is invisible. The canvas is revealed when the data is in. */
 function startScan() {
@@ -523,44 +540,40 @@ function startScan() {
     r.outputColorSpace = THREE.SRGBColorSpace; r.setClearColor(0x070b14, 1);
     const scene = new THREE.Scene(); scene.background = new THREE.Color('#070B14');
     scene.add(new S.SparkRenderer({ renderer: r }));
-    const cam = new THREE.PerspectiveCamera(52, innerWidth / innerHeight, .1, 2000);
-    cam.position.set(0, 4, 12); cam.lookAt(0, 2, 0);
-    scan = { r, scene, cam, yaw: 2.35, pitch: .34, ready: false };
+    const cam = new THREE.PerspectiveCamera(65, innerWidth / innerHeight, .05, 260);
+    cam.position.set(8.3, 2.15, 0); cam.lookAt(2, 1.5, 0);
+    scan = { r, scene, cam, t: 0, ready: false };
     const mesh = new S.SplatMesh({ url: `${import.meta.env.BASE_URL}models/chapel.spz` });
+    mesh.rotation.x = -Math.PI / 2;  // the scan is Z-up
     scene.add(mesh);
     await mesh.initialized;
-    const box = mesh.getBoundingBox(), c = box.getCenter(new THREE.Vector3()), sz = box.getSize(new THREE.Vector3());
-    /* cut the roof off, the way the dollhouse view does: an interior scan reads as walls and a floor
-       from the outside only once the top is gone */
-    const cut = box.min.y + sz.y * .62;
-    const edit = new S.SplatEdit({ rgbaBlendMode: S.SplatEditRgbaBlendMode.MULTIPLY, softEdge: .06 });
-    const cutter = new S.SplatEditSdf({ type: S.SplatEditSdfType.BOX, opacity: 0, color: new THREE.Color(1, 1, 1) });
-    cutter.position.set(c.x, cut + 60, c.z); cutter.scale.set(700, 60, 700);
-    edit.addSdf(cutter); mesh.add(edit);
-    const radius = Math.max(sz.x, sz.z) * .82;
-    Object.assign(scan, {
-      c, sz, cut, radius, ready: true,
-      place: () => {
-        const k = scan, cp = Math.cos(k.pitch);
-        k.cam.near = Math.max(.05, sz.length() / 900); k.cam.far = sz.length() * 8;
-        k.cam.position.set(k.c.x + Math.sin(k.yaw) * k.radius * cp, k.cut + k.radius * Math.sin(k.pitch), k.c.z + Math.cos(k.yaw) * k.radius * cp);
-        k.cam.lookAt(k.c.x, k.cut * .5, k.c.z); k.cam.updateProjectionMatrix();
-      },
-    });
-    scan.place();
+    scan.ready = true;
   })().catch(() => { scanDead = true; scan = null; if (scanEl) scanEl.remove(); });
   return scanLoad;
 }
-function drawScan(p) {
+function scanShot(t) {  // which pair of keyframes, and how far between them
+  let acc = 0;
+  for (let i = 1; i < SCAN_KF.length; i++) {
+    const d = SCAN_KF[i].dur || 1;
+    if (t < acc + d) return { a: SCAN_KF[i - 1], b: SCAN_KF[i], k: ss((t - acc) / d) };
+    acc += d;
+  }
+  return { a: SCAN_KF[SCAN_KF.length - 2], b: SCAN_KF[SCAN_KF.length - 1], k: 1 };
+}
+function drawScan(p, dt) {
   if (scanDead) return;
   const k = scanK(p);
   if (!scan && p > .30) startScan();  // prefetch a third of the way in, whether or not the chapter is on screen yet
-  if (scan) {
-    if (!RM && scan.ready) scan.yaw += .0011;
-    if (scan.place) scan.place();
-    scan.r.render(scan.scene, scan.cam);
+  if (scan && scan.ready) {
+    scan.t = (scan.t + dt * 1000) % SCAN_TOTAL;  // the rig only advances while the chapter is visible
+    const { a, b, k: e } = scanShot(scan.t);
+    scan.cam.position.lerpVectors(V3(a.p), V3(b.p), e);
+    scan.cam.lookAt(new THREE.Vector3().lerpVectors(V3(a.l), V3(b.l), e));
+    const fov = a.fov + (b.fov - a.fov) * e;
+    if (Math.abs(scan.cam.fov - fov) > .01) { scan.cam.fov = fov; scan.cam.updateProjectionMatrix(); }
   }
-  if (scanEl) scanEl.style.opacity = String(scan && scan.ready ? k : 0);
+  if (scan) scan.r.render(scan.scene, scan.cam);
+  if (scanEl) scanEl.style.opacity = String(scan && scan.ready && k > 0 ? k : 0);
 }
 
 /* ================= frame ================= */
@@ -647,12 +660,12 @@ function frame(now) { requestAnimationFrame(frame); const dt = Math.min(.05, (no
   const sk = gate !== 'locked' && !skipping && p < .9 ? 1 : 0; $('skip').style.opacity = sk; $('skip').style.pointerEvents = sk ? 'auto' : 'none';
   /* cursor */
   cx = lerp(cx, mx, 1 - Math.exp(-dt * 12)); cy = lerp(cy, my, 1 - Math.exp(-dt * 12)); cur.style.transform = `translate(${cx}px,${cy}px)`;
-  const ex = gate === 'open' && exploring(p); orb.classList.toggle('on', ex);
+  const ex = gate === 'open' && exploring(p) && !(scan && scan.ready && scanK(p) > .2); orb.classList.toggle('on', ex);
   setHint(gate === 'locked' ? '' : ex ? (dragging ? 'Rotating' : 'Drag to rotate') : '');
   $('cue').classList.toggle('on', ((gate === 'intro' && introT < .05 && now - lastIn > 600) || (gate === 'open' && p < .1 && now - lastIn > 1300)));
   /* render */
   composer.render(dt);
-  try { drawScan(p); } catch (e) { scanDead = true; if (scanEl) scanEl.remove(); }
+  try { drawScan(p, dt); } catch (e) { scanDead = true; if (scanEl) scanEl.remove(); }
   glassFrame(dt);
   /* adaptive DPR after warm-up */
   if (time > 4) { fpsAcc += dt; fpsN++; if (fpsAcc > 2) { const fps = fpsN / fpsAcc; fpsAcc = fpsN = 0; if (fps < 42 && DPR > .65) { DPR = Math.max(.65, DPR - .15); resize(); } else if (fps > 58 && DPR < Math.min(devicePixelRatio, 1.5) - .1) { DPR += .1; resize(); } } }
