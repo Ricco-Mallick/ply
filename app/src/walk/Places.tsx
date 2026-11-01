@@ -46,8 +46,20 @@ export function PlacesLayer({ engine, base, entered, onMap, onData }: { engine: 
   // 200 labelled places means 200 floating labels over the room. Stack neighbours of the same kind into one pin
   // ("Bench ×6"); the palette and the routing still see every individual place.
   const shown = useMemo(() => clusterPlaces(places ?? []), [places]);
-  useEffect(() => { ov?.setPlaces(shown, 'tag', entered); }, [ov, shown, entered]);
-  useEffect(() => { const i = setInterval(() => tick(n => n + 1), 400); return () => clearInterval(i); }, []);
+  // and only the pins near the visitor get a label: fourteen chips in a 10 m radius, not every desk in
+  // the building. The map and the palette still list all 194.
+  const [nearTick, setNearTick] = useState(0);
+  const near = useMemo(() => {
+    const p0 = engine.state.pos;
+    return shown
+      .map(p => ({ p, d: Math.hypot(p.p[0] - p0.x, p.p[2] - p0.z) }))
+      .filter(x => x.d < 10)
+      .sort((a, b) => a.d - b.d)
+      .slice(0, 14)
+      .map(x => x.p);
+  }, [shown, nearTick]);
+  useEffect(() => { ov?.setPlaces(near, 'tag', entered); }, [ov, near, entered]);
+  useEffect(() => { const i = setInterval(() => { tick(n => n + 1); setNearTick(n => n + 1); }, 400); return () => clearInterval(i); }, []);
 
   const me = engine.state.pos;
   const path = useMemo(() => { if (!nav || !dest) return null; const p = places!.find(x => x.id === dest)!; return nav.route([me.x, me.z], [p.p[0], p.p[2]]); },
