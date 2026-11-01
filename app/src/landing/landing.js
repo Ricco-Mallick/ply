@@ -510,7 +510,7 @@ document.querySelectorAll('.btn.ghost').forEach(b => glassAttach(b, { shader: fa
    chapter. It has its own renderer and canvas so it cannot disturb the film's composer, and it
    starts downloading a third of the way through the scroll, not on load. */
 const scanEl = $('scan');
-const scanK = p => clamp(Math.min((p - .447) / .012, (.534 - p) / .014));
+const scanK = p => clamp(Math.min((p - .451) / .010, (.528 - p) / .010));  // the wipe leads, the scan follows
 /* The scan is Z-up, and its own sample path is written in that frame as [x, y, height] in metres.
    three.js wants Y up, so every point and every camera goes through (x, y, z) -> (x, z, -y). */
 const SCAN_KF = [
@@ -573,11 +573,21 @@ function drawScan(p, dt) {
     if (Math.abs(scan.cam.fov - fov) > .01) { scan.cam.fov = fov; scan.cam.updateProjectionMatrix(); }
   }
   if (scan) scan.r.render(scan.scene, scan.cam);
-  if (scanEl) scanEl.style.opacity = String(scan && scan.ready && k > 0 ? k : 0);
+  const shown = !!(scan && scan.ready && k > 0);
+  if (scanEl) scanEl.style.opacity = String(shown ? k : 0);
+  if (scanUI) scanUI.style.opacity = String(shown ? k : 0);
+  if (shown) {
+    if (!scanOn) { scan.t = 0; scan.beat = -1; }  // arrived at the chapter: start at the entrance
+    const beat = scan.t < 7000 ? 0 : scan.t < 14000 ? 1 : 2;
+    if (beat !== scan.beat) { scan.beat = beat; scanBeats.forEach((el, i) => el.classList.toggle('on', i === beat)); scanRail.forEach((el, i) => el.classList.toggle('on', i <= beat)); }
+  }
+  scanOn = shown;
 }
 
 /* ================= frame ================= */
-let pNow = 0, pPrev = 0, last = performance.now(), lastChap = -1;
+let pNow = 0, pPrev = 0, pPrev2 = 0, last = performance.now(), lastChap = -1;
+const scanUI = $('scanui'), scanBeats = [...document.querySelectorAll('#scanbeats .sb')], scanRail = [...document.querySelectorAll('#scanrail i')];
+let scanOn = false;
 const CHN = ['Capture', 'Reconstruct', 'Twin', 'Explore', 'Label', 'Navigate', 'Arrive', 'Map your own'];
 const QUERY = 'meeting room 4';
 const dummy = new THREE.Object3D();
@@ -636,8 +646,12 @@ function frame(now) { requestAnimationFrame(frame); const dt = Math.min(.05, (no
   /* post */
   const F = finalPass.uniforms; F.uTime.value = time;
   const w1 = clamp((p - .248) / (.292 - .248)), w3 = clamp((p - .818) / (.858 - .818));
-  if (w1 > 0 && w1 < 1) { F.uWipeOn.value = 1; F.uWipe.value = w1; F.uDir.value = 0; F.uCA.value = 7.5; }
+  const wIn = clamp((p - .436) / (.452 - .436)), wOut = clamp((p - .526) / (.542 - .526));
+  const wipeK = w1 > 0 && w1 < 1 ? w1 : wIn > 0 && wIn < 1 ? wIn : wOut > 0 && wOut < 1 ? wOut : -1;
+  if (wipeK >= 0) { F.uWipeOn.value = 1; F.uWipe.value = wipeK; F.uDir.value = 0; F.uCA.value = 7.5; }
   else F.uWipeOn.value = 0;
+  if ((p > .436 && pPrev2 <= .436) || (p > .526 && pPrev2 <= .526)) sfx('whoosh');
+  pPrev2 = p;
   F.uZoom.value = RM ? 0 : Math.sin(Math.PI * w3) * .28 + bangPulse * .3; F.uCAg.value = RM ? 0 : frontOn * .05;
   const ce = chromT < 0 ? 0 : clamp((now - chromT) / 2600); F.uChrom.value = RM ? 0 : ss(1 - Math.abs(2 * ce - 1)) * (ce < 1 ? 1 : 0);
   bloom.strength = .5 - win(p, .15, .2) * .2 + win(p, .27, .3) * .2 - win(p, .4, .44) * .15 + win(p, .7, .76) * .3 + frontOn * .05 + bangPulse * .9;
