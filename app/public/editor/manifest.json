@@ -5,8 +5,7 @@
     "display": "fullscreen",
     "start_url": "./",
     "scope": "./",
-    "background_color": "#000000",
-    "theme_color": "#000000",
+    "background_color": "#ffffff",
     "icons": [
         {
             "src": "./static/icons/logo-192.png",
@@ -37,8 +36,7 @@
         {
             "action": "./",
             "accept": {
-                "application/ply": [".ply"],
-                "application/octet-stream": [".splat", ".sog", ".spz", ".ksplat", ".ssproj"]
+                "application/ply": [".ply"]
             }
         }
     ]

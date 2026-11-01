@@ -6,89 +6,20 @@
         <base href="">
         <link rel="manifest" href="./manifest.json">
         <link rel="stylesheet" href="./index.css">
-        <link rel="icon" href="./static/icons/logo-192.png" type="image/png">
+        <link rel="shortcut icon" href="#">
         <meta name="description" content="SuperSplat is an advanced browser-based editor for manipulating and optimizing 3D Gaussian Splats. It is open source and engine agnostic." />
         <meta name="viewport" content="width=device-width, user-scalable=no, minimum-scale=1.0, maximum-scale=1.0" />
 
-        <!-- v3 removed the service worker: unregister workers and delete caches
-             left behind by earlier versions, so stale clients stop serving old
-             builds. Can be removed once pre-v3 clients have cycled through. -->
+        <!-- Service worker -->
         <script>
-            navigator.serviceWorker?.getRegistrations().then(regs => regs.forEach(reg => reg.unregister()));
-            window.caches?.keys().then(keys => keys.forEach((key) => {
-                if (key.startsWith('superSplat-v')) caches.delete(key);
-            }));
+            const sw = navigator.serviceWorker;
+            if (sw) {
+                sw.register('./sw.js')
+                    .then(reg => console.log('service worker registered', reg))
+                    .catch(err => console.log('failed to register service worker', err));
+            }
         </script>
-        <style>
-      /* shown when the browser has no WebGPU: SuperSplat 3.x renders through it and cannot fall back */
-      #ply-nogpu { display: none; position: fixed; inset: 0; z-index: 99999; place-items: center; background: #0b1020; color: #f3f4f6; font: 15px/1.55 -apple-system, "Helvetica Neue", Arial, sans-serif; text-align: center; padding: 24px; }
-      #ply-nogpu.on { display: grid; }
-      #ply-nogpu b { display: block; font-size: 20px; margin-bottom: 10px; }
-      #ply-nogpu a { color: #ff8a3d; }
-      #ply-nogpu code { color: #b4bccb; }
-    </style>
-    <script>
-      // Ply ships SuperSplat unmodified. Two things it does not do on its own:
-      //  1. open a file from ?load=<url>, which is how the walkthrough's Edit button hands it a twin;
-      //  2. survive a browser without WebGPU, which lands it on a black page after a TypeError.
-      (() => {
-        const q = new URLSearchParams(location.search);
-        const src = q.get('load');
-        const name = q.get('filename') || (src ? decodeURIComponent(src.split('/').pop().split('?')[0]) : '');
-        if (src) {
-          // SuperSplat's own drop handler only accepts real drag payloads, and its picker path needs the
-          // File System Access API. Masking the API makes the build create its hidden <input id="file-selector">
-          // fallback, which a page can drive with a File from a URL.
-          try { delete window.showOpenFilePicker; } catch { window.showOpenFilePicker = undefined; }
-        }
-        let banner = null;
-        const noGpu = (why) => {
-          if (banner) return;
-          banner = document.createElement('div');
-          banner.id = 'ply-nogpu'; banner.className = 'on';
-          banner.innerHTML = '<div><b>This editor needs WebGPU</b>SuperSplat renders through WebGPU, and this browser ' +
-            'did not give it one' + (why ? ` (<code>${why}</code>)` : '') + '. Chrome or Edge 113+ on desktop works.<br><br>' +
-            'The twin still opens in the <a href="../walk.html">walkthrough</a>, the point cloud in the ' +
-            '<a href="../lidar.html">LiDAR viewer</a>, and the semantic model in the <a href="../model.html">model viewer</a>.</div>';
-          document.body.append(banner);
-        };
-        // the failure arrives as an exception, not as a missing API, so listen for it as well
-        addEventListener('error', (e) => { if (/webgpu|adapter|createbuffer/i.test(String(e.message || ''))) noGpu('adapter'); });
-        addEventListener('unhandledrejection', (e) => { const m = String(e.reason && (e.reason.message || e.reason)); if (/webgpu|adapter|createbuffer/i.test(m)) noGpu('adapter'); });
-        if (!navigator.gpu) { addEventListener('DOMContentLoaded', () => noGpu('no navigator.gpu')); return; }
-        navigator.gpu.requestAdapter().then(a => { if (!a) addEventListener('DOMContentLoaded', () => noGpu('no adapter')); }).catch(() => {});
-        // SuperSplat swallows the adapter error and paints its own grey "failed to start", so the only
-        // reliable signal from outside is what is on the page a few seconds in
-        const check = () => {
-          const text = (document.body && document.body.innerText) || '';
-          if (/failed to start/i.test(text) || !document.querySelector('canvas')) noGpu('adapter');
-        };
-        addEventListener('DOMContentLoaded', () => { check(); setTimeout(check, 4000); setTimeout(check, 9000); });
-        if (!src) return;
-        let tries = 0;
-        const load = async () => {
-          const file_selector = document.querySelector('#file-selector');
-          if (!file_selector) { if (++tries < 40) setTimeout(load, 250); return; }
-          try {
-            const r = await fetch(src);
-            if (!r.ok) throw new Error(`${r.status} ${r.statusText}`);
-            const blob = await r.blob();
-            const file = new File([blob], name, { type: 'application/octet-stream' });
-            const dt = new DataTransfer();
-            dt.items.add(file);
-            file_selector.files = dt.files;
-            file_selector.dispatchEvent(new Event('change', { bubbles: true }));
-          } catch (e) {
-            const el = document.createElement('div');
-            el.id = 'ply-nogpu'; el.className = 'on';
-            el.innerHTML = `<div><b>Could not load the twin</b><code>${src}</code><br><br>${e.message}</div>`;
-            document.body.append(el);
-          }
-        };
-        addEventListener('DOMContentLoaded', () => setTimeout(load, 600));
-      })();
-    </script>
-</head>
+    </head>
 
     <body>
         <script type="module" src="./index.js"></script>

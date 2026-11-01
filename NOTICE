@@ -18,8 +18,10 @@ Build and runtime
 
 Editor
 ------
-- SuperSplat v3.5.2 — MIT — Copyright (c) 2011-2026 PlayCanvas Ltd.
-  Built unmodified from tag v3.5.2 and served at /editor/.
+- SuperSplat v2.32.5 — MIT — Copyright (c) 2011-2026 PlayCanvas Ltd.
+  Built from tag v2.32.5 and served at /editor/. That is the last release of the WebGL2 line:
+  v3.0 rebuilt the editor on WebGPU and removed the fallback, which excludes browsers without it.
+  The only change to the build is @playcanvas/splat-transform 3.3.3 -> 3.10.3, so it reads SPZ v4.
   Licence text: app/public/editor/LICENSE.supersplat.txt
 
 Figures
