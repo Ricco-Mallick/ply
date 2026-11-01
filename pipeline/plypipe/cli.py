@@ -64,10 +64,11 @@ def build_parser() -> argparse.ArgumentParser:
     r.add_argument("--force", choices=STAGES, help="re-run this stage and all later ones")
     r.add_argument("--quiet", action="store_true", help="log only to <out>/log.jsonl")
     g = r.add_argument_group("frames")
-    g.add_argument("--fps", type=float, default=2.5, help="kept frames per second of video (default 2.5)")
+    # no argparse defaults here: a value present in opts beats plan.input_plan(), which measures the clips
+    g.add_argument("--fps", type=float, help="kept frames per second of video (default: planned from the walk, ~2.2)")
     g.add_argument("--oversample", type=int, default=4, help="candidates per kept frame for the sharpness pick")
     g.add_argument("--max-frames", type=int, help="cap on kept frames (lowers fps for long videos)")
-    g.add_argument("--long-side", type=int, default=1600)
+    g.add_argument("--long-side", type=int, help="working resolution (default: planned from the clips; 1600 for photos)")
     g = r.add_argument_group("label")
     g.add_argument("--no-labels", action="store_true", help="skip the SAM 3 object labelling")
     g.add_argument("--label-frames", type=int, default=120, help="frames SAM 3 looks at (spread over the capture)")
@@ -142,9 +143,9 @@ def main(argv: list[str] | None = None) -> int:
         log.emit(name, "done", **report)
     # the same gate the worker applies: say what is wrong with this run, in words that name the cause
     if hi == len(order) - 1:
-        from plypipe import verify
+        from plypipe import plan, verify
         rep = out / "report.json"
-        quality = verify.check(json.loads(rep.read_text()) if rep.exists() else {})
+        quality = verify.check(json.loads(rep.read_text()) if rep.exists() else {}, plan.read(out))
         for issue in quality["issues"]:
             log.emit("verify", "warn" if issue["level"] == "warn" else "error", issue["message"])
         if not quality["ok"]:

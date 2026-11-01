@@ -18,6 +18,11 @@ from pathlib import Path
 # what a capture has to carry for the appearance fit to have enough constraints
 MIN_VIEWS_PER_SECOND = 1.8
 WARN_VIEWS_PER_SECOND = 2.1
+# with a plan, the floor follows it: a slow walk is planned at ~1.5/s and has as many views per metre as a
+# normal walk at 2.2/s, so failing it against 1.8 would fail a run for doing what it was told
+PLANNED_FAIL_SHARE = 0.8
+PLANNED_WARN_SHARE = 0.9
+ABS_MIN_VIEWS_PER_SECOND = 1.2
 MIN_REGISTERED_RATIO = 0.9
 MIN_SPZ_MB = 3.0
 MIN_KEPT_FRACTION = 0.5
