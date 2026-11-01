@@ -524,13 +524,13 @@ def run_job(api: Api, job: dict, work: Path, extra: list[str]) -> None:
         quality = verify_mod.check(report)
         report["quality"] = quality
         report["attempts"] = attempts
+        from plypipe import review as review_mod
+        opinion = review_mod.opinion(report)
+        report["review"] = opinion
+        (out / "report.json").write_text(json.dumps(report, indent=1))
         for issue in quality["issues"]:
             print(f"[worker] quality {issue['level']}: {issue['message']}", flush=True)
-        hard = [i for i in quality["issues"] if i["level"] == "fail"]
-        if hard:
-            # do not publish a twin we would not accept: the numbers already said it was wrong
-            (out / "report.json").write_text(json.dumps(report, indent=1))
-            raise RuntimeError("quality gate failed, nothing published. " + " | ".join(i["message"] for i in hard))
+        print(f"[worker] reviewer: {opinion['verdict']} ({opinion['confidence']:.0%}) — {opinion['note']}", flush=True)
         files = {}
         for name in RESULTS:
             f = out / name
@@ -540,8 +540,11 @@ def run_job(api: Api, job: dict, work: Path, extra: list[str]) -> None:
         if "scene.spz" not in files:
             raise RuntimeError("pipeline finished without scene.spz")
         state["alive"] = False
-        post(status="done", stage="export", progress=1, message="done",
-             result={"base": f"/v1/scenes/{jid}/", "files": files, "report": report, "quality": quality})
+        # waiting for a human: approve publishes, reject re-queues with the refined settings
+        post(status="review", stage="export", progress=1,
+             message=("quality gate failed: " + opinion["recommend"]) if not quality["ok"] else "ready for review",
+             result={"base": f"/v1/scenes/{jid}/", "files": files, "report": report,
+                     "quality": quality, "review": opinion, "attempts": attempts})
     except Exception as e:
         state["alive"] = False
         post(status="failed", message=str(e)[-3800:])  # keep the end: that is where the real error line is

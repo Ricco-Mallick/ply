@@ -1,7 +1,7 @@
 // Copyright (c) 2026 Ricco Marcelino. All rights reserved. Proprietary and confidential — see LICENSE.
 import { useEffect, useState } from 'react';
 import { Glass } from '../../shared/Glass';
-import { getHealth, getJob, sceneUrl, type Health, type Job } from '../lib/backend';
+import { decideJob, getHealth, getJob, sceneUrl, type Health, type Job } from '../lib/backend';
 import { LiveTheatre } from './LiveTheatre';
 
 const BASE = import.meta.env.BASE_URL;
@@ -29,7 +29,7 @@ export function Status({ jobId, onHome }: { jobId: string; onHome: () => void })
   useEffect(() => {
     let t = 0; const ac = new AbortController();
     const poll = async () => {
-      try { const j = await getJob(jobId, ac.signal); setJob(j); setErr(null); if (j.status === 'queued') setHealth(await getHealth(ac.signal)); if (j.status === 'done' || j.status === 'failed') return; }
+      try { const j = await getJob(jobId, ac.signal); setJob(j); setErr(null); if (j.status === 'queued') setHealth(await getHealth(ac.signal)); if (j.status === 'done' || j.status === 'failed' || j.status === 'review') return; }
       catch (e) { if (ac.signal.aborted) return; setErr((e as Error).message); }
       t = window.setTimeout(poll, document.hidden ? 15000 : 4000);
     };
@@ -39,10 +39,11 @@ export function Status({ jobId, onHome }: { jobId: string; onHome: () => void })
   useEffect(() => { const i = window.setInterval(() => tick(n => n + 1), 1000); return () => clearInterval(i); }, []);
   useEffect(() => { if (job) document.title = `${job.status === 'done' ? '✓' : job.status === 'failed' ? '✕' : `${Math.round(job.progress * 100)}%`} ${job.name} · Ply`; }, [job?.status, job?.progress]);
 
+  const decide = async (d: 'approve' | 'reject') => { const r = await decideJob(jobId, d, d === 'reject' ? 'sent back from review' : ''); setJob(j => j ? { ...j, status: r.status as Job['status'] } : j); };
   const si = job?.stage ? STAGES.findIndex(s => s[0] === job.stage) : -1;
   const link = `${location.origin}${BASE}capture.html?job=${jobId}`;
   const walk = `${BASE}walk.html?scene=${encodeURIComponent(sceneUrl(jobId))}`;
-  const head = !job ? 'Checking…' : job.status === 'queued' ? 'Waiting for a GPU' : job.status === 'running' ? 'Building your twin' : job.status === 'done' ? 'Your twin is ready' : 'Processing failed';
+  const head = !job ? 'Checking…' : job.status === 'queued' ? 'Waiting for a GPU' : job.status === 'running' ? 'Building your twin' : job.status === 'review' ? 'Ready for your call' : job.status === 'done' ? 'Your twin is ready' : 'Processing failed';
 
   return (
     <main className={`status ${job?.status === 'running' || job?.status === 'done' ? 'wide-status' : ''}`}>
@@ -54,6 +55,18 @@ export function Status({ jobId, onHome }: { jobId: string; onHome: () => void })
       {job?.status === 'running' && <p className="lead">Started {ago(job.started_at ?? job.created_at)} ago.</p>}
       {job?.status === 'running' && <p className={`gpu-chip mono ${Date.now() - job.updated_at < 90_000 ? 'on is-live' : 'warm'}`}><span aria-hidden="true" />{stepText(job.message) || 'Working'} · {Date.now() - job.updated_at < 90_000 ? `live, updated ${ago(job.updated_at)} ago` : `no word from the GPU for ${ago(job.updated_at)}`}</p>}
       {job?.status === 'failed' && <p className="lead bad-t">{job.message ?? 'The pipeline stopped with an error.'} Try the Incremental camera solver or SIFT matching in Advanced settings, or recapture the red stretches.</p>}
+      {job?.status === 'review' && job.result?.review && (
+        <div className="verdict review">
+          <span className="mono">Reviewer · {job.result.review.verdict} · {Math.round(job.result.review.confidence * 100)}% confident</span>
+          <p className="review-note">{job.result.review.note}</p>
+          {!!job.result.review.good.length && <ul className="review-good">{job.result.review.good.map(g => <li key={g}>{g}</li>)}</ul>}
+          {!!job.result.review.risk.length && <ul className="review-risk">{job.result.review.risk.map(x => <li key={x}>{x}</li>)}</ul>}
+          <div className="review-actions">
+            <button className="btn big" onClick={() => decide('approve').catch(e => setErr(e.message))}>Publish this twin</button>
+            <button className="btn ghost" onClick={() => decide('reject').catch(e => setErr(e.message))}>Send it back to the queue</button>
+          </div>
+        </div>
+      )}
       {job?.result?.quality && (
         <div className={`verdict ${job.result.quality.ok ? 'ok' : 'bad'}`}>
           <span className="mono">{job.result.quality.ok ? 'Quality gate passed' : 'Quality gate failed'}{job.result.attempts && job.result.attempts.length > 1 ? ` · ${job.result.attempts.length} attempts` : ''}</span>

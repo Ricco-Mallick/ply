@@ -51,6 +51,12 @@ main h1 em { font-style: italic; color: var(--amber); }
 @media (max-width: 760px) { .choice.soon { flex-wrap: wrap; } .soon-note { margin: 0; text-align: left; } }
 @media (prefers-reduced-motion: reduce) { .soon-note b { animation: none; } }
 .verdict { max-width: 620px; margin: 10px 0 4px; padding: 12px 14px; border-radius: 12px; border: 1px solid rgba(255,255,255,.14); background: rgba(255,255,255,.04); }
+.verdict.review { border-color: rgba(255,180,120,.35); }
+.review-note { margin: 8px 0; color: var(--body); font-size: 13.5px; line-height: 1.55; }
+.review-good, .review-risk { margin: 0 0 8px; padding-left: 18px; font-size: 13px; line-height: 1.5; }
+.review-good li { color: #a8e6bc; }
+.review-risk li { color: #ffd2c7; }
+.review-actions { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 6px; }
 .verdict.ok .mono { color: #8ee6a8; }
 .verdict.bad .mono { color: #ffb4a2; }
 .verdict ul { margin: 8px 0 0; padding-left: 18px; color: var(--body); font-size: 13px; line-height: 1.5; }

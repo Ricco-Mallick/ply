@@ -137,10 +137,18 @@ export async function upload(c: Capture, s: Settings, onProgress: (done: number,
   return j as { jobId: string };
 }
 
-export interface Job { id: string; name: string; status: 'queued' | 'running' | 'done' | 'failed'; stage: string | null; progress: number; message: string | null;
+export interface Job { id: string; name: string; status: 'queued' | 'running' | 'review' | 'done' | 'failed'; stage: string | null; progress: number; message: string | null;
   result: { base: string; files?: Record<string, string>; report?: any;
     quality?: { ok: boolean; issues: { level: 'fail' | 'warn'; code: string; message: string }[] };
+    review?: { verdict: string; confidence: number; recommend: string; good: string[]; risk: string[]; note: string; reviewer: string };
     attempts?: { attempt: number; args: string[]; quality?: { ok: boolean } }[] } | null; created_at: number; started_at: number | null; finished_at: number | null; updated_at: number; queuePosition: number; }
+export async function decideJob(id: string, decision: 'approve' | 'reject', note = ''): Promise<{ ok: boolean; status: string }> {
+  const r = await fetch(`${API}/v1/jobs/${encodeURIComponent(id)}/decision`, { method: 'POST',
+    headers: { 'content-type': 'application/json', 'x-ply-key': teamKey() }, body: JSON.stringify({ decision, note }) });
+  const body = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(body.error ?? 'the decision did not go through');
+  return body;
+}
 export async function getJob(id: string, signal?: AbortSignal): Promise<Job> {
   const r = await fetch(`${API}/v1/jobs/${encodeURIComponent(id)}`, { signal, cache: 'no-store' }); if (!r.ok) throw new Error(r.status === 404 ? 'No such job' : `server said ${r.status}`); return r.json();
 }

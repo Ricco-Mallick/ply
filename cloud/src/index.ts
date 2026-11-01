@@ -184,6 +184,28 @@ async function route(req: Request, env: Env, ctx: Ctx): Promise<Response> {
     return json({ jobId }, 201);
   }
 
+  // ---- the human gate: a finished run waits here until someone decides ----
+  const decision = p.match(/^\/v1\/jobs\/([\w-]{6,64})\/decision$/);
+  if (decision && req.method === 'POST') {
+    if (r !== 'app') return json({ error: 'missing or wrong invite' }, 401);
+    const b = await req.json().catch(() => ({})) as any;
+    const approve = String(b.decision ?? '') === 'approve';
+    const note = String(b.note ?? '').slice(0, 500);
+    const row = await env.DB.prepare('SELECT id,status,args,result FROM jobs WHERE id = ?').bind(decision[1]).first() as any;
+    if (!row) return json({ error: 'no such job' }, 404);
+    if (row.status !== 'review') return json({ error: `job is ${row.status}, not in review` }, 409);
+    if (approve) {
+      await env.DB.prepare("UPDATE jobs SET status='done', message=?, updated_at=? WHERE id=?")
+        .bind(note ? `approved: ${note}` : 'approved', now, row.id).run();
+      return json({ ok: true, status: 'done' });
+    }
+    // rejected: back in the queue, and the next run starts from the frames again
+    await env.DB.prepare("UPDATE jobs SET status='queued', progress=0, stage=NULL, message=?, updated_at=?, args=? WHERE id=?")
+      .bind(note ? `rejected: ${note}` : 'rejected, queued again', now,
+        JSON.stringify([...JSON.parse(row.args || '[]').filter((a: string) => a !== '--force' && a !== 'frames'), '--force', 'frames']), row.id).run();
+    return json({ ok: true, status: 'queued' });
+  }
+
   // ---- GPU worker ----
   if (p.startsWith('/v1/worker/')) {
     if (r !== 'worker') return json({ error: 'worker token required' }, 401);
