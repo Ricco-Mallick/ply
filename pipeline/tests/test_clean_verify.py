@@ -84,11 +84,58 @@ def test_a_run_without_a_frame_report_is_only_a_warning():
     assert {i["code"] for i in result["issues"]} == {"views-unknown"}
 
 
-def test_opacity_threshold_is_converted_to_logit(tmp_path):
-    """The PLY stores a logit; a probability threshold must be converted or it means 'half visible'."""
-    import math
+def test_value_filters_use_splat_transforms_units():
+    """splat-transform converts opacity/scale to the PLY's raw space itself and rejects an opacity outside (0, 1);
+    handing it a logit (-3.476 for 3%) crashed every cleaned export."""
     from plypipe.stages import export as export_stage
-    p = 0.03
-    logit = round(math.log(p / (1 - p)), 3)
-    assert logit == -3.476
-    assert logit < 0, "a 3% visibility threshold is a negative logit"
+    flags = export_stage.value_filter_flags(0.03, 1.2)
+    assert flags[:2] == ["-V", "opacity,gt,0.0300"]
+    assert "scale_0,lt,1.20" in flags and "scale_2,lt,1.20" in flags
+    assert export_stage.value_filter_flags(0.002, None) == ["-V", "opacity,gt,0.0020"]
+    for p in (0.0, 1.0, -3.476):
+        v = float(export_stage.value_filter_flags(p, None)[1].split(",")[-1])
+        assert 0 < v < 1
+
+
+def test_floater_filter_keeps_a_plain_wall_of_big_splats(tmp_path):
+    """MCMC covers a plain wall with few large splats; one per cell, straddling cell edges, is still a wall."""
+    zs, ys = np.meshgrid(np.arange(0, 3.0, 0.15), np.arange(0, 2.7, 0.15))
+    wall = np.c_[np.full(zs.size, 2.06), ys.ravel(), zs.ravel()]       # x on a cell edge, 15 cm spacing
+    lone = np.array([[0.5, 1.2, 1.5], [4.0, 0.4, -2.0], [-3.0, 2.0, 5.0]])
+    rows = [[*p, 2.0, 0.5, 0.5, 0.5] for p in np.vstack([wall, lone])]
+    src, dst = tmp_path / "in.ply", tmp_path / "out.ply"
+    write_ply(src, rows)
+    stats = clean.floater_filter(src, dst)
+    assert stats["kept"] == len(wall)
+    assert stats["removedIsolated"] == 3 and stats["removedFaint"] == 0
+
+
+def test_neighbour_counts_see_the_adjacent_cells():
+    xyz = np.array([[0.11, 0, 0], [0.13, 0, 0], [0.37, 0, 0], [5.0, 5.0, 5.0]])
+    assert clean.neighbour_counts(xyz, 0.12).tolist() == [2, 3, 2, 1]
+
+
+SLOW_WALK_PLAN = {"input": {"keptFps": 1.52, "fpsUsed": 1.52, "motion": {"kind": "slow"}}}
+
+
+def test_a_slow_walk_at_its_planned_rate_passes():
+    """The plan lowers the rate for a slow walk; the gate must not fail the run for following it."""
+    report = json.loads(json.dumps(GOOD))
+    report["frames"] = {"kept": 580, "clips": [{"durationSec": 400.0}]}      # 1.45/s
+    assert not verify.check(report)["ok"]                                    # the absolute floor would fail it
+    result = verify.check(report, SLOW_WALK_PLAN)
+    assert result["ok"], result["issues"]
+    assert result["metrics"]["viewsFloor"] == 1.22
+
+
+def test_a_capped_run_still_fails_against_its_plan():
+    report = json.loads(json.dumps(GOOD))
+    report["frames"] = {"kept": 542, "clips": [{"durationSec": 484.0}]}      # the classroom: 1.12/s
+    result = verify.check(report, {"input": {"keptFps": 2.5, "fpsUsed": 2.5}})
+    assert not result["ok"] and "views" in {i["code"] for i in result["issues"]}
+    assert "planned 2.50/s" in next(i["message"] for i in result["issues"] if i["code"] == "views")
+
+
+def test_the_floor_never_drops_below_the_absolute_minimum():
+    fail, warn, planned = verify.view_floors({"input": {"fpsUsed": 0.5}})
+    assert fail == verify.ABS_MIN_VIEWS_PER_SECOND and warn >= fail and planned == 0.5
