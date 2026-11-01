@@ -123,13 +123,7 @@ def run_stage(ctx: Ctx) -> dict:
         {"opacity": 0.01, "scale": None, "why": "opacity>0.010 (measured: the stricter filters ate detail)"},
     ]
     def flags_for(c: dict) -> list[str]:
-        # the PLY stores opacity as a logit, so a threshold written as a probability has to be converted
-        # or the filter quietly means "keep only what is more than half visible" (0.03 -> sigmoid 0.51)
-        p = min(max(c["opacity"], 1e-4), 1 - 1e-4)
-        f = ["-V", f"opacity,gt,{math.log(p / (1 - p)):.3f}"]
-        if c["scale"]:
-            f += ["-V", f"scale_0,lt,{c['scale']:.2f}", "-V", f"scale_1,lt,{c['scale']:.2f}", "-V", f"scale_2,lt,{c['scale']:.2f}"]
-        return f
+        return value_filter_flags(c["opacity"], c["scale"])
     clean_flags = flags_for(candidates[0])
     chosen = candidates[0]
     if clean and probes:  # probe the value filters before using them on the real pass
