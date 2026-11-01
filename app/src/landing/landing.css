@@ -198,5 +198,6 @@ header > *{pointer-events:auto}
 @media (prefers-reduced-motion:reduce){ *{animation-duration:.001ms!important; transition-duration:.001ms!important} }
 
 /* skip: bottom right during the film, clear of the progress line and the scroll cue */
-.skip{position:fixed; z-index:16; right:18px; bottom:calc(46px + env(safe-area-inset-bottom,0px)); display:inline-flex; gap:8px; align-items:center; height:36px; padding:0 16px; border-radius:999px; border:1px solid var(--lg-edge); color:var(--fg); font-size:10px; opacity:0; pointer-events:none; transition:opacity .4s, border-color .3s}
+.hdr-right{display:flex; align-items:center; gap:10px; pointer-events:auto}
+.skip{display:inline-flex; gap:8px; align-items:center; height:36px; padding:0 14px; margin-right:10px; border-radius:999px; border:1px solid var(--lg-edge); background:none; color:var(--fg); font-size:10px; opacity:0; pointer-events:none; transition:opacity .4s, border-color .3s}
 .skip:hover{border-color:var(--accent)} .skip span{color:var(--accent)}

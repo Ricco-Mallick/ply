@@ -171,6 +171,19 @@ async function route(req: Request, env: Env, ctx: Ctx): Promise<Response> {
   }
 
   // ---- jobs ----
+  // the library: every job this team has run, newest first (the app shows it after a team code)
+  if (p === '/v1/jobs' && req.method === 'GET') {
+    if (r !== 'app') return json({ error: 'missing or wrong key' }, 401);
+    const rows = await env.DB.prepare('SELECT id,name,status,stage,progress,message,created_at,updated_at,result FROM jobs ORDER BY created_at DESC LIMIT 60').all();
+    return json({
+      jobs: (rows.results as any[]).map(x => {
+        let files: string[] | null = null;
+        try { const res = x.result ? JSON.parse(x.result) : null; files = res && res.files ? Object.keys(res.files) : null; } catch { /* older rows */ }
+        return { id: x.id, name: x.name, status: x.status, stage: x.stage, progress: x.progress, message: x.message, createdAt: x.created_at, updatedAt: x.updated_at, files };
+      })
+    }, 200, { 'cache-control': 'no-store' });
+  }
+
   if (p === '/v1/jobs' && req.method === 'POST') {
     if (r !== 'app') return json({ error: 'missing or wrong key' }, 401);
     const b = await req.json() as any;

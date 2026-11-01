@@ -25,6 +25,7 @@ export default defineConfig({
         tutorial: resolve(__dirname, 'tutorial.html'),
         model: resolve(__dirname, 'model.html'),
         lab: resolve(__dirname, 'lab.html'),
+        library: resolve(__dirname, 'library.html'),
         'ar-test': resolve(__dirname, 'ar-test.html'),
       },
     },

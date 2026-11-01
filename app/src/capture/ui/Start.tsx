@@ -22,7 +22,8 @@ export function Start({ onRecord, onScan, onUpload, onOpen, onJob }: { onRecord:
   const pick = (fl: FileList | null) => { const v = [...(fl ?? [])].filter(f => f.type.startsWith('video/') || /\.(mp4|mov|webm|mkv)$/i.test(f.name)); if (v.length) onUpload(v); };
   return (
     <main className="start" onDragOver={e => { e.preventDefault(); setDrag(true); }} onDragLeave={() => setDrag(false)} onDrop={e => { e.preventDefault(); setDrag(false); pick(e.dataTransfer.files); }}>
-      <header className="cap-top"><Glass as="a" href={BASE} className="brand pill" opts={{ shader: false, press: true }}><span className="mark" aria-hidden="true" />PLY</Glass><a className="cta-ghost" href={`${BASE}guide.html`}>Capture guide</a></header>
+      <header className="cap-top"><Glass as="a" href={BASE} className="brand pill" opts={{ shader: false, press: true }}><span className="mark" aria-hidden="true" />PLY</Glass><a className="cta-ghost" href={`${BASE}library.html`}>Library</a>
+        <a className="cta-ghost" href={`${BASE}guide.html`}>Capture guide</a></header>
       <section className="start-hero">
         <div className="wide eyebrow">New capture</div>
         <h1>Walk it once.<br /><em>We'll map it.</em></h1>
