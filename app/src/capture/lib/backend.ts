@@ -138,7 +138,9 @@ export async function upload(c: Capture, s: Settings, onProgress: (done: number,
 }
 
 export interface Job { id: string; name: string; status: 'queued' | 'running' | 'done' | 'failed'; stage: string | null; progress: number; message: string | null;
-  result: { base: string; files?: Record<string, string>; report?: any } | null; created_at: number; started_at: number | null; finished_at: number | null; updated_at: number; queuePosition: number; }
+  result: { base: string; files?: Record<string, string>; report?: any;
+    quality?: { ok: boolean; issues: { level: 'fail' | 'warn'; code: string; message: string }[] };
+    attempts?: { attempt: number; args: string[]; quality?: { ok: boolean } }[] } | null; created_at: number; started_at: number | null; finished_at: number | null; updated_at: number; queuePosition: number; }
 export async function getJob(id: string, signal?: AbortSignal): Promise<Job> {
   const r = await fetch(`${API}/v1/jobs/${encodeURIComponent(id)}`, { signal, cache: 'no-store' }); if (!r.ok) throw new Error(r.status === 404 ? 'No such job' : `server said ${r.status}`); return r.json();
 }

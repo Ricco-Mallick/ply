@@ -54,6 +54,12 @@ export function Status({ jobId, onHome }: { jobId: string; onHome: () => void })
       {job?.status === 'running' && <p className="lead">Started {ago(job.started_at ?? job.created_at)} ago.</p>}
       {job?.status === 'running' && <p className={`gpu-chip mono ${Date.now() - job.updated_at < 90_000 ? 'on is-live' : 'warm'}`}><span aria-hidden="true" />{stepText(job.message) || 'Working'} · {Date.now() - job.updated_at < 90_000 ? `live, updated ${ago(job.updated_at)} ago` : `no word from the GPU for ${ago(job.updated_at)}`}</p>}
       {job?.status === 'failed' && <p className="lead bad-t">{job.message ?? 'The pipeline stopped with an error.'} Try the Incremental camera solver or SIFT matching in Advanced settings, or recapture the red stretches.</p>}
+      {job?.result?.quality && (
+        <div className={`verdict ${job.result.quality.ok ? 'ok' : 'bad'}`}>
+          <span className="mono">{job.result.quality.ok ? 'Quality gate passed' : 'Quality gate failed'}{job.result.attempts && job.result.attempts.length > 1 ? ` · ${job.result.attempts.length} attempts` : ''}</span>
+          {!!job.result.quality.issues.length && <ul>{job.result.quality.issues.map(i => <li key={i.code} className={i.level}>{i.message}</li>)}</ul>}
+        </div>
+      )}
       {job?.status === 'done' && <p className="lead">Finished in {job.started_at && job.finished_at ? ago(Date.now() - (job.finished_at - job.started_at)) : '—'}. Walk it in the browser, share the link, or open it on the big screen.</p>}
 
       {job && (job.status === 'running' || job.status === 'done') && <LiveTheatre jobId={jobId} job={job} />}
