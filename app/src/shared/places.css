@@ -60,9 +60,9 @@ kbd { font: 700 10px/1 var(--font-mono); padding: 3px 6px; border-radius: 5px; b
 
 /* ---- route card ---- */
 .route-card { position: fixed; z-index: 13; width: min(360px, calc(100vw - 24px)); padding: 16px 18px 18px; --lg-tint: rgba(8, 11, 18, .7); animation: pop .3s var(--ease-out); }
-.rc-palette, .rc-rail { left: 18px; bottom: calc(18px + env(safe-area-inset-bottom, 0px)); }
+.rc-palette, .rc-rail { left: 18px; bottom: 18px; bottom: calc(18px + env(safe-area-inset-bottom, 0px)); }
 .rc-rail { left: auto; right: 300px; }
-.rc-sheet { left: 50%; transform: translateX(-50%); bottom: calc(14px + env(safe-area-inset-bottom, 0px)); width: min(620px, calc(100vw - 24px)); animation: none; }
+.rc-sheet { left: 50%; transform: translateX(-50%); bottom: 14px; bottom: calc(14px + env(safe-area-inset-bottom, 0px)); width: min(620px, calc(100vw - 24px)); animation: none; }
 .rc-h { display: flex; justify-content: space-between; align-items: center; }
 .rc-x { width: 30px; height: 30px; border-radius: 50%; border: 1px solid var(--line-2); background: none; font: 400 18px/1 var(--font-body); color: var(--muted); }
 .route-card h2 { margin: 6px 0 4px; font: 400 32px/1 var(--font-display); }

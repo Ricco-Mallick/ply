@@ -5,9 +5,9 @@ body { overflow: hidden; overscroll-behavior: none; }
 .pill { border-radius: 999px; }
 button { font: inherit; color: inherit; cursor: pointer; }
 
-.top::before { content: ""; position: fixed; left: 0; right: 0; top: 0; height: calc(92px + env(safe-area-inset-top, 0px)); z-index: -1; pointer-events: none;
+.top::before { content: ""; position: fixed; left: 0; right: 0; top: 0; height: 92px; height: calc(92px + env(safe-area-inset-top, 0px)); z-index: -1; pointer-events: none;
   background: linear-gradient(to bottom, rgba(7, 11, 20, .82), rgba(7, 11, 20, .45) 55%, transparent); }
-.top { position: fixed; z-index: 10; top: calc(18px + env(safe-area-inset-top, 0px)); left: 18px; right: 18px; display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 12px; pointer-events: none; }
+.top { position: fixed; z-index: 10; top: 18px; top: calc(18px + env(safe-area-inset-top, 0px)); left: 18px; right: 18px; display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 12px; pointer-events: none; }
 .top > *, .top-right > * { pointer-events: auto; }
 .top.pre { opacity: 0; pointer-events: none; }
 .top { transition: opacity .45s ease; }
@@ -27,17 +27,17 @@ button { font: inherit; color: inherit; cursor: pointer; }
 
 .cross { position: fixed; z-index: 5; left: 50%; top: 50%; width: 6px; height: 6px; margin: -3px 0 0 -3px; border-radius: 50%; background: #fff; mix-blend-mode: difference; pointer-events: none; }
 
-.hint { position: fixed; z-index: 10; left: 50%; bottom: calc(22px + env(safe-area-inset-bottom, 0px)); transform: translate(-50%, 12px); border-radius: 16px; padding: 10px 16px; opacity: 0; pointer-events: none; transition: opacity .4s, transform .5s var(--ease-out); max-width: calc(100vw - 32px); }
+.hint { position: fixed; z-index: 10; left: 50%; bottom: 22px; bottom: calc(22px + env(safe-area-inset-bottom, 0px)); transform: translate(-50%, 12px); border-radius: 16px; padding: 10px 16px; opacity: 0; pointer-events: none; transition: opacity .4s, transform .5s var(--ease-out); max-width: calc(100vw - 32px); }
 .hint.on { opacity: 1; transform: translate(-50%, 0); }
 .hint ul { display: flex; flex-wrap: wrap; gap: 6px 18px; margin: 0; padding: 0; list-style: none; font: 400 12px/1.6 var(--font-mono); color: var(--body); }
 .hint b { color: var(--fg); font-weight: 700; }
 .hint kbd { display: inline-block; min-width: 20px; padding: 2px 6px; margin-right: 3px; border: 1px solid var(--line-2); border-radius: 5px; font: 700 10.5px/1.4 var(--font-mono); text-align: center; color: var(--fg); background: rgba(255, 255, 255, .06); }
 
-.map { position: fixed; z-index: 9; right: 18px; bottom: calc(18px + env(safe-area-inset-bottom, 0px)); border-radius: 14px; padding: 8px 8px 28px; }
+.map { position: fixed; z-index: 9; right: 18px; bottom: 18px; bottom: calc(18px + env(safe-area-inset-bottom, 0px)); border-radius: 14px; padding: 8px 8px 28px; }
 .map canvas { display: block; }
 .map-l { position: absolute; left: 12px; bottom: 9px; font-size: 9px; color: var(--muted); }
 
-.joy { position: fixed; z-index: 10; left: 22px; bottom: calc(28px + env(safe-area-inset-bottom, 0px)); width: 120px; height: 120px; border-radius: 50%; touch-action: none; display: grid; place-items: center; }
+.joy.joy { position: fixed; z-index: 12; left: 18px; bottom: 26px; bottom: calc(26px + env(safe-area-inset-bottom, 0px)); top: auto; right: auto; width: min(120px, 30vw); height: min(120px, 30vw); border-radius: 50%; touch-action: none; display: grid; place-items: center; }
 .joy .knob { width: 46px; height: 46px; border-radius: 50%; background: rgba(255, 255, 255, .85); box-shadow: 0 6px 20px rgba(0, 0, 0, .4); pointer-events: none; }
 
 .gate { position: fixed; inset: 0; z-index: 20; display: grid; place-items: center; padding: 24px; background: radial-gradient(150% 110% at 50% 42%, rgba(7, 11, 20, .74) 0%, rgba(7, 11, 20, .88) 55%, rgba(7, 11, 20, .95) 100%); transition: opacity .7s var(--ease-out), visibility 0s .7s; }
@@ -61,22 +61,33 @@ button { font: inherit; color: inherit; cursor: pointer; }
 .views-menu button:hover { background: rgba(255, 255, 255, .07); } .views-menu .mono { font-size: 9.5px; color: var(--accent); }
 @media (max-width: 1180px) { .tour-btn { padding: 0 12px; font-size: 9px; letter-spacing: .12em; } }
 @media (max-width: 1020px) { .tour-btn.opt { display: none; } }
+/* phone: brand, search, free/walk, edit and AR are the whole header; everything else steps away */
+@media (max-width: 760px) {
+  .top { left: 12px; right: 12px; gap: 8px; }
+  .top-right { gap: 6px; }
+  .opt, .views-wrap, .tour-btn.opt, .icon.opt, .desk { display: none; }
+  .brand { height: 36px; padding: 0 12px; }
+  .scene-name { display: none; }
+  .seg { padding: 3px; } .seg button { height: 30px; padding: 0 11px; font-size: 9.5px; }
+  .search-pill { height: 36px; padding: 0 11px; }
+  .tour-btn { height: 36px; padding: 0 11px; font-size: 9.5px; letter-spacing: .1em; }
+}
 @media (max-width: 640px) { .tour-btn { padding: 0 12px; font-size: 9px; } }
 @media (max-width: 900px) { .search-pill span { display: none; } .search-pill { padding: 0 12px; } .search-pill kbd { display: none; } }
 .route-card { z-index: 12; }
 /* ---- AR overlay (DOM overlay over the camera) ---- */
 .arx { position: fixed; inset: 0; z-index: 60; color: #fff; font-family: var(--font-body); touch-action: none; }
 .arx[hidden] { display: none; }
-.arx-top { position: absolute; top: calc(14px + env(safe-area-inset-top, 0px)); left: 12px; right: 12px; display: flex; justify-content: space-between; align-items: center; }
+.arx-top { position: absolute; top: 14px; top: calc(14px + env(safe-area-inset-top, 0px)); left: 12px; right: 12px; display: flex; justify-content: space-between; align-items: center; }
 .arx-pill { display: inline-flex; padding: 8px 12px; border-radius: 999px; background: rgba(0, 0, 0, .5); font-size: 10px; }
 .arx-x { width: 40px; height: 40px; border-radius: 50%; border: 0; background: rgba(0, 0, 0, .5); color: #fff; font-size: 22px; }
-.arx-card { position: absolute; left: 12px; right: 12px; bottom: calc(22px + env(safe-area-inset-bottom, 0px)); display: grid; gap: 10px; padding: 16px; border-radius: 22px; background: rgba(8, 11, 18, .82); }
+.arx-card { position: absolute; left: 12px; right: 12px; bottom: 22px; bottom: calc(22px + env(safe-area-inset-bottom, 0px)); display: grid; gap: 10px; padding: 16px; border-radius: 22px; background: rgba(8, 11, 18, .82); }
 .arx-card > .mono { font-size: 10px; color: var(--accent); } .arx-card b { font: 600 17px/1.35 var(--font-body); } .arx-card em { font-style: normal; color: var(--amber); }
 .arx-card .btn, .arx-bottom .btn { height: 48px; margin: 0; }
 .arx-picks { display: flex; flex-wrap: wrap; gap: 6px; } .arx-picks button { padding: 10px 14px; border-radius: 999px; border: 1px solid var(--line-2); background: rgba(255, 255, 255, .06); color: #fff; font: 600 14px/1 var(--font-body); }
 .arx-warn { margin: 0; font-size: 13px; color: var(--amber); }
-.arx-instr { position: absolute; top: calc(66px + env(safe-area-inset-top, 0px)); left: 12px; right: 12px; padding: 14px 16px; border-radius: 20px; background: rgba(255, 107, 0, .94); color: #0B1220; display: grid; gap: 4px; }
+.arx-instr { position: absolute; top: 66px; top: calc(66px + env(safe-area-inset-top, 0px)); left: 12px; right: 12px; padding: 14px 16px; border-radius: 20px; background: rgba(255, 107, 0, .94); color: #0B1220; display: grid; gap: 4px; }
 .arx-instr b { font: 700 17px/1.25 var(--font-body); } .arx-instr .mono { font-size: 10px; opacity: .75; }
-.arx-bottom { position: absolute; left: 12px; right: 12px; bottom: calc(22px + env(safe-area-inset-bottom, 0px)); display: flex; gap: 8px; justify-content: center; align-items: center; }
+.arx-bottom { position: absolute; left: 12px; right: 12px; bottom: 22px; bottom: calc(22px + env(safe-area-inset-bottom, 0px)); display: flex; gap: 8px; justify-content: center; align-items: center; }
 .ar-err { position: fixed; z-index: 30; left: 50%; top: 70px; transform: translateX(-50%); padding: 10px 14px; border-radius: 12px; background: rgba(242, 85, 90, .92); color: #fff; font-size: 10.5px; max-width: 90vw; }
 .views-menu button:disabled { opacity: .4; }

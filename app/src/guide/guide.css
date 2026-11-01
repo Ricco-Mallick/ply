@@ -2,7 +2,7 @@
 /* Capture guide: a long-read page. Serif headings, Manrope body, a sticky contents rail with the pre-flight progress. */
 body { background: radial-gradient(1200px 600px at 80% -10%, rgba(255, 107, 0, .10), transparent 60%), var(--bg); }
 .pill { border-radius: 999px; }
-.cap { max-width: 1180px; margin: 0 auto; padding: calc(18px + env(safe-area-inset-top, 0px)) 24px 80px; }
+.cap { max-width: 1180px; margin: 0 auto; padding: 18px; padding: calc(18px + env(safe-area-inset-top, 0px)) 24px 80px; }
 .cap-top { display: flex; justify-content: space-between; align-items: center; gap: 12px; }
 .brand { display: inline-flex; align-items: center; gap: 10px; height: 40px; padding: 0 16px 0 14px; color: var(--fg); text-decoration: none; font: 500 13px/1 var(--font-wide); letter-spacing: .34em; }
 .brand .mark { width: 16px; height: 16px; border: 1.5px solid var(--fg); border-radius: 3px; position: relative; }
