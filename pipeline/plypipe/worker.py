@@ -297,7 +297,13 @@ def run_job(api: Api, job: dict, work: Path, extra: list[str]) -> None:
     live = Live(api, jid, out, log=lambda m: print(m, file=sys.stderr, flush=True))  # what the status page shows in 3D
     live.preview_only = "--until" in job["args"]  # coverage checks publish their own preview
     a_ = job["args"]
-    final_step = int(a_[a_.index("--iterations") + 1]) if "--iterations" in a_ else PRESET_STEPS.get(a_[a_.index("--preset") + 1] if "--preset" in a_ else "standard")
+    def planned_steps() -> int:
+        """Steps this job will actually train for: the plan the frames/train stages wrote, else the preset."""
+        try:
+            return int(json.loads((out / "plan.json").read_text())["model"]["iterations"])
+        except Exception:
+            return int(a_[a_.index("--iterations") + 1]) if "--iterations" in a_ else PRESET_STEPS.get(
+                a_[a_.index("--preset") + 1] if "--preset" in a_ else "standard")
 
     def beat():  # heartbeat + progress every 20 s, independent of log activity
         while state["alive"]:
@@ -381,7 +387,7 @@ def run_job(api: Api, job: dict, work: Path, extra: list[str]) -> None:
                             state["stage"], state["frac"], state["stage_t0"] = st, 0.0, time.time()
                             live.stage(st, "running")
                             if st == "train":  # intermediate PLYs -> small SPZ snapshots for the live view
-                                threading.Thread(target=live.poll_snapshots, args=(lambda: p.poll() is None and state["stage"] == "train", final_step), daemon=True).start()
+                                threading.Thread(target=live.poll_snapshots, args=(lambda: p.poll() is None and state["stage"] == "train", planned_steps()), daemon=True).start()
                             try:  # tell the status page straight away; the heartbeat covers the rest
                                 post(stage=st, progress=overall(st, 0.0), message=f"{st}: started")
                             except Exception:

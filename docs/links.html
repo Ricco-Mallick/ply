@@ -1,0 +1,106 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Ply · Additional links and prototypes</title>
+<style>
+  @page { size: A4; margin: 16mm 17mm 14mm; }
+  html, body { margin: 0; }
+  body { font: 9.5pt/1.5 "Helvetica Neue", Helvetica, Arial, sans-serif; color: #14181d; }
+  h1 { font-size: 20pt; letter-spacing: -.02em; margin: 0 0 1mm; }
+  h2 { font-size: 10.5pt; margin: 5mm 0 1.6mm; }
+  p { margin: 0 0 2mm; }
+  .mono { font-family: "SF Mono", Menlo, Consolas, monospace; font-size: 8.1pt; }
+  .brandline { display: flex; justify-content: space-between; font-size: 7.8pt; letter-spacing: .15em; text-transform: uppercase; color: #5b6572; border-bottom: 1px solid #d8dde3; padding-bottom: 1.8mm; margin-bottom: 6mm; }
+  .sub { color: #333c46; font-size: 10pt; max-width: 150mm; }
+  table { width: 100%; border-collapse: collapse; font-size: 8.8pt; margin-bottom: 2mm; }
+  th { text-align: left; font-weight: 600; color: #5b6572; border-bottom: 1px solid #c9d0d8; padding: 1.3mm 2mm 1.3mm 0; }
+  td { padding: 1.5mm 2mm 1.5mm 0; border-bottom: 1px solid #eceff2; vertical-align: top; }
+  td.u { word-break: break-all; }
+  .tag { display: inline-block; font-size: 7.2pt; letter-spacing: .1em; text-transform: uppercase; color: #b45309; background: #fff3e8; border: 1px solid #ffcf9e; border-radius: 999px; padding: 1mm 2mm .8mm; }
+  .box { border: 1px solid #e2e7ec; border-radius: 3px; padding: 2.6mm 3mm; margin-top: 3mm; font-size: 8.6pt; }
+  .box b { font-size: 7.6pt; letter-spacing: .12em; text-transform: uppercase; color: #5b6572; display: block; margin-bottom: 1.4mm; }
+  .todo { background: #fffbea; border-color: #f3dfa2; }
+  ul { margin: 0 0 2mm; padding-left: 4.4mm; }
+  li { margin-bottom: 1mm; }
+</style>
+</head>
+<body>
+
+<div class="brandline"><span>Team Ply</span><span>Techfest 2026-27 · Namma Space · Round 1</span></div>
+
+<h1>Additional links and prototypes</h1>
+<p class="sub">Everything for Round 1 in one document: the live viewer, the capture app, the technical abstract, the
+repository and the demonstration video. All web links need no login and were checked before this document was written.</p>
+
+<h2>1 · Live web viewer (free roaming)</h2>
+<table>
+  <tr><th style="width:42mm">What</th><th>Link</th></tr>
+  <tr><td>Landing film and entry point</td><td class="u"><span class="mono">https://ricco.codes/ply/</span></td></tr>
+  <tr><td>Classroom twin, first-person walkthrough</td><td class="u"><span class="mono">https://ricco.codes/ply/walk.html?scene=https%3A%2F%2Fply-api.ricco-ply.workers.dev%2Fv1%2Fscenes%2Fhq-classroom-1%2Fscene.json</span></td></tr>
+  <tr><td>Classroom semantic model</td><td class="u"><span class="mono">https://ricco.codes/ply/model.html?scene=https%3A%2F%2Fply-api.ricco-ply.workers.dev%2Fv1%2Fscenes%2Fhq-classroom-1%2Fscene.json&amp;module=/ply/models/classroom2.js</span></td></tr>
+  <tr><td>Office LiDAR point cloud</td><td class="u"><span class="mono">https://ricco.codes/ply/lidar.html?ply=https%3A%2F%2Fply-api.ricco-ply.workers.dev%2Fv1%2Fscenes%2Flidar-office-1%2Foffice.ply</span></td></tr>
+  <tr><td>Capture app (records and uploads)</td><td class="u"><span class="mono">https://ricco.codes/ply/capture.html</span></td></tr>
+  <tr><td>Capture procedure, rendered</td><td class="u"><span class="mono">https://ricco.codes/ply/guide.html</span></td></tr>
+</table>
+<p><b>Controls.</b> Click the walkthrough to capture the mouse, then W A S D to walk and the mouse to look. <span class="mono">Esc</span>
+releases the pointer. <b>Views</b> opens saved shots, <b>Plan</b> shows the floor plan, <b>Measured</b> overlays the derived
+shell. Search any of the 194 places to route to it.</p>
+<p><b>Browsers.</b> Chrome or Edge on desktop for the full walkthrough; Safari on macOS and iOS loads the model and the
+capture pages. AR navigation needs WebXR, which today means Android Chrome. Nothing needs an install or an account.</p>
+
+<h2>2 · Technical abstract</h2>
+<p><span class="mono">Ply_Technical_Abstract_Round1.pdf</span>, five pages, in this folder. It covers system architecture,
+SOP construction, pipeline design and the technical approach, with the measured numbers for both capture paths.</p>
+
+<h2>3 · Code repository, setup and sample data</h2>
+<table>
+  <tr><th style="width:42mm">What</th><th>Where</th></tr>
+  <tr><td>Repository</td><td class="u"><span class="mono">https://github.com/Ricco-Mallick/ply</span></td></tr>
+  <tr><td>Setup</td><td class="u"><span class="mono">README.md</span> and <span class="mono">pipeline/README.md</span> (Python 3.12, CUDA GPU, <span class="mono">python -m plypipe run &lt;input&gt; --out &lt;dir&gt;</span>)</td></tr>
+  <tr><td>Sample data</td><td class="u"><span class="mono">test/</span> with a short capture and the command to reconstruct it</td></tr>
+  <tr><td>Capture procedure</td><td class="u"><span class="mono">docs/SOP.md</span> (also <span class="mono">/ply/guide.html</span>)</td></tr>
+  <tr><td>Processing policy</td><td class="u"><span class="mono">docs/PROCESSING.md</span></td></tr>
+</table>
+
+<h2>4 · Demonstration video</h2>
+<p>Three to five minutes: the problem, the capture walk, the processing run, the web walkthrough with search and routing,
+and the AR overlay. <span class="tag">Link added before upload</span></p>
+
+<h2>5 · A five-minute tour for reviewers</h2>
+<ol>
+  <li>Open <span class="mono">ricco.codes/ply</span> and scroll through the film, or press <b>Skip to the end</b> to reach the entry card.</li>
+  <li><b>Start a capture</b> walks the capture flow; <b>Explore the demo space</b> opens the twin.</li>
+  <li>In the walkthrough, click once to take the mouse, then W A S D to walk. <b>Plan</b> gives the floor plan, <b>Dollhouse</b> the cutaway.</li>
+  <li>Search a place by name and follow the route. The line bends around desks, not through them.</li>
+  <li>On Android Chrome, the <b>AR</b> button places the same route on the real floor with two taps to align.</li>
+</ol>
+
+<h2>6 · Reproducing a room</h2>
+<p class="mono" style="line-height:1.7; margin-bottom:2mm">
+  python -m plypipe run &lt;folder of clips&gt; --out work/my-room --preset standard<br>
+  # writes scene.json, shell.json, places.json, scene.spz, scene_lite.spz, report.json<br>
+  # then open walk.html?scene=&lt;url of scene.json&gt;
+</p>
+<p>Settings are planned from the capture, so there is nothing to tune between rooms. <span class="mono">docs/PROCESSING.md</span>
+explains what is measured and why, including the post-run checklist.</p>
+
+<div class="box todo">
+  <b>Status before upload</b>
+  <ul>
+    <li>Repository is private today. Either make it public, or put a source archive (<span class="mono">ply-src.zip</span>) in this folder and point the row above at it.</li>
+    <li><span class="mono">test/</span> does not exist yet. A short sample capture plus a run command has to be added for the repository to satisfy the brief.</li>
+    <li>The demonstration video is not recorded. It is the only Round 1 deliverable that has no artefact yet.</li>
+  </ul>
+</div>
+
+<div class="box">
+  <b>Third-party components</b>
+  three.js (MIT), @sparkjsdev/spark (MIT), React (MIT), Vite and TypeScript (MIT), Tailwind (MIT), SuperSplat (MIT,
+  PlayCanvas), gsplat (Apache-2.0), COLMAP and pycolmap (BSD-3-Clause), PyTorch (BSD-3-Clause), OpenCV (Apache-2.0),
+  Hugging Face Transformers (Apache-2.0), @playcanvas/splat-transform (MIT). Full notices with copyright lines are in
+  <span class="mono">NOTICE</span>.
+</div>
+
+</body>
+</html>

@@ -1,0 +1,360 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Ply · Technical abstract · Round 1</title>
+<style>
+  @page { size: A4; margin: 14mm 15mm 13mm; }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; }
+  body { font: 9.35pt/1.44 "Helvetica Neue", Helvetica, Arial, sans-serif; color: #14181d; background: #fff; }
+  .page { page-break-after: always; }
+  .page:last-child { page-break-after: auto; }
+  h1, h2, h3 { margin: 0; font-weight: 700; letter-spacing: -0.01em; }
+  h2 { font-size: 14.5pt; margin: 0 0 2.6mm; }
+  h2 .n { color: #ff6b00; font-size: 8.6pt; vertical-align: 2px; margin-right: 2mm; letter-spacing: .1em; }
+  h2 .req { float: right; font-size: 7.4pt; letter-spacing: .12em; color: #8a949f; text-transform: uppercase; font-weight: 600; padding-top: 2mm; }
+  h3 { font-size: 10pt; margin: 3.4mm 0 1.2mm; }
+  p { margin: 0 0 2.2mm; }
+  .lead { font-size: 10.2pt; line-height: 1.48; }
+  .mono { font-family: "SF Mono", Menlo, Consolas, monospace; font-size: 8.1pt; letter-spacing: .03em; }
+  .muted { color: #5b6572; }
+  .rule { height: 1px; background: #d8dde3; margin: 3.4mm 0; }
+  figure { margin: 0; }
+  figure img { width: 100%; display: block; border-radius: 2px; }
+  figcaption { font-size: 7.9pt; color: #5b6572; margin-top: 1.2mm; line-height: 1.32; }
+  table { width: 100%; border-collapse: collapse; font-size: 8.4pt; }
+  th { text-align: left; font-weight: 600; color: #5b6572; border-bottom: 1px solid #c9d0d8; padding: 1.2mm 2mm 1.2mm 0; }
+  td { padding: 1.1mm 2mm 1.1mm 0; border-bottom: 1px solid #eceff2; vertical-align: top; }
+  td.r, th.r { text-align: right; padding-right: 0; white-space: nowrap; }
+  .kpi { display: grid; grid-template-columns: repeat(3, 1fr); gap: 2.2mm; margin: 3.4mm 0 1mm; }
+  .kpi div { border: 1px solid #e2e7ec; border-radius: 3px; padding: 2.3mm 2.8mm; }
+  .kpi b { display: block; font-size: 14.5pt; letter-spacing: -0.02em; line-height: 1.1; }
+  .kpi span { font-size: 7.6pt; color: #5b6572; }
+  .brandline { display: flex; justify-content: space-between; font-size: 7.8pt; letter-spacing: .15em; text-transform: uppercase; color: #5b6572; border-bottom: 1px solid #d8dde3; padding-bottom: 1.8mm; }
+  .title { font-size: 38pt; line-height: .95; letter-spacing: -0.035em; margin: 8mm 0 2.6mm; }
+  .title em { font-style: normal; color: #ff6b00; }
+  .sub { font-size: 12pt; color: #333c46; max-width: 150mm; margin-bottom: 5mm; }
+  .abstract { font-size: 9.4pt; line-height: 1.5; max-width: 172mm; }
+  ul { margin: 0 0 2.2mm; padding-left: 4mm; }
+  li { margin-bottom: .9mm; }
+  .two { display: grid; grid-template-columns: 1fr 1fr; gap: 4.5mm; }
+  .note { border-left: 2px solid #ff6b00; padding: .8mm 0 .8mm 2.8mm; color: #333c46; font-size: 8.7pt; }
+  .foot { margin-top: 6mm; display: flex; justify-content: space-between; font-size: 7.5pt; color: #7a8491; border-top: 1px solid #d8dde3; padding-top: 1.8mm; }
+  svg text { font-family: "Helvetica Neue", Helvetica, Arial, sans-serif; }
+  .toc { display: flex; gap: 4mm; font-size: 7.8pt; color: #5b6572; letter-spacing: .04em; margin-top: 2mm; }
+  .toc b { color: #14181d; font-weight: 600; }
+  .credits { font-size: 7.5pt; color: #5b6572; line-height: 1.4; }
+  .arch { display: grid; grid-template-columns: 1fr 14px 1fr 14px 1fr 14px 1fr; align-items: stretch; gap: 0; margin: 2.6mm 0 2mm; }
+  .arch .card { border: 1px solid #d8dde3; border-radius: 3px; padding: 2mm 2.4mm; background: #f7f9fb; }
+  .arch .card.hot { background: #fff3e8; border-color: #ffb27a; }
+  .arch .card b { display: block; font-size: 8.9pt; margin-bottom: .8mm; }
+  .arch .card span { display: block; font-size: 7.7pt; color: #4a545f; line-height: 1.3; }
+  .arch .ar { display: grid; place-items: center; color: #98a2ad; font-size: 11pt; }
+  .band { border: 1px dashed #d8dde3; border-radius: 3px; padding: 1.9mm 2.6mm; font-size: 8.2pt; margin-bottom: 1.6mm; }
+  .band b { font-size: 8.9pt; }
+  .band.dark { background: #14181d; color: #c9d0d8; border: 0; }
+  .band.dark b { color: #fff; }
+  .links { border: 1px solid #e2e7ec; border-radius: 3px; padding: 2.6mm 3mm; font-size: 8.3pt; }
+  .links b { display: block; font-size: 7.6pt; letter-spacing: .12em; text-transform: uppercase; color: #5b6572; margin-bottom: 1.2mm; font-weight: 600; }
+</style>
+</head>
+<body>
+
+<!-- ================= 1 ================= -->
+<section class="page">
+  <div class="brandline"><span>Team Ply</span><span>Techfest 2026-27 · Namma Space · Round 1</span></div>
+
+  <h1 class="title">Walk a building once.<br><em>Navigate it forever.</em></h1>
+  <p class="sub">A phone walkthrough becomes a photoreal, searchable 3D twin with indoor directions that route around real furniture.</p>
+
+  <p class="abstract">
+    Indoor spaces have no usable map, so every unfamiliar building is navigated by asking someone. Ply takes a single
+    handheld video, reconstructs the room as a metric 3D Gaussian splat, derives its structure, and serves the result to
+    a browser: free first-person roaming, searchable points of interest, and a walking route computed on the actual
+    floor. There is no scanner and no floor plan behind it. The pipeline solves camera poses, levels and scales the room
+    from a phone-height prior, finds the floor and wall lines, builds a walkable occupancy grid at 0.1 m, detects the
+    objects in it and reads their signage, then trains and streams the twin. A second capture path handles LiDAR where a
+    scanner is available: a 184.6 million point E57 of an office was reduced to a 6.15 million point web cloud and
+    measured to six walls and a 4.13 m ceiling. Both paths produce the same scene contract, so both land in the same
+    navigation layer. Everything described here is built and running.
+  </p>
+
+  <div class="kpi">
+    <div><b>8 min</b><span>of video, one walk, five clips</span></div>
+    <div><b>10.5 × 6.3 m</b><span>room recovered, in metres</span></div>
+    <div><b>0.82 px</b><span>mean reprojection error, 542 poses</span></div>
+    <div><b>194</b><span>objects detected and placed</span></div>
+    <div><b>1.35 M</b><span>Gaussians, 37 MB streamed twin</span></div>
+    <div><b>3.4 h</b><span>end to end per room, unattended</span></div>
+  </div>
+
+  <figure style="margin-top:4mm">
+    <img src="report-assets/capture.jpg" alt="A frame from the classroom capture" style="height:66mm;object-fit:cover;object-position:center 62%">
+    <figcaption>One of the 542 frames the solver kept. The capture is ordinary handheld video; the pipeline does the rest.</figcaption>
+  </figure>
+
+  <div class="toc">
+    <span><b>01</b> System architecture</span>
+    <span><b>02</b> SOP construction</span>
+    <span><b>03</b> Pipeline design</span>
+    <span><b>04</b> Technical approach &amp; results</span>
+  </div>
+
+  <div class="foot"><span>Technical abstract · max 5 pages</span><span>ricco.codes/ply</span></div>
+</section>
+
+<!-- ================= 2 ================= -->
+<section class="page">
+  <h2><span class="n">01</span>System architecture<span class="req">Required</span></h2>
+
+  <p class="lead">
+    Four layers. A capture client on the phone, an edge API that stores clips and queues work, a GPU worker that runs
+    the pipeline unattended, and a static web viewer that streams the finished twin. Each layer can fail without
+    losing the others: a dropped capture resumes at its last uploaded part, a killed worker resumes at its last
+    checkpoint, and the viewer needs nothing but files.
+  </p>
+
+  <div class="arch">
+    <div class="card hot"><b>Capture client</b><span>browser app, no install<br>live coaching, sensors<br>resumable upload</span></div>
+    <div class="ar">→</div>
+    <div class="card"><b>Edge API</b><span>Cloudflare Worker<br>job queue in D1<br>object storage</span></div>
+    <div class="ar">→</div>
+    <div class="card"><b>GPU worker</b><span>Modal L40S, ephemeral<br>7 resumable stages<br>progress to the browser</span></div>
+    <div class="ar">→</div>
+    <div class="card hot"><b>Web viewer</b><span>static files, CDN<br>three.js + Spark<br>WASD, plan, AR</span></div>
+  </div>
+  <div class="band"><b>The scene contract.</b> scene.json (bounds, floorY, spawn, camera path, splat references), shell.json (walls, openings, objects), the occupancy grid, and places.json. The pipeline writes it, the viewer reads nothing else, and the LiDAR path produces the same files.</div>
+  <div class="band dark"><b style="color:#fff">Delivered surfaces.</b> landing film · capture app · WASD walkthrough · plan and dollhouse views · POI search · AR navigation (WebXR) · semantic model viewer · point-cloud viewer, all at ricco.codes/ply with no install and no account.</div>
+
+  <h3>Why this decomposition</h3>
+  <p>
+    Capture has to run in a phone browser, so it is a client with no build step and no store approval. Reconstruction
+    needs a discrete GPU, so it runs as a queued job with checkpoints rather than an on-demand service. Viewing has to
+    scale to many judges at once, so it is static files on a CDN with range requests, and the heavy part of the twin
+    (the splat) is streamed in chunks rather than downloaded whole. The queue lets a capture be submitted from one
+    device and the finished twin opened from another.
+  </p>
+
+  <h3>Viewer performance</h3>
+  <p>
+    The classroom twin ships three files: a 37.1 MB full SPZ, an 800,000 Gaussian phone file at 12.9 MB, and a chunked
+    LOD set of 72 pieces. The viewer picks by device and streams during load, so a phone does not wait for the full
+    cloud before the first frame. The LiDAR room is 89 MB of points, loaded progressively with a framing pass at the
+    start. Navigation is WASD with pointer lock, plus plan and dollhouse views for orientation; the HUD and the route
+    overlay are drawn in the same pass as the twin, and the minimap is a 2D canvas rather than a second WebGL context.
+  </p>
+
+  <h3>Operations</h3>
+  <p>
+    The GPU worker is the only metered part, so it is ephemeral: it claims a job, runs while the queue has work, and
+    exits after three idle minutes. A scheduled wake-up restarts it when a job waits with no worker, and a spend cap
+    stops it on the host side. The container image is built from a pinned revision, because a cached image once served
+    pre-fix code for four runs; changing the revision is now part of the deploy. Every stage writes a checkpoint that is
+    uploaded in order, so a job killed by a container timeout resumes where it stopped rather than starting over. Costs
+    are recorded per run, which is how the 164 minute figure above is known rather than estimated.
+  </p>
+
+  <div class="foot"><span>Ply · Technical abstract · Round 1</span><span>2</span></div>
+</section>
+
+<!-- ================= 3 ================= -->
+<section class="page">
+  <h2><span class="n">02</span>SOP construction<span class="req">Required</span></h2>
+
+  <p class="lead">
+    Reconstruction quality is decided before the first frame is processed. The procedure below is what a person
+    with no technical background follows, and the capture app enforces the parts a camera cannot enforce by itself.
+    It is written as a printable checklist in <span class="mono">docs/SOP.md</span> and rendered at
+    <span class="mono">/ply/guide.html</span>.
+  </p>
+
+  <table>
+    <tr><th style="width:30mm">Decision</th><th style="width:34mm">Value</th><th>Why it is that value</th></tr>
+    <tr><td>Lens</td><td>Main 1× camera</td><td>Ultra-wide distorts corners, telephoto cuts overlap between passes.</td></tr>
+    <tr><td>Resolution</td><td>4K at 30 fps</td><td>Downsampled to 1,728 px for the solver: more usable detail than native 1080p. 1080p60 only in a dim room.</td></tr>
+    <tr><td>Shutter</td><td>1/100 s fixed</td><td>India's mains are 50 Hz, so lights cycle at 100 Hz. 1/100 s avoids banding and freezes a slow walk. Never slower than 1/60.</td></tr>
+    <tr><td>ISO and white balance</td><td>Locked, 200–800 and 4000–5500 K</td><td>Auto exposure makes walls change brightness between frames and breaks the appearance fit.</td></tr>
+    <tr><td>Focus</td><td>Manual at about 1.5 m</td><td>Continuous autofocus hunts during a walk; every hunt is a blurred frame.</td></tr>
+    <tr><td>Walk speed</td><td>About 0.5 m/s</td><td>The solver keeps one frame every 0.4 s, so a slow walk buys overlap rather than blur.</td></tr>
+    <tr><td>Path</td><td>2 perimeter loops plus 1 cross pass</td><td>Loops cover walls and corners; the cross pass links the two sides and closes the loop where the walk started.</td></tr>
+    <tr><td>Entrance marker</td><td>A4 QR, 1.2 m high</td><td>Gives a known 297 mm dimension to check scale against, and becomes the AR anchor later.</td></tr>
+    <tr><td>Scene</td><td>Lights on, doors propped open, room empty</td><td>A person walking through a scan becomes a ghost in the twin and cannot be removed afterwards.</td></tr>
+  </table>
+
+  <h3>What the app enforces during the walk</h3>
+  <p>
+    The capture client reads the camera through <span class="mono">getUserMedia</span> and the phone's motion sensors,
+    scores sharpness and exposure every half second, and shows coverage over the room so missed corners are visible
+    before the walk ends. It warns on fast pans and on sudden exposure changes, and it offers an AR scan mode on
+    Android that shows live coverage in world space. After upload, a coverage-check job runs frame selection, camera
+    solving and alignment only, then publishes a preview so the operator can see which stretches were not solved and
+    replace just those. A capture that fails the check never reaches training.
+  </p>
+
+  <h3>What the SOP produced</h3>
+  <p>
+    The classroom run was five clips totalling 8 minutes 4 seconds of 4K video, taken with the procedure above. From
+    2,167 extracted frames the solver kept the sharpest 542 at 2.5 frames per second of extraction. All 542 registered,
+    with a mean reprojection error of 0.82 px. That is the number the rest of the report depends on: poses that are
+    sub-pixel accurate give the appearance fit something solid to work with.
+  </p>
+
+  <h3>Variants and cost</h3>
+  <p>
+    The procedure asks for one to two minutes of walking per room. The classroom run used eight minutes across five
+    clips because the room was walked several times, which is why 2,167 frames went in and 542 came out. On Android
+    Chrome the app can record an AR scan instead, taking pose and scale per frame from ARCore and removing the
+    phone-height prior, with a narrower field of view as the trade.
+  </p>
+
+  <h3>What the procedure prevents</h3>
+  <p>
+    Most failed captures fail visibly before upload: banded walls when the shutter is too slow for the lighting, a
+    bright window darkening every other frame when auto exposure is left on, and soft corners from turning faster than
+    the walk. The app flags those while there is still time to redo the pass. It cannot flag an unmapped corner, which
+    is why coverage is drawn over the room and checked before training.
+  </p>
+
+  <div class="foot"><span>Ply · Technical abstract · Round 1</span><span>3</span></div>
+</section>
+
+<!-- ================= 4 ================= -->
+<section class="page">
+  <h2><span class="n">03</span>Pipeline design<span class="req">Required</span></h2>
+
+  <p>
+    Seven stages run in order, each writing into a job folder and each resumable from a checkpoint. A router decides
+    from the job's progress and the container's remaining lifetime whether to start a stage or wait for the next
+    wake-up, so a long room is never killed halfway through training.
+  </p>
+
+  <table style="margin-top:2.4mm">
+    <tr><th>Stage</th><th>What it produced on the classroom capture</th><th class="r">Time</th></tr>
+    <tr><td>frames</td><td>2,167 frames from 8 min of 4K, sharpest per window kept: 542, median sharpness 646</td><td class="r">8 min</td></tr>
+    <tr><td>sfm</td><td>542 of 542 images registered, 194,121 points, 0.82 px mean reprojection, focal 1,216 px</td><td class="r">35 min</td></tr>
+    <tr><td>align</td><td>floor from 99,106 inliers, tilt 0.82°, scale 1.025 from a 1.45 m camera height, residual 2.5 mm</td><td class="r">13 s</td></tr>
+    <tr><td>occupancy</td><td>114 × 73 grid at 0.1 m: 3,294 free, 3,043 blocked, 1,985 unknown cells</td><td class="r">1 s</td></tr>
+    <tr><td>label</td><td>4,639 detections over 109 frames, fused into 194 objects in 13 classes</td><td class="r">4 min</td></tr>
+    <tr><td>train</td><td>3D Gaussian splats, 45,000 steps, SH degree 3, per-frame appearance correction</td><td class="r">96 min</td></tr>
+    <tr><td>export</td><td>1,352,799 Gaussians, 37.1 MB SPZ, an 800,000 Gaussian phone file, chunked LOD</td><td class="r">21 min</td></tr>
+    <tr><td>total</td><td>one room, unattended, on a single rented L40S</td><td class="r">164 min</td></tr>
+  </table>
+
+  <h3>Settings are planned per capture</h3>
+  <p>
+    A field comparison forced this. The same room was processed by a commercial 3DGS service, which returned a
+    visibly sharper twin from 973 keyframes at 1024 px, 692,267 Gaussians and 14.5 MB in 32 minutes. Our run had more
+    pixels, more Gaussians and six times the compute, and looked softer. A frame cap had silently lowered the kept
+    rate to 1.1 per second, training ran to a 4 million cap that export then cut by two thirds, and antialiasing was
+    off.
+  </p>
+  <p>
+    The pipeline now measures the capture instead of assuming. Kept frame rate follows the phone's own motion samples,
+    working resolution follows the source pixels, the Gaussian cap follows the solved room's surface area at roughly
+    4,200 per square metre and never more than 2,200 per solution view, steps follow the view count at about fifty per
+    view, and export thresholds are probed against the trained model until a filter keeps at least 85 percent of it.
+    Every decision is written to <span class="mono">plan.json</span> beside the report, so a run can be audited later.
+    On this capture the plan asks for 2.17 frames per second (it got 1.1), 1,728 px (it used 1,600), 27,100 steps and
+    a 1.03 million Gaussian budget.
+  </p>
+
+  <h3>Guards added after real failures</h3>
+  <p>
+    Export probes were once disabled to save time, which let a floater filter gut a 4 million splat model with no
+    check; probes now measure before they filter. The mesh stage never ran because the CLI defaulted its last stage to
+    export; the last stage is now derived from the stage list. A cached container image served pre-fix code until an
+    explicit revision counter was added to the deploy. The frame cap above now logs a warning whenever it lowers the
+    kept rate.
+  </p>
+
+  <h3>What one job writes</h3>
+  <table>
+    <tr><th>File</th><th>Size</th><th>Read by</th></tr>
+    <tr><td><span class="mono">scene.json</span></td><td>12.7 KB</td><td>the viewer: bounds, floor, spawn, camera path, splat references</td></tr>
+    <tr><td><span class="mono">shell.json</span></td><td>6 KB</td><td>measurement overlay, AR alignment, the semantic model</td></tr>
+    <tr><td><span class="mono">places.json</span></td><td>49 KB</td><td>search: 194 places with class, confidence and box</td></tr>
+    <tr><td><span class="mono">occupancy.png</span> + <span class="mono">.json</span></td><td>1.4 KB / 0.4 KB</td><td>the router and the minimap</td></tr>
+    <tr><td><span class="mono">report.json</span></td><td>4 KB</td><td>the status page and the post-run audit</td></tr>
+    <tr><td><span class="mono">scene.spz</span> / <span class="mono">scene_lite.spz</span></td><td>37.1 MB / 12.9 MB</td><td>the splat, full and phone</td></tr>
+    <tr><td><span class="mono">lod/</span></td><td>72 chunks</td><td>range-requested LOD for slow links</td></tr>
+  </table>
+
+  <div class="foot"><span>Ply · Technical abstract · Round 1</span><span>4</span></div>
+</section>
+
+<!-- ================= 5 ================= -->
+<section class="page">
+  <h2><span class="n">04</span>Technical approach &amp; results<span class="req">Required</span></h2>
+
+  <div class="two">
+    <div>
+      <h3 style="margin-top:0">The twin is a map</h3>
+      <p>
+        The output is not only a render. The room arrives with a floor height, wall lines, an occupancy grid and named
+        places, which is what a router needs. Free cells are those the posed cameras could see through; blocked cells
+        contain points; unknown cells were never observed. A* runs over free cells with blocked cells inflated by the
+        walker's radius, so routes bend around desks. Places come from lifting 2D detections into 3D boxes, merging
+        across frames and reading signage: 194 of them in the classroom.
+      </p>
+      <h3>Two sensors, one contract</h3>
+      <p>
+        LiDAR gives absolute geometry and a clean ceiling where video struggles. The office scan was 184.6 million
+        points in a 3.3 GB E57: decimated to 6.15 million for the browser, hull-fitted to six walls and a 4.13 m
+        ceiling, and tiled into 1 m cells that produced 42 furniture volumes. Coarser than the photo path, and the
+        piece each path is meant to fix in the other.
+      </p>
+    </div>
+    <div>
+      <figure>
+        <img src="report-assets/model-doll.png" alt="Semantic model of the classroom" style="height:40mm;object-fit:cover;object-position:center">
+        <figcaption>The semantic layer: 5 walls, 3 openings, 194 objects, exportable as GLB.</figcaption>
+      </figure>
+      <figure style="margin-top:2.4mm">
+        <img src="report-assets/office-cloud.png" alt="Office LiDAR point cloud" style="height:40mm;object-fit:cover;object-position:center">
+        <figcaption>The LiDAR room: 6.15 M coloured points, six walls, 4.13 m ceiling.</figcaption>
+      </figure>
+    </div>
+  </div>
+
+  <table style="margin-top:2.4mm">
+    <tr><th>Measure</th><th>Classroom (video)</th><th>Office (LiDAR)</th></tr>
+    <tr><td>Input</td><td>8 min, 5 clips, 4K</td><td>1 scan, 184.6 M points, 3.3 GB E57</td></tr>
+    <tr><td>Room recovered</td><td>10.5 × 6.3 m, ceiling 3.1 m</td><td>8.5 × 12.4 m, ceiling 4.13 m</td></tr>
+    <tr><td>Structure</td><td>5 walls, 1 opening, floor residual 2.5 mm</td><td>6 walls, floor at 0, ceiling measured</td></tr>
+    <tr><td>Places</td><td>194 objects, 194 searchable places</td><td>42 furniture volumes</td></tr>
+    <tr><td>Browser payload</td><td>37 MB full, 12.9 MB phone</td><td>89 MB cloud, 6.15 M points</td></tr>
+    <tr><td>Wall clock</td><td>164 min on one L40S, about $6 at list price</td><td>one GPU pass to ingest and measure</td></tr>
+  </table>
+
+  <h3>Limits we know about</h3>
+  <ul>
+    <li>Splat fidelity is the weak link: ceilings and the far wall read soft, and the twin was trained from 542 frames where the plan now asks for twice that.</li>
+    <li>Meshing exists as a stage but has not produced a mesh worth shipping, so there is no collision mesh yet.</li>
+    <li>AR navigation is WebXR, so it runs on Android Chrome only; iPhone visitors get the walkthrough and plan view. The iPhone LiDAR mode is in development and labelled as such in the product.</li>
+    <li>One room per capture. Multi-room and multi-floor need a floor graph that the scene contract does not carry yet.</li>
+    <li>The automatic ceiling estimate is unreliable: a splat percentile returned 7.19 m for a 3.1 m room. The model uses the corrected envelope; measurement needs a height prior.</li>
+  </ul>
+
+  <h3>Open-source components and licences</h3>
+  <p class="credits">
+    three.js (MIT), @sparkjsdev/spark (MIT), React (MIT), Vite and TypeScript (MIT), Tailwind (MIT), SuperSplat (MIT,
+    PlayCanvas), gsplat (Apache-2.0), COLMAP and pycolmap (BSD-3-Clause), PyTorch (BSD-3-Clause), OpenCV (Apache-2.0),
+    Hugging Face Transformers (Apache-2.0), @playcanvas/splat-transform (MIT). Copyright lines are in
+    <span class="mono">NOTICE</span> in the repository.
+  </p>
+
+  <div class="links" style="margin-top:2.4mm">
+    <b>Deliverables</b>
+    Live walkthrough · <span class="mono">ricco.codes/ply</span> · Capture app · <span class="mono">ricco.codes/ply/capture.html</span> ·
+    Classroom twin · <span class="mono">ricco.codes/ply/walk.html</span><br>
+    Code and sample data · <span class="mono">github.com/Ricco-Mallick/ply</span> (<span class="mono">test/</span>). All
+    links for this round, including the demonstration video, are collected in
+    <span class="mono">Additional_Links_and_Prototypes.pdf</span>.
+  </div>
+
+  <div class="foot"><span>Ply · Technical abstract · Round 1</span><span>5</span></div>
+</section>
+
+</body>
+</html>

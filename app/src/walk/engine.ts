@@ -15,7 +15,7 @@ const RM = matchMedia('(prefers-reduced-motion: reduce)').matches;
 export class WalkEngine {
   renderer: THREE.WebGLRenderer; scene = new THREE.Scene(); camera: THREE.PerspectiveCamera; spark: SparkRenderer; splat: SplatMesh | null = null;
   grid: OccupancyGrid | null = null; floorY = 0; eye = 1.55;
-  state: EngineState = { progress: 0, loaded: false, error: null, mode: 'walk', locked: false, moved: false, pos: new THREE.Vector3(), yaw: 0, speed: 1 };
+  state: EngineState = { progress: 0, loaded: false, error: null, mode: 'fly', locked: false, moved: false, pos: new THREE.Vector3(), yaw: 0, speed: 1 };
   pitch = 0; vel = new THREE.Vector3(); keys = new Set<string>(); joy = { x: 0, y: 0 }; bob = 0; flyUp = 0;
   listeners = new Set<() => void>(); raf = 0; last = performance.now(); drag: { x: number; y: number; id: number } | null = null;
   /** Called every frame before rendering (overlays, animations). */

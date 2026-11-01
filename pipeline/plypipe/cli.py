@@ -97,7 +97,10 @@ def build_parser() -> argparse.ArgumentParser:
     g.add_argument("--min-opacity", type=float, default=0.03,
                    help="export drops splats below this activated opacity (0.03 default; lower keeps fine detail)")
     g.add_argument("--train-dry-run", action="store_true", help="rehearsal: load the scene in the trainer but skip GPU training")
-    g.add_argument("--antialiased", action="store_true")
+    g.add_argument("--antialiased", dest="antialiased", action="store_true", default=True,
+                   help="antialias the splats while training (on by default; --no-antialias turns it off)")
+    g.add_argument("--no-antialias", dest="no_antialias", action="store_true",
+                   help="skip antialiasing (only for a speed test: distant splats sparkle without it)")
     g.add_argument("--gsplat-dir", type=Path, help="gsplat checkout (default $PLY_GSPLAT_DIR or /opt/gsplat)")
     g.add_argument("--ply", type=Path, help="export this PLY instead of <out>/scene.ply")
     g.add_argument("--apply-align", action="store_true", help="export: transform an unaligned PLY into the scene frame")

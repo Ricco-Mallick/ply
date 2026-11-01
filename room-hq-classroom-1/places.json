@@ -1,0 +1,3886 @@
+{
+ "version": 1,
+ "source": "sam3",
+ "places": [
+  {
+   "id": "blackboard-1",
+   "name": "Blackboard",
+   "cat": "Things",
+   "p": [
+    -5.138,
+    0.983,
+    0.252
+   ],
+   "pinned": true,
+   "ai": {
+    "cls": "blackboard",
+    "conf": 0.861,
+    "half": [
+     0.05,
+     0.1,
+     1.252
+    ]
+   }
+  },
+  {
+   "id": "blackboard-2",
+   "name": "Blackboard 2",
+   "cat": "Things",
+   "p": [
+    -5.13,
+    0.96,
+    -0.489
+   ],
+   "pinned": true,
+   "ai": {
+    "cls": "blackboard",
+    "conf": 0.838,
+    "half": [
+     0.05,
+     0.077,
+     0.937
+    ]
+   }
+  },
+  {
+   "id": "blackboard-3",
+   "name": "Blackboard 3",
+   "cat": "Things",
+   "p": [
+    -5.13,
+    0.992,
+    0.102
+   ],
+   "pinned": true,
+   "ai": {
+    "cls": "blackboard",
+    "conf": 0.802,
+    "half": [
+     0.05,
+     0.11,
+     1.456
+    ]
+   }
+  },
+  {
+   "id": "blackboard-4",
+   "name": "Blackboard 4",
+   "cat": "Things",
+   "p": [
+    -5.154,
+    1.002,
+    -1.579
+   ],
+   "pinned": true,
+   "ai": {
+    "cls": "blackboard",
+    "conf": 0.719,
+    "half": [
+     0.056,
+     0.078,
+     0.135
+    ]
+   }
+  },
+  {
+   "id": "cabinet-1",
+   "name": "Cabinet",
+   "cat": "Storage",
+   "p": [
+    -4.729,
+    0.884,
+    2.177
+   ],
+   "pinned": false,
+   "ai": {
+    "cls": "cabinet",
+    "conf": 0.909,
+    "half": [
+     0.124,
+     0.29,
+     0.2
+    ]
+   }
+  },
+  {
+   "id": "cabinet-2",
+   "name": "Cabinet 2",
+   "cat": "Storage",
+   "p": [
+    -4.056,
+    0.578,
+    -2.8
+   ],
+   "pinned": false,
+   "ai": {
+    "cls": "cabinet",
+    "conf": 0.71,
+    "half": [
+     0.396,
+     0.471,
+     0.186
+    ]
+   }
+  },
+  {
+   "id": "cabinet-3",
+   "name": "Cabinet 3",
+   "cat": "Storage",
+   "p": [
+    -3.639,
+    0.195,
+    -1.588
+   ],
+   "pinned": false,
+   "ai": {
+    "cls": "cabinet",
+    "conf": 0.596,
+    "half": [
+     0.05,
+     0.084,
+     0.106
+    ]
+   }
+  },
+  {
+   "id": "ceiling-fan-1",
+   "name": "Ceiling fan",
+   "cat": "Things",
+   "p": [
+    -3.878,
+    3.014,
+    0.866
+   ],
+   "pinned": false,
+   "ai": {
+    "cls": "ceiling fan",
+    "conf": 0.973,
+    "half": [
+     0.091,
+     0.05,
+     0.106
+    ]
+   }
+  },
+  {
+   "id": "ceiling-fan-2",
+   "name": "Ceiling fan 2",
+   "cat": "Things",
+   "p": [
+    3.707,
+    3.007,
+    0.893
+   ],
+   "pinned": false,
+   "ai": {
+    "cls": "ceiling fan",
+    "conf": 0.971,
+    "half": [
+     0.101,
+     0.05,
+     0.091
+    ]
+   }
+  },
+  {
+   "id": "ceiling-fan-3",
+   "name": "Ceiling fan 3",
+   "cat": "Things",
+   "p": [
+    3.733,
+    2.987,
+    -1.066
+   ],
+   "pinned": false,
+   "ai": {
+    "cls": "ceiling fan",
+    "conf": 0.971,
+    "half": [
+     0.091,
+     0.05,
+     0.131
+    ]
+   }
+  },
+  {
+   "id": "ceiling-fan-4",
+   "name": "Ceiling fan 4",
+   "cat": "Things",
+   "p": [
+    -0.868,
+    2.998,
+    -1.048
+   ],
+   "pinned": false,
+   "ai": {
+    "cls": "ceiling fan",
+    "conf": 0.968,
+    "half": [
+     0.107,
+     0.05,
+     0.109
+    ]
+   }
+  },
+  {
+   "id": "ceiling-fan-5",
+   "name": "Ceiling fan 5",
+   "cat": "Things",
+   "p": [
+    1.416,
+    3.012,
+    -1.044
+   ],
+   "pinned": false,
+   "ai": {
+    "cls": "ceiling fan",
+    "conf": 0.967,
+    "half": [
+     0.087,
+     0.055,
+     0.089
+    ]
+   }
+  },
+  {
+   "id": "ceiling-fan-6",
+   "name": "Ceiling fan 6",
+   "cat": "Things",
+   "p": [
+    -0.87,
+    3.041,
+    0.896
+   ],
+   "pinned": false,
+   "ai": {
+    "cls": "ceiling fan",
+    "conf": 0.965,
+    "half": [
+     0.086,
+     0.068,
+     0.086
+    ]
+   }
+  },
+  {
+   "id": "ceiling-fan-7",
+   "name": "Ceiling fan 7",
+   "cat": "Things",
+   "p": [
+    1.402,
+    3.05,
+    0.862
+   ],
+   "pinned": false,
+   "ai": {
+    "cls": "ceiling fan",
+    "conf": 0.965,
+    "half": [
+     0.091,
+     0.068,
+     0.09
+    ]
+   }
+  },
+  {
+   "id": "ceiling-fan-8",
+   "name": "Ceiling fan 8",
+   "cat": "Things",
+   "p": [
+    3.469,
+    3.376,
+    0.905
+   ],
+   "pinned": false,
+   "ai": {
+    "cls": "ceiling fan",
+    "conf": 0.697,
+    "half": [
+     0.286,
+     0.325,
+     0.05
+    ]
+   }
+  },
+  {
+   "id": "ceiling-fan-9",
+   "name": "Ceiling fan 9",
+   "cat": "Things",
+   "p": [
+    -1.297,
+    3.019,
+    0.014
+   ],
+   "pinned": false,
+   "ai": {
+    "cls": "ceiling fan",
+    "conf": 0.684,
+    "half": [
+     0.093,
+     0.73,
+     0.089
+    ]
+   }
+  },
+  {
+   "id": "ceiling-fan-10",
+   "name": "Ceiling fan 10",
+   "cat": "Things",
+   "p": [
+    -1.208,
+    2.947,
+    -0.004
+   ],
+   "pinned": false,
+   "ai": {
+    "cls": "ceiling fan",
+    "conf": 0.645,
+    "half": [
+     0.169,
+     0.683,
+     0.092
+    ]
+   }
+  },
+  {
+   "id": "chair-1",
+   "name": "Chair",
+   "cat": "Furniture",
+   "p": [
+    -3.973,
+    0.431,
+    -0.911
+   ],
+   "pinned": false,
+   "ai": {
+    "cls": "chair",
+    "conf": 0.968,
+    "half": [
+     0.205,
+     0.33,
+     0.188
+    ]
+   }
+  },
+  {
+   "id": "chair-2",
+   "name": "Chair 2",
+   "cat": "Furniture",
+   "p": [
+    -1.018,
+    0.303,
+    1.773
+   ],
+   "pinned": false,
+   "ai": {
+    "cls": "chair",
+    "conf": 0.927,
+    "half": [
+     0.264,
+     0.288,
+     0.296
+    ]
+   }
+  },
+  {
+   "id": "chair-3",
+   "name": "Chair 3",
+   "cat": "Furniture",
+   "p": [
+    5.063,
+    0.515,
+    -0.057
+   ],
+   "pinned": false,
+   "ai": {
+    "cls": "chair",
+    "conf": 0.922,
+    "half": [
+     0.22,
+     0.13,
+     0.208
+    ]
+   }
+  },
+  {
+   "id": "chair-4",
+   "name": "Chair 4",
+   "cat": "Furniture",
+   "p": [
+    -0.566,
+    0.469,
+    -0.45
+   ],
+   "pinned": false,
+   "ai": {
+    "cls": "chair",
+    "conf": 0.919,
+    "half": [
+     0.206,
+     0.125,
+     0.234
+    ]
+   }
+  },
+  {
+   "id": "chair-5",
+   "name": "Chair 5",
+   "cat": "Furniture",
+   "p": [
+    2.084,
+    0.536,
+    -0.48
+   ],
+   "pinned": false,
+   "ai": {
+    "cls": "chair",
+    "conf": 0.916,
+    "half": [
+     0.18,
+     0.105,
+     0.382
+    ]
+   }
+  },
+  {
+   "id": "chair-6",
+   "name": "Chair 6",
+   "cat": "Furniture",
+   "p": [
+    2.83,
+    0.485,
+    -0.574
+   ],
+   "pinned": false,
+   "ai": {
+    "cls": "chair",
+    "conf": 0.912,
+    "half": [
+     0.122,
+     0.129,
+     0.253
+    ]
+   }
+  },
+  {
+   "id": "chair-7",
+   "name": "Chair 7",
+   "cat": "Furniture",
+   "p": [
+    -0.501,
+    0.307,
+    0.494
+   ],
+   "pinned": false,
+   "ai": {
+    "cls": "chair",
+    "conf": 0.909,
+    "half": [
+     0.304,
+     0.291,
+     0.231
+    ]
+   }
+  },
+  {
+   "id": "chair-8",
+   "name": "Chair 8",
+   "cat": "Furniture",
+   "p": [
+    0.169,
+    0.498,
+    0.521
+   ],
+   "pinned": false,
+   "ai": {
+    "cls": "chair",
+    "conf": 0.907,
+    "half": [
+     0.317,
+     0.125,
+     0.172
+    ]
+   }
+  },
+  {
+   "id": "chair-9",
+   "name": "Chair 9",
+   "cat": "Furniture",
+   "p": [
+    3.566,
+    0.511,
+    -0.038
+   ],
+   "pinned": false,
+   "ai": {
+    "cls": "chair",
+    "conf": 0.907,
+    "half": [
+     0.334,
+     0.108,
+     0.241
+    ]
+   }
+  },
+  {
+   "id": "chair-10",
+   "name": "Chair 10",
+   "cat": "Furniture",
+   "p": [
+    -4.174,
+    0.788,
+    -0.919
+   ],
+   "pinned": false,
+   "ai": {
+    "cls": "chair",
+    "conf": 0.904,
+    "half": [
+     0.05,
+     0.05,
+     0.155
+    ]
+   }
+  },
+  {
+   "id": "chair-11",
+   "name": "Chair 11",
+   "cat": "Furniture",
+   "p": [
+    1.984,
+    0.492,
+    0.016
+   ],
+   "pinned": false,
+   "ai": {
+    "cls": "chair",
+    "conf": 0.902,
+    "half": [
+     0.269,
+     0.104,
+     0.086
+    ]
+   }
+  },
+  {
+   "id": "chair-12",
+   "name": "Chair 12",
+   "cat": "Furniture",
+   "p": [
+    -0.584,
+    0.321,
+    -2.079
+   ],
+   "pinned": false,
+   "ai": {
+    "cls": "chair",
+    "conf": 0.9,
+    "half": [
+     0.254,
+     0.277,
+     0.265
+    ]
+   }
+  },
+  {
+   "id": "chair-13",
+   "name": "Chair 13",
+   "cat": "Furniture",
+   "p": [
+    2.673,
+    0.507,
+    -1.646
+   ],
+   "pinned": false,
+   "ai": {
+    "cls": "chair",
+    "conf": 0.899,
+    "half": [
+     0.187,
+     0.112,
+     0.414
+    ]
+   }
+  },
+  {
+   "id": "chair-14",
+   "name": "Chair 14",
+   "cat": "Furniture",
+   "p": [
+    3.77,
+    0.485,
+    0.49
+   ],
+   "pinned": false,
+   "ai": {
+    "cls": "chair",
+    "conf": 0.899,
+    "half": [
+     0.151,
+     0.085,
+     0.069
+    ]
+   }
+  },
+  {
+   "id": "chair-15",
+   "name": "Chair 15",
+   "cat": "Furniture",
+   "p": [
+    1.024,
+    0.507,
+    -0.497
+   ],
+   "pinned": false,
+   "ai": {
+    "cls": "chair",
+    "conf": 0.892,
+    "half": [
+     0.173,
+     0.117,
+     0.221
+    ]
+   }
+  },
+  {
+   "id": "chair-16",
+   "name": "Chair 16",
+   "cat": "Furniture",
+   "p": [
+    4.032,
+    0.515,
+    0.934
+   ],
+   "pinned": false,
+   "ai": {
+    "cls": "chair",
+    "conf": 0.891,
+    "half": [
+     0.236,
+     0.09,
+     0.083
+    ]
+   }
+  },
+  {
+   "id": "chair-17",
+   "name": "Chair 17",
+   "cat": "Furniture",
+   "p": [
+    5.066,
+    0.526,
+    -1.468
+   ],
+   "pinned": false,
+   "ai": {
+    "cls": "chair",
+    "conf": 0.89,
+    "half": [
+     0.195,
+     0.144,
+     0.241
+    ]
+   }
+  },
+  {
+   "id": "chair-18",
+   "name": "Chair 18",
+   "cat": "Furniture",
+   "p": [
+    5.001,
+    0.485,
+    -0.754
+   ],
+   "pinned": false,
+   "ai": {
+    "cls": "chair",
+    "conf": 0.889,
+    "half": [
+     0.149,
+     0.091,
+     0.103
+    ]
+   }
+  },
+  {
+   "id": "chair-19",
+   "name": "Chair 19",
+   "cat": "Furniture",
+   "p": [
+    0.31,
+    0.499,
+    -0.791
+   ],
+   "pinned": false,
+   "ai": {
+    "cls": "chair",
+    "conf": 0.888,
+    "half": [
+     0.181,
+     0.13,
+     0.248
+    ]
+   }
+  },
+  {
+   "id": "chair-20",
+   "name": "Chair 20",
+   "cat": "Furniture",
+   "p": [
+    2.375,
+    0.508,
+    1.21
+   ],
+   "pinned": false,
+   "ai": {
+    "cls": "chair",
+    "conf": 0.886,
+    "half": [
+     0.174,
+     0.107,
+     0.287
+    ]
+   }
+  },
+  {
+   "id": "chair-21",
+   "name": "Chair 21",
+   "cat": "Furniture",
+   "p": [
+    2.144,
+    0.513,
+    0.539
+   ],
+   "pinned": false,
+   "ai": {
+    "cls": "chair",
+    "conf": 0.885,
+    "half": [
+     0.33,
+     0.088,
+     0.11
+    ]
+   }
+  },
+  {
+   "id": "chair-22",
+   "name": "Chair 22",
+   "cat": "Furniture",
+   "p": [
+    1.882,
+    0.59,
+    1.936
+   ],
+   "pinned": false,
+   "ai": {
+    "cls": "chair",
+    "conf": 0.884,
+    "half": [
+     0.129,
+     0.061,
+     0.216
+    ]
+   }
+  },
+  {
+   "id": "chair-23",
+   "name": "Chair 23",
+   "cat": "Furniture",
+   "p": [
+    4.133,
+    0.527,
+    -0.559
+   ],
+   "pinned": false,
+   "ai": {
+    "cls": "chair",
+    "conf": 0.884,
+    "half": [
+     0.18,
+     0.121,
+     0.296
+    ]
+   }
+  },
+  {
+   "id": "chair-24",
+   "name": "Chair 24",
+   "cat": "Furniture",
+   "p": [
+    3.14,
+    0.412,
+    -1.403
+   ],
+   "pinned": false,
+   "ai": {
+    "cls": "chair",
+    "conf": 0.882,
+    "half": [
+     0.095,
+     0.075,
+     0.172
+    ]
+   }
+  },
+  {
+   "id": "chair-25",
+   "name": "Chair 25",
+   "cat": "Furniture",
+   "p": [
+    3.632,
+    0.515,
+    -0.655
+   ],
+   "pinned": false,
+   "ai": {
+    "cls": "chair",
+    "conf": 0.882,
+    "half": [
+     0.174,
+     0.078,
+     0.172
+    ]
+   }
+  },
+  {
+   "id": "chair-26",
+   "name": "Chair 26",
+   "cat": "Furniture",
+   "p": [
+    1.215,
+    0.521,
+    1.307
+   ],
+   "pinned": false,
+   "ai": {
+    "cls": "chair",
+    "conf": 0.877,
+    "half": [
+     0.298,
+     0.122,
+     0.352
+    ]
+   }
+  },
+  {
+   "id": "chair-27",
+   "name": "Chair 27",
+   "cat": "Furniture",
+   "p": [
+    -0.576,
+    0.297,
+    -1.047
+   ],
+   "pinned": false,
+   "ai": {
+    "cls": "chair",
+    "conf": 0.875,
+    "half": [
+     0.278,
+     0.285,
+     0.287
+    ]
+   }
+  },
+  {
+   "id": "chair-28",
+   "name": "Chair 28",
+   "cat": "Furniture",
+   "p": [
+    -0.516,
+    0.308,
+    1.156
+   ],
+   "pinned": false,
+   "ai": {
+    "cls": "chair",
+    "conf": 0.871,
+    "half": [
+     0.355,
+     0.298,
+     0.239
+    ]
+   }
+  },
+  {
+   "id": "chair-29",
+   "name": "Chair 29",
+   "cat": "Furniture",
+   "p": [
+    3.248,
+    0.483,
+    1.651
+   ],
+   "pinned": false,
+   "ai": {
+    "cls": "chair",
+    "conf": 0.87,
+    "half": [
+     0.152,
+     0.129,
+     0.359
+    ]
+   }
+  },
+  {
+   "id": "chair-30",
+   "name": "Chair 30",
+   "cat": "Furniture",
+   "p": [
+    3.617,
+    0.469,
+    -1.025
+   ],
+   "pinned": false,
+   "ai": {
+    "cls": "chair",
+    "conf": 0.869,
+    "half": [
+     0.168,
+     0.089,
+     0.135
+    ]
+   }
+  },
+  {
+   "id": "chair-31",
+   "name": "Chair 31",
+   "cat": "Furniture",
+   "p": [
+    1.154,
+    0.476,
+    0.082
+   ],
+   "pinned": false,
+   "ai": {
+    "cls": "chair",
+    "conf": 0.866,
+    "half": [
+     0.302,
+     0.102,
+     0.085
+    ]
+   }
+  },
+  {
+   "id": "chair-32",
+   "name": "Chair 32",
+   "cat": "Furniture",
+   "p": [
+    1.166,
+    0.518,
+    -1.124
+   ],
+   "pinned": false,
+   "ai": {
+    "cls": "chair",
+    "conf": 0.866,
+    "half": [
+     0.158,
+     0.13,
+     0.353
+    ]
+   }
+  },
+  {
+   "id": "chair-33",
+   "name": "Chair 33",
+   "cat": "Furniture",
+   "p": [
+    0.976,
+    0.573,
+    1.914
+   ],
+   "pinned": false,
+   "ai": {
+    "cls": "chair",
+    "conf": 0.866,
+    "half": [
+     0.223,
+     0.068,
+     0.186
+    ]
+   }
+  },
+  {
+   "id": "chair-34",
+   "name": "Chair 34",
+   "cat": "Furniture",
+   "p": [
+    0.546,
+    0.578,
+    -1.813
+   ],
+   "pinned": false,
+   "ai": {
+    "cls": "chair",
+    "conf": 0.865,
+    "half": [
+     0.223,
+     0.055,
+     0.246
+    ]
+   }
+  },
+  {
+   "id": "chair-35",
+   "name": "Chair 35",
+   "cat": "Furniture",
+   "p": [
+    0.506,
+    0.57,
+    -1.302
+   ],
+   "pinned": false,
+   "ai": {
+    "cls": "chair",
+    "conf": 0.863,
+    "half": [
+     0.303,
+     0.069,
+     0.207
+    ]
+   }
+  },
+  {
+   "id": "chair-36",
+   "name": "Chair 36",
+   "cat": "Furniture",
+   "p": [
+    2.439,
+    0.506,
+    1.952
+   ],
+   "pinned": false,
+   "ai": {
+    "cls": "chair",
+    "conf": 0.86,
+    "half": [
+     0.15,
+     0.129,
+     0.238
+    ]
+   }
+  },
+  {
+   "id": "chair-37",
+   "name": "Chair 37",
+   "cat": "Furniture",
+   "p": [
+    4.915,
+    0.521,
+    1.189
+   ],
+   "pinned": false,
+   "ai": {
+    "cls": "chair",
+    "conf": 0.86,
+    "half": [
+     0.31,
+     0.155,
+     0.416
+    ]
+   }
+  },
+  {
+   "id": "chair-38",
+   "name": "Chair 38",
+   "cat": "Furniture",
+   "p": [
+    -0.116,
+    0.559,
+    1.84
+   ],
+   "pinned": false,
+   "ai": {
+    "cls": "chair",
+    "conf": 0.859,
+    "half": [
+     0.395,
+     0.082,
+     0.271
+    ]
+   }
+  },
+  {
+   "id": "chair-39",
+   "name": "Chair 39",
+   "cat": "Furniture",
+   "p": [
+    1.945,
+    0.546,
+    -1.931
+   ],
+   "pinned": false,
+   "ai": {
+    "cls": "chair",
+    "conf": 0.854,
+    "half": [
+     0.148,
+     0.097,
+     0.383
+    ]
+   }
+  },
+  {
+   "id": "chair-40",
+   "name": "Chair 40",
+   "cat": "Furniture",
+   "p": [
+    0.305,
+    0.526,
+    1.875
+   ],
+   "pinned": false,
+   "ai": {
+    "cls": "chair",
+    "conf": 0.852,
+    "half": [
+     0.074,
+     0.117,
+     0.192
+    ]
+   }
+  },
+  {
+   "id": "chair-41",
+   "name": "Chair 41",
+   "cat": "Furniture",
+   "p": [
+    4.924,
+    0.429,
+    0.34
+   ],
+   "pinned": false,
+   "ai": {
+    "cls": "chair",
+    "conf": 0.852,
+    "half": [
+     0.068,
+     0.051,
+     0.061
+    ]
+   }
+  },
+  {
+   "id": "chair-42",
+   "name": "Chair 42",
+   "cat": "Furniture",
+   "p": [
+    1.218,
+    0.567,
+    -2.035
+   ],
+   "pinned": false,
+   "ai": {
+    "cls": "chair",
+    "conf": 0.849,
+    "half": [
+     0.127,
+     0.063,
+     0.294
+    ]
+   }
+  },
+  {
+   "id": "chair-43",
+   "name": "Chair 43",
+   "cat": "Furniture",
+   "p": [
+    3.8,
+    0.498,
+    -2.111
+   ],
+   "pinned": false,
+   "ai": {
+    "cls": "chair",
+    "conf": 0.848,
+    "half": [
+     0.348,
+     0.108,
+     0.325
+    ]
+   }
+  },
+  {
+   "id": "chair-44",
+   "name": "Chair 44",
+   "cat": "Furniture",
+   "p": [
+    -0.359,
+    0.303,
+    -1.584
+   ],
+   "pinned": false,
+   "ai": {
+    "cls": "chair",
+    "conf": 0.845,
+    "half": [
+     0.478,
+     0.296,
+     0.335
+    ]
+   }
+  },
+  {
+   "id": "chair-45",
+   "name": "Chair 45",
+   "cat": "Furniture",
+   "p": [
+    4.313,
+    0.529,
+    -1.298
+   ],
+   "pinned": false,
+   "ai": {
+    "cls": "chair",
+    "conf": 0.842,
+    "half": [
+     0.237,
+     0.104,
+     0.325
+    ]
+   }
+  },
+  {
+   "id": "chair-46",
+   "name": "Chair 46",
+   "cat": "Furniture",
+   "p": [
+    1.158,
+    0.5,
+    0.788
+   ],
+   "pinned": false,
+   "ai": {
+    "cls": "chair",
+    "conf": 0.838,
+    "half": [
+     0.308,
+     0.123,
+     0.349
+    ]
+   }
+  },
+  {
+   "id": "chair-47",
+   "name": "Chair 47",
+   "cat": "Furniture",
+   "p": [
+    3.252,
+    0.482,
+    0.621
+   ],
+   "pinned": false,
+   "ai": {
+    "cls": "chair",
+    "conf": 0.83,
+    "half": [
+     0.124,
+     0.096,
+     0.122
+    ]
+   }
+  },
+  {
+   "id": "chair-48",
+   "name": "Chair 48",
+   "cat": "Furniture",
+   "p": [
+    -0.641,
+    0.318,
+    1.225
+   ],
+   "pinned": false,
+   "ai": {
+    "cls": "chair",
+    "conf": 0.83,
+    "half": [
+     0.211,
+     0.302,
+     0.368
+    ]
+   }
+  },
+  {
+   "id": "chair-49",
+   "name": "Chair 49",
+   "cat": "Furniture",
+   "p": [
+    2.123,
+    0.522,
+    -0.979
+   ],
+   "pinned": false,
+   "ai": {
+    "cls": "chair",
+    "conf": 0.828,
+    "half": [
+     0.148,
+     0.119,
+     0.286
+    ]
+   }
+  },
+  {
+   "id": "chair-50",
+   "name": "Chair 50",
+   "cat": "Furniture",
+   "p": [
+    2.766,
+    0.374,
+    -2.103
+   ],
+   "pinned": false,
+   "ai": {
+    "cls": "chair",
+    "conf": 0.826,
+    "half": [
+     0.05,
+     0.05,
+     0.062
+    ]
+   }
+  },
+  {
+   "id": "chair-51",
+   "name": "Chair 51",
+   "cat": "Furniture",
+   "p": [
+    2.503,
+    0.541,
+    0.31
+   ],
+   "pinned": false,
+   "ai": {
+    "cls": "chair",
+    "conf": 0.822,
+    "half": [
+     0.178,
+     0.107,
+     0.336
+    ]
+   }
+  },
+  {
+   "id": "chair-52",
+   "name": "Chair 52",
+   "cat": "Furniture",
+   "p": [
+    1.145,
+    0.491,
+    -1.605
+   ],
+   "pinned": false,
+   "ai": {
+    "cls": "chair",
+    "conf": 0.822,
+    "half": [
+     0.231,
+     0.123,
+     0.304
+    ]
+   }
+  },
+  {
+   "id": "chair-53",
+   "name": "Chair 53",
+   "cat": "Furniture",
+   "p": [
+    4.571,
+    0.627,
+    0.703
+   ],
+   "pinned": false,
+   "ai": {
+    "cls": "chair",
+    "conf": 0.822,
+    "half": [
+     0.551,
+     0.058,
+     0.346
+    ]
+   }
+  },
+  {
+   "id": "chair-54",
+   "name": "Chair 54",
+   "cat": "Furniture",
+   "p": [
+    1.675,
+    0.56,
+    -1.478
+   ],
+   "pinned": false,
+   "ai": {
+    "cls": "chair",
+    "conf": 0.82,
+    "half": [
+     0.4,
+     0.05,
+     0.199
+    ]
+   }
+  },
+  {
+   "id": "chair-55",
+   "name": "Chair 55",
+   "cat": "Furniture",
+   "p": [
+    1.8,
+    0.511,
+    1.1
+   ],
+   "pinned": false,
+   "ai": {
+    "cls": "chair",
+    "conf": 0.818,
+    "half": [
+     0.208,
+     0.095,
+     0.153
+    ]
+   }
+  },
+  {
+   "id": "chair-56",
+   "name": "Chair 56",
+   "cat": "Furniture",
+   "p": [
+    4.978,
+    0.567,
+    0.553
+   ],
+   "pinned": false,
+   "ai": {
+    "cls": "chair",
+    "conf": 0.817,
+    "half": [
+     0.234,
+     0.178,
+     0.204
+    ]
+   }
+  },
+  {
+   "id": "chair-57",
+   "name": "Chair 57",
+   "cat": "Furniture",
+   "p": [
+    5.048,
+    0.612,
+    -2.077
+   ],
+   "pinned": false,
+   "ai": {
+    "cls": "chair",
+    "conf": 0.804,
+    "half": [
+     0.263,
+     0.159,
+     0.211
+    ]
+   }
+  },
+  {
+   "id": "chair-58",
+   "name": "Chair 58",
+   "cat": "Furniture",
+   "p": [
+    2.848,
+    0.517,
+    -0.318
+   ],
+   "pinned": false,
+   "ai": {
+    "cls": "chair",
+    "conf": 0.804,
+    "half": [
+     0.161,
+     0.143,
+     0.235
+    ]
+   }
+  },
+  {
+   "id": "chair-59",
+   "name": "Chair 59",
+   "cat": "Furniture",
+   "p": [
+    4.437,
+    0.261,
+    -1.664
+   ],
+   "pinned": false,
+   "ai": {
+    "cls": "chair",
+    "conf": 0.801,
+    "half": [
+     0.306,
+     0.297,
+     0.263
+    ]
+   }
+  },
+  {
+   "id": "chair-60",
+   "name": "Chair 60",
+   "cat": "Furniture",
+   "p": [
+    1.576,
+    0.113,
+    -3.027
+   ],
+   "pinned": false,
+   "ai": {
+    "cls": "chair",
+    "conf": 0.799,
+    "half": [
+     0.116,
+     0.106,
+     0.129
+    ]
+   }
+  },
+  {
+   "id": "chair-61",
+   "name": "Chair 61",
+   "cat": "Furniture",
+   "p": [
+    4.978,
+    0.685,
+    2.476
+   ],
+   "pinned": false,
+   "ai": {
+    "cls": "chair",
+    "conf": 0.796,
+    "half": [
+     0.222,
+     0.248,
+     0.344
+    ]
+   }
+  },
+  {
+   "id": "chair-62",
+   "name": "Chair 62",
+   "cat": "Furniture",
+   "p": [
+    0.056,
+    0.509,
+    1.112
+   ],
+   "pinned": false,
+   "ai": {
+    "cls": "chair",
+    "conf": 0.787,
+    "half": [
+     0.18,
+     0.113,
+     0.304
+    ]
+   }
+  },
+  {
+   "id": "chair-63",
+   "name": "Chair 63",
+   "cat": "Furniture",
+   "p": [
+    0.198,
+    0.516,
+    1.188
+   ],
+   "pinned": false,
+   "ai": {
+    "cls": "chair",
+    "conf": 0.784,
+    "half": [
+     0.163,
+     0.12,
+     0.259
+    ]
+   }
+  },
+  {
+   "id": "chair-64",
+   "name": "Chair 64",
+   "cat": "Furniture",
+   "p": [
+    0.564,
+    0.539,
+    -0.877
+   ],
+   "pinned": false,
+   "ai": {
+    "cls": "chair",
+    "conf": 0.782,
+    "half": [
+     0.261,
+     0.102,
+     0.142
+    ]
+   }
+  },
+  {
+   "id": "chair-65",
+   "name": "Chair 65",
+   "cat": "Furniture",
+   "p": [
+    4.311,
+    0.322,
+    1.141
+   ],
+   "pinned": false,
+   "ai": {
+    "cls": "chair",
+    "conf": 0.778,
+    "half": [
+     0.104,
+     0.314,
+     0.23
+    ]
+   }
+  },
+  {
+   "id": "chair-66",
+   "name": "Chair 66",
+   "cat": "Furniture",
+   "p": [
+    1.663,
+    0.49,
+    0.473
+   ],
+   "pinned": false,
+   "ai": {
+    "cls": "chair",
+    "conf": 0.775,
+    "half": [
+     0.05,
+     0.074,
+     0.05
+    ]
+   }
+  },
+  {
+   "id": "chair-67",
+   "name": "Chair 67",
+   "cat": "Furniture",
+   "p": [
+    1.734,
+    0.57,
+    -0.032
+   ],
+   "pinned": false,
+   "ai": {
+    "cls": "chair",
+    "conf": 0.77,
+    "half": [
+     0.587,
+     0.09,
+     0.11
+    ]
+   }
+  },
+  {
+   "id": "chair-68",
+   "name": "Chair 68",
+   "cat": "Furniture",
+   "p": [
+    3.141,
+    0.489,
+    0.285
+   ],
+   "pinned": false,
+   "ai": {
+    "cls": "chair",
+    "conf": 0.766,
+    "half": [
+     0.192,
+     0.141,
+     0.298
+    ]
+   }
+  },
+  {
+   "id": "chair-69",
+   "name": "Chair 69",
+   "cat": "Furniture",
+   "p": [
+    4.951,
+    0.532,
+    2.045
+   ],
+   "pinned": false,
+   "ai": {
+    "cls": "chair",
+    "conf": 0.762,
+    "half": [
+     0.282,
+     0.113,
+     0.213
+    ]
+   }
+  },
+  {
+   "id": "chair-70",
+   "name": "Chair 70",
+   "cat": "Furniture",
+   "p": [
+    3.969,
+    0.482,
+    1.74
+   ],
+   "pinned": false,
+   "ai": {
+    "cls": "chair",
+    "conf": 0.759,
+    "half": [
+     0.131,
+     0.087,
+     0.262
+    ]
+   }
+  },
+  {
+   "id": "chair-71",
+   "name": "Chair 71",
+   "cat": "Furniture",
+   "p": [
+    -0.26,
+    0.591,
+    -1.487
+   ],
+   "pinned": false,
+   "ai": {
+    "cls": "chair",
+    "conf": 0.757,
+    "half": [
+     0.408,
+     0.05,
+     0.223
+    ]
+   }
+  },
+  {
+   "id": "chair-72",
+   "name": "Chair 72",
+   "cat": "Furniture",
+   "p": [
+    0.952,
+    0.327,
+    0.982
+   ],
+   "pinned": false,
+   "ai": {
+    "cls": "chair",
+    "conf": 0.75,
+    "half": [
+     0.224,
+     0.319,
+     0.189
+    ]
+   }
+  },
+  {
+   "id": "chair-73",
+   "name": "Chair 73",
+   "cat": "Furniture",
+   "p": [
+    5.01,
+    0.611,
+    -2.281
+   ],
+   "pinned": false,
+   "ai": {
+    "cls": "chair",
+    "conf": 0.746,
+    "half": [
+     0.206,
+     0.247,
+     0.174
+    ]
+   }
+  },
+  {
+   "id": "chair-74",
+   "name": "Chair 74",
+   "cat": "Furniture",
+   "p": [
+    0.893,
+    0.555,
+    1.995
+   ],
+   "pinned": false,
+   "ai": {
+    "cls": "chair",
+    "conf": 0.721,
+    "half": [
+     0.171,
+     0.05,
+     0.309
+    ]
+   }
+  },
+  {
+   "id": "chair-75",
+   "name": "Chair 75",
+   "cat": "Furniture",
+   "p": [
+    2.476,
+    0.6,
+    1.355
+   ],
+   "pinned": false,
+   "ai": {
+    "cls": "chair",
+    "conf": 0.715,
+    "half": [
+     0.096,
+     0.05,
+     0.12
+    ]
+   }
+  },
+  {
+   "id": "chair-76",
+   "name": "Chair 76",
+   "cat": "Furniture",
+   "p": [
+    1.947,
+    -0.211,
+    -2.642
+   ],
+   "pinned": false,
+   "ai": {
+    "cls": "chair",
+    "conf": 0.703,
+    "half": [
+     0.317,
+     0.383,
+     0.179
+    ]
+   }
+  },
+  {
+   "id": "chair-77",
+   "name": "Chair 77",
+   "cat": "Furniture",
+   "p": [
+    2.521,
+    0.514,
+    1.604
+   ],
+   "pinned": false,
+   "ai": {
+    "cls": "chair",
+    "conf": 0.694,
+    "half": [
+     0.05,
+     0.066,
+     0.091
+    ]
+   }
+  },
+  {
+   "id": "chair-78",
+   "name": "Chair 78",
+   "cat": "Furniture",
+   "p": [
+    4.063,
+    0.548,
+    -2.27
+   ],
+   "pinned": false,
+   "ai": {
+    "cls": "chair",
+    "conf": 0.676,
+    "half": [
+     0.325,
+     0.063,
+     0.295
+    ]
+   }
+  },
+  {
+   "id": "chair-79",
+   "name": "Chair 79",
+   "cat": "Furniture",
+   "p": [
+    3.17,
+    0.451,
+    1.039
+   ],
+   "pinned": false,
+   "ai": {
+    "cls": "chair",
+    "conf": 0.672,
+    "half": [
+     0.138,
+     0.088,
+     0.053
+    ]
+   }
+  },
+  {
+   "id": "chair-80",
+   "name": "Chair 80",
+   "cat": "Furniture",
+   "p": [
+    0.409,
+    0.603,
+    1.194
+   ],
+   "pinned": false,
+   "ai": {
+    "cls": "chair",
+    "conf": 0.66,
+    "half": [
+     0.314,
+     0.05,
+     0.151
+    ]
+   }
+  },
+  {
+   "id": "chair-81",
+   "name": "Chair 81",
+   "cat": "Furniture",
+   "p": [
+    0.506,
+    0.59,
+    -0.822
+   ],
+   "pinned": false,
+   "ai": {
+    "cls": "chair",
+    "conf": 0.652,
+    "half": [
+     0.179,
+     0.05,
+     0.149
+    ]
+   }
+  },
+  {
+   "id": "chair-82",
+   "name": "Chair 82",
+   "cat": "Furniture",
+   "p": [
+    3.763,
+    0.582,
+    -1.567
+   ],
+   "pinned": false,
+   "ai": {
+    "cls": "chair",
+    "conf": 0.635,
+    "half": [
+     0.454,
+     0.05,
+     0.124
+    ]
+   }
+  },
+  {
+   "id": "chair-83",
+   "name": "Chair 83",
+   "cat": "Furniture",
+   "p": [
+    4.954,
+    0.764,
+    2.834
+   ],
+   "pinned": false,
+   "ai": {
+    "cls": "chair",
+    "conf": 0.629,
+    "half": [
+     0.062,
+     0.208,
+     0.104
+    ]
+   }
+  },
+  {
+   "id": "chair-84",
+   "name": "Chair 84",
+   "cat": "Furniture",
+   "p": [
+    2.653,
+    0.352,
+    -2.512
+   ],
+   "pinned": false,
+   "ai": {
+    "cls": "chair",
+    "conf": 0.625,
+    "half": [
+     0.05,
+     0.087,
+     0.05
+    ]
+   }
+  },
+  {
+   "id": "chair-85",
+   "name": "Chair 85",
+   "cat": "Furniture",
+   "p": [
+    2.756,
+    0.545,
+    -1.195
+   ],
+   "pinned": false,
+   "ai": {
+    "cls": "chair",
+    "conf": 0.623,
+    "half": [
+     0.131,
+     0.101,
+     0.44
+    ]
+   }
+  },
+  {
+   "id": "chair-86",
+   "name": "Chair 86",
+   "cat": "Furniture",
+   "p": [
+    4.221,
+    0.518,
+    1.508
+   ],
+   "pinned": false,
+   "ai": {
+    "cls": "chair",
+    "conf": 0.619,
+    "half": [
+     0.056,
+     0.083,
+     0.167
+    ]
+   }
+  },
+  {
+   "id": "chair-87",
+   "name": "Chair 87",
+   "cat": "Furniture",
+   "p": [
+    4.638,
+    0.495,
+    -2.664
+   ],
+   "pinned": false,
+   "ai": {
+    "cls": "chair",
+    "conf": 0.566,
+    "half": [
+     0.106,
+     0.05,
+     0.126
+    ]
+   }
+  },
+  {
+   "id": "desk-1",
+   "name": "Desk",
+   "cat": "Furniture",
+   "p": [
+    -4.147,
+    0.695,
+    0.274
+   ],
+   "pinned": false,
+   "ai": {
+    "cls": "desk",
+    "conf": 0.959,
+    "half": [
+     0.201,
+     0.05,
+     0.733
+    ]
+   }
+  },
+  {
+   "id": "desk-2",
+   "name": "Desk 2",
+   "cat": "Furniture",
+   "p": [
+    3.227,
+    0.582,
+    -0.282
+   ],
+   "pinned": false,
+   "ai": {
+    "cls": "desk",
+    "conf": 0.876,
+    "half": [
+     0.135,
+     0.05,
+     0.266
+    ]
+   }
+  },
+  {
+   "id": "desk-3",
+   "name": "Desk 3",
+   "cat": "Furniture",
+   "p": [
+    4.1,
+    0.533,
+    -1.742
+   ],
+   "pinned": false,
+   "ai": {
+    "cls": "desk",
+    "conf": 0.872,
+    "half": [
+     0.178,
+     0.096,
+     0.324
+    ]
+   }
+  },
+  {
+   "id": "desk-4",
+   "name": "Desk 4",
+   "cat": "Furniture",
+   "p": [
+    3.039,
+    0.56,
+    0.801
+   ],
+   "pinned": false,
+   "ai": {
+    "cls": "desk",
+    "conf": 0.867,
+    "half": [
+     0.201,
+     0.05,
+     0.248
+    ]
+   }
+  },
+  {
+   "id": "desk-5",
+   "name": "Desk 5",
+   "cat": "Furniture",
+   "p": [
+    2.45,
+    0.554,
+    -1.856
+   ],
+   "pinned": false,
+   "ai": {
+    "cls": "desk",
+    "conf": 0.863,
+    "half": [
+     0.207,
+     0.05,
+     0.332
+    ]
+   }
+  },
+  {
+   "id": "desk-6",
+   "name": "Desk 6",
+   "cat": "Furniture",
+   "p": [
+    0.618,
+    0.564,
+    1.36
+   ],
+   "pinned": false,
+   "ai": {
+    "cls": "desk",
+    "conf": 0.86,
+    "half": [
+     0.266,
+     0.05,
+     0.405
+    ]
+   }
+  },
+  {
+   "id": "desk-7",
+   "name": "Desk 7",
+   "cat": "Furniture",
+   "p": [
+    -0.651,
+    0.295,
+    -0.718
+   ],
+   "pinned": false,
+   "ai": {
+    "cls": "desk",
+    "conf": 0.852,
+    "half": [
+     0.229,
+     0.287,
+     0.533
+    ]
+   }
+  },
+  {
+   "id": "desk-8",
+   "name": "Desk 8",
+   "cat": "Furniture",
+   "p": [
+    3.085,
+    0.562,
+    1.837
+   ],
+   "pinned": false,
+   "ai": {
+    "cls": "desk",
+    "conf": 0.852,
+    "half": [
+     0.209,
+     0.05,
+     0.206
+    ]
+   }
+  },
+  {
+   "id": "desk-9",
+   "name": "Desk 9",
+   "cat": "Furniture",
+   "p": [
+    -3.897,
+    0.276,
+    -0.671
+   ],
+   "pinned": false,
+   "ai": {
+    "cls": "desk",
+    "conf": 0.852,
+    "half": [
+     0.05,
+     0.2,
+     0.05
+    ]
+   }
+  },
+  {
+   "id": "desk-10",
+   "name": "Desk 10",
+   "cat": "Furniture",
+   "p": [
+    2.165,
+    0.548,
+    2.058
+   ],
+   "pinned": false,
+   "ai": {
+    "cls": "desk",
+    "conf": 0.848,
+    "half": [
+     0.166,
+     0.05,
+     0.205
+    ]
+   }
+  },
+  {
+   "id": "desk-11",
+   "name": "Desk 11",
+   "cat": "Furniture",
+   "p": [
+    3.428,
+    0.566,
+    -1.86
+   ],
+   "pinned": false,
+   "ai": {
+    "cls": "desk",
+    "conf": 0.846,
+    "half": [
+     0.168,
+     0.05,
+     0.091
+    ]
+   }
+  },
+  {
+   "id": "desk-12",
+   "name": "Desk 12",
+   "cat": "Furniture",
+   "p": [
+    4.033,
+    0.557,
+    1.145
+   ],
+   "pinned": false,
+   "ai": {
+    "cls": "desk",
+    "conf": 0.838,
+    "half": [
+     0.132,
+     0.05,
+     0.279
+    ]
+   }
+  },
+  {
+   "id": "desk-13",
+   "name": "Desk 13",
+   "cat": "Furniture",
+   "p": [
+    1.591,
+    0.566,
+    1.407
+   ],
+   "pinned": false,
+   "ai": {
+    "cls": "desk",
+    "conf": 0.826,
+    "half": [
+     0.197,
+     0.05,
+     0.276
+    ]
+   }
+  },
+  {
+   "id": "desk-14",
+   "name": "Desk 14",
+   "cat": "Furniture",
+   "p": [
+    -0.677,
+    0.023,
+    -0.996
+   ],
+   "pinned": false,
+   "ai": {
+    "cls": "desk",
+    "conf": 0.826,
+    "half": [
+     0.236,
+     0.05,
+     0.254
+    ]
+   }
+  },
+  {
+   "id": "desk-15",
+   "name": "Desk 15",
+   "cat": "Furniture",
+   "p": [
+    2.376,
+    0.573,
+    -1.396
+   ],
+   "pinned": false,
+   "ai": {
+    "cls": "desk",
+    "conf": 0.805,
+    "half": [
+     0.191,
+     0.05,
+     0.33
+    ]
+   }
+  },
+  {
+   "id": "desk-16",
+   "name": "Desk 16",
+   "cat": "Furniture",
+   "p": [
+    0.743,
+    0.551,
+    0.927
+   ],
+   "pinned": false,
+   "ai": {
+    "cls": "desk",
+    "conf": 0.787,
+    "half": [
+     0.216,
+     0.052,
+     0.263
+    ]
+   }
+  },
+  {
+   "id": "desk-17",
+   "name": "Desk 17",
+   "cat": "Furniture",
+   "p": [
+    1.828,
+    0.561,
+    -0.428
+   ],
+   "pinned": false,
+   "ai": {
+    "cls": "desk",
+    "conf": 0.78,
+    "half": [
+     0.177,
+     0.05,
+     0.247
+    ]
+   }
+  },
+  {
+   "id": "desk-18",
+   "name": "Desk 18",
+   "cat": "Furniture",
+   "p": [
+    -0.017,
+    0.522,
+    -1.589
+   ],
+   "pinned": false,
+   "ai": {
+    "cls": "desk",
+    "conf": 0.766,
+    "half": [
+     0.478,
+     0.124,
+     0.633
+    ]
+   }
+  },
+  {
+   "id": "desk-19",
+   "name": "Desk 19",
+   "cat": "Furniture",
+   "p": [
+    -0.695,
+    0.294,
+    -0.744
+   ],
+   "pinned": false,
+   "ai": {
+    "cls": "desk",
+    "conf": 0.755,
+    "half": [
+     0.22,
+     0.287,
+     0.544
+    ]
+   }
+  },
+  {
+   "id": "desk-20",
+   "name": "Desk 20",
+   "cat": "Furniture",
+   "p": [
+    2.631,
+    0.455,
+    -2.085
+   ],
+   "pinned": false,
+   "ai": {
+    "cls": "desk",
+    "conf": 0.743,
+    "half": [
+     0.148,
+     0.121,
+     0.374
+    ]
+   }
+  },
+  {
+   "id": "desk-21",
+   "name": "Desk 21",
+   "cat": "Furniture",
+   "p": [
+    -0.564,
+    0.546,
+    0.754
+   ],
+   "pinned": false,
+   "ai": {
+    "cls": "desk",
+    "conf": 0.718,
+    "half": [
+     0.41,
+     0.052,
+     0.247
+    ]
+   }
+  },
+  {
+   "id": "desk-22",
+   "name": "Desk 22",
+   "cat": "Furniture",
+   "p": [
+    4.278,
+    0.258,
+    -1.811
+   ],
+   "pinned": false,
+   "ai": {
+    "cls": "desk",
+    "conf": 0.705,
+    "half": [
+     0.268,
+     0.299,
+     0.318
+    ]
+   }
+  },
+  {
+   "id": "desk-23",
+   "name": "Desk 23",
+   "cat": "Furniture",
+   "p": [
+    -3.914,
+    0.694,
+    -0.067
+   ],
+   "pinned": false,
+   "ai": {
+    "cls": "desk",
+    "conf": 0.703,
+    "half": [
+     0.05,
+     0.05,
+     0.639
+    ]
+   }
+  },
+  {
+   "id": "desk-24",
+   "name": "Desk 24",
+   "cat": "Furniture",
+   "p": [
+    4.929,
+    0.541,
+    -2.688
+   ],
+   "pinned": false,
+   "ai": {
+    "cls": "desk",
+    "conf": 0.684,
+    "half": [
+     0.161,
+     0.1,
+     0.057
+    ]
+   }
+  },
+  {
+   "id": "desk-25",
+   "name": "Desk 25",
+   "cat": "Furniture",
+   "p": [
+    0.446,
+    0.482,
+    0.995
+   ],
+   "pinned": false,
+   "ai": {
+    "cls": "desk",
+    "conf": 0.642,
+    "half": [
+     0.323,
+     0.105,
+     0.328
+    ]
+   }
+  },
+  {
+   "id": "desk-26",
+   "name": "Desk 26",
+   "cat": "Furniture",
+   "p": [
+    -0.59,
+    0.597,
+    -0.455
+   ],
+   "pinned": false,
+   "ai": {
+    "cls": "desk",
+    "conf": 0.572,
+    "half": [
+     0.198,
+     0.05,
+     0.272
+    ]
+   }
+  },
+  {
+   "id": "desk-27",
+   "name": "Desk 27",
+   "cat": "Furniture",
+   "p": [
+    1.953,
+    0.598,
+    -1.039
+   ],
+   "pinned": false,
+   "ai": {
+    "cls": "desk",
+    "conf": 0.545,
+    "half": [
+     0.189,
+     0.05,
+     0.819
+    ]
+   }
+  },
+  {
+   "id": "door-1",
+   "name": "Door",
+   "cat": "Exits",
+   "p": [
+    1.077,
+    1.233,
+    3.102
+   ],
+   "pinned": true,
+   "ai": {
+    "cls": "door",
+    "conf": 0.935,
+    "half": [
+     0.544,
+     0.717,
+     0.05
+    ]
+   }
+  },
+  {
+   "id": "door-2",
+   "name": "Door 2",
+   "cat": "Exits",
+   "p": [
+    0.818,
+    1.279,
+    3.082
+   ],
+   "pinned": true,
+   "ai": {
+    "cls": "door",
+    "conf": 0.914,
+    "half": [
+     0.433,
+     0.773,
+     0.05
+    ]
+   }
+  },
+  {
+   "id": "door-3",
+   "name": "Door 3",
+   "cat": "Exits",
+   "p": [
+    -3.303,
+    1.418,
+    3.045
+   ],
+   "pinned": true,
+   "ai": {
+    "cls": "door",
+    "conf": 0.898,
+    "half": [
+     0.478,
+     0.912,
+     0.05
+    ]
+   }
+  },
+  {
+   "id": "door-4",
+   "name": "Door 4",
+   "cat": "Exits",
+   "p": [
+    5.376,
+    1.308,
+    -2.22
+   ],
+   "pinned": true,
+   "ai": {
+    "cls": "door",
+    "conf": 0.86,
+    "half": [
+     0.05,
+     0.429,
+     0.278
+    ]
+   }
+  },
+  {
+   "id": "door-5",
+   "name": "Door 5",
+   "cat": "Exits",
+   "p": [
+    -4.037,
+    2.251,
+    2.972
+   ],
+   "pinned": true,
+   "ai": {
+    "cls": "door",
+    "conf": 0.838,
+    "half": [
+     0.166,
+     0.122,
+     0.052
+    ]
+   }
+  },
+  {
+   "id": "podium-1",
+   "name": "Podium",
+   "cat": "Furniture",
+   "p": [
+    -3.901,
+    0.903,
+    -1.557
+   ],
+   "pinned": true,
+   "ai": {
+    "cls": "podium",
+    "conf": 0.643,
+    "half": [
+     0.28,
+     0.192,
+     0.05
+    ]
+   }
+  },
+  {
+   "id": "podium-2",
+   "name": "Podium 2",
+   "cat": "Furniture",
+   "p": [
+    -3.611,
+    0.218,
+    -1.863
+   ],
+   "pinned": true,
+   "ai": {
+    "cls": "podium",
+    "conf": 0.527,
+    "half": [
+     0.05,
+     0.05,
+     0.267
+    ]
+   }
+  },
+  {
+   "id": "projector-screen-1",
+   "name": "Projector screen",
+   "cat": "Things",
+   "p": [
+    -5.132,
+    1.99,
+    0.008
+   ],
+   "pinned": true,
+   "ai": {
+    "cls": "projector screen",
+    "conf": 0.963,
+    "half": [
+     0.05,
+     0.78,
+     1.409
+    ]
+   }
+  },
+  {
+   "id": "shelf-1",
+   "name": "Shelf",
+   "cat": "Storage",
+   "p": [
+    -4.801,
+    2.13,
+    2.615
+   ],
+   "pinned": false,
+   "ai": {
+    "cls": "shelf",
+    "conf": 0.8,
+    "half": [
+     0.17,
+     0.088,
+     0.066
+    ]
+   }
+  },
+  {
+   "id": "shelf-2",
+   "name": "Shelf 2",
+   "cat": "Storage",
+   "p": [
+    -4.751,
+    2.131,
+    -2.779
+   ],
+   "pinned": false,
+   "ai": {
+    "cls": "shelf",
+    "conf": 0.777,
+    "half": [
+     0.172,
+     0.078,
+     0.058
+    ]
+   }
+  },
+  {
+   "id": "sign-1",
+   "name": "Sign",
+   "cat": "Things",
+   "p": [
+    -4.345,
+    1.348,
+    2.657
+   ],
+   "pinned": false,
+   "ai": {
+    "cls": "sign",
+    "conf": 0.565,
+    "half": [
+     0.171,
+     0.139,
+     0.05
+    ]
+   }
+  },
+  {
+   "id": "stained-glass-window-1",
+   "name": "Stained glass window",
+   "cat": "Things",
+   "p": [
+    1.06,
+    2.391,
+    3.044
+   ],
+   "pinned": true,
+   "ai": {
+    "cls": "stained glass window",
+    "conf": 0.868,
+    "half": [
+     0.569,
+     0.137,
+     0.05
+    ]
+   }
+  },
+  {
+   "id": "table-1",
+   "name": "Table",
+   "cat": "Furniture",
+   "p": [
+    -3.97,
+    0.368,
+    0.313
+   ],
+   "pinned": false,
+   "ai": {
+    "cls": "table",
+    "conf": 0.933,
+    "half": [
+     0.124,
+     0.307,
+     0.958
+    ]
+   }
+  },
+  {
+   "id": "table-2",
+   "name": "Table 2",
+   "cat": "Furniture",
+   "p": [
+    2.59,
+    0.564,
+    -0.735
+   ],
+   "pinned": false,
+   "ai": {
+    "cls": "table",
+    "conf": 0.916,
+    "half": [
+     0.162,
+     0.05,
+     0.208
+    ]
+   }
+  },
+  {
+   "id": "table-3",
+   "name": "Table 3",
+   "cat": "Furniture",
+   "p": [
+    2.18,
+    0.575,
+    1.671
+   ],
+   "pinned": false,
+   "ai": {
+    "cls": "table",
+    "conf": 0.915,
+    "half": [
+     0.197,
+     0.05,
+     0.486
+    ]
+   }
+  },
+  {
+   "id": "table-4",
+   "name": "Table 4",
+   "cat": "Furniture",
+   "p": [
+    3.066,
+    0.587,
+    0.095
+   ],
+   "pinned": false,
+   "ai": {
+    "cls": "table",
+    "conf": 0.902,
+    "half": [
+     0.24,
+     0.05,
+     0.311
+    ]
+   }
+  },
+  {
+   "id": "table-5",
+   "name": "Table 5",
+   "cat": "Furniture",
+   "p": [
+    3.499,
+    0.579,
+    -0.911
+   ],
+   "pinned": false,
+   "ai": {
+    "cls": "table",
+    "conf": 0.898,
+    "half": [
+     0.114,
+     0.05,
+     0.238
+    ]
+   }
+  },
+  {
+   "id": "table-6",
+   "name": "Table 6",
+   "cat": "Furniture",
+   "p": [
+    3.928,
+    0.581,
+    -0.478
+   ],
+   "pinned": false,
+   "ai": {
+    "cls": "table",
+    "conf": 0.88,
+    "half": [
+     0.148,
+     0.05,
+     0.257
+    ]
+   }
+  },
+  {
+   "id": "table-7",
+   "name": "Table 7",
+   "cat": "Furniture",
+   "p": [
+    -0.568,
+    0.309,
+    0.488
+   ],
+   "pinned": false,
+   "ai": {
+    "cls": "table",
+    "conf": 0.878,
+    "half": [
+     0.371,
+     0.296,
+     0.235
+    ]
+   }
+  },
+  {
+   "id": "table-8",
+   "name": "Table 8",
+   "cat": "Furniture",
+   "p": [
+    -0.547,
+    0.564,
+    1.847
+   ],
+   "pinned": false,
+   "ai": {
+    "cls": "table",
+    "conf": 0.871,
+    "half": [
+     0.31,
+     0.055,
+     0.261
+    ]
+   }
+  },
+  {
+   "id": "table-9",
+   "name": "Table 9",
+   "cat": "Furniture",
+   "p": [
+    1.496,
+    0.589,
+    1.833
+   ],
+   "pinned": false,
+   "ai": {
+    "cls": "table",
+    "conf": 0.871,
+    "half": [
+     0.2,
+     0.05,
+     0.33
+    ]
+   }
+  },
+  {
+   "id": "table-10",
+   "name": "Table 10",
+   "cat": "Furniture",
+   "p": [
+    -0.726,
+    0.289,
+    1.258
+   ],
+   "pinned": false,
+   "ai": {
+    "cls": "table",
+    "conf": 0.87,
+    "half": [
+     0.262,
+     0.281,
+     0.344
+    ]
+   }
+  },
+  {
+   "id": "table-11",
+   "name": "Table 11",
+   "cat": "Furniture",
+   "p": [
+    0.944,
+    0.572,
+    -1.606
+   ],
+   "pinned": false,
+   "ai": {
+    "cls": "table",
+    "conf": 0.863,
+    "half": [
+     0.272,
+     0.063,
+     0.39
+    ]
+   }
+  },
+  {
+   "id": "table-12",
+   "name": "Table 12",
+   "cat": "Furniture",
+   "p": [
+    4.813,
+    0.569,
+    -0.133
+   ],
+   "pinned": false,
+   "ai": {
+    "cls": "table",
+    "conf": 0.855,
+    "half": [
+     0.118,
+     0.05,
+     0.091
+    ]
+   }
+  },
+  {
+   "id": "table-13",
+   "name": "Table 13",
+   "cat": "Furniture",
+   "p": [
+    1.689,
+    0.562,
+    -1.563
+   ],
+   "pinned": false,
+   "ai": {
+    "cls": "table",
+    "conf": 0.854,
+    "half": [
+     0.18,
+     0.05,
+     0.271
+    ]
+   }
+  },
+  {
+   "id": "table-14",
+   "name": "Table 14",
+   "cat": "Furniture",
+   "p": [
+    2.784,
+    0.575,
+    -0.135
+   ],
+   "pinned": false,
+   "ai": {
+    "cls": "table",
+    "conf": 0.854,
+    "half": [
+     0.257,
+     0.05,
+     0.161
+    ]
+   }
+  },
+  {
+   "id": "table-15",
+   "name": "Table 15",
+   "cat": "Furniture",
+   "p": [
+    -0.798,
+    0.293,
+    -1.795
+   ],
+   "pinned": false,
+   "ai": {
+    "cls": "table",
+    "conf": 0.845,
+    "half": [
+     0.135,
+     0.286,
+     0.54
+    ]
+   }
+  },
+  {
+   "id": "table-16",
+   "name": "Table 16",
+   "cat": "Furniture",
+   "p": [
+    1.851,
+    0.549,
+    -0.748
+   ],
+   "pinned": false,
+   "ai": {
+    "cls": "table",
+    "conf": 0.843,
+    "half": [
+     0.182,
+     0.05,
+     0.521
+    ]
+   }
+  },
+  {
+   "id": "table-17",
+   "name": "Table 17",
+   "cat": "Furniture",
+   "p": [
+    2.203,
+    0.567,
+    1.199
+   ],
+   "pinned": false,
+   "ai": {
+    "cls": "table",
+    "conf": 0.842,
+    "half": [
+     0.257,
+     0.05,
+     0.394
+    ]
+   }
+  },
+  {
+   "id": "table-18",
+   "name": "Table 18",
+   "cat": "Furniture",
+   "p": [
+    2.242,
+    0.58,
+    0.688
+   ],
+   "pinned": false,
+   "ai": {
+    "cls": "table",
+    "conf": 0.841,
+    "half": [
+     0.185,
+     0.05,
+     0.172
+    ]
+   }
+  },
+  {
+   "id": "table-19",
+   "name": "Table 19",
+   "cat": "Furniture",
+   "p": [
+    1.494,
+    0.504,
+    0.232
+   ],
+   "pinned": false,
+   "ai": {
+    "cls": "table",
+    "conf": 0.838,
+    "half": [
+     0.328,
+     0.089,
+     0.276
+    ]
+   }
+  },
+  {
+   "id": "table-20",
+   "name": "Table 20",
+   "cat": "Furniture",
+   "p": [
+    3.013,
+    0.578,
+    1.026
+   ],
+   "pinned": false,
+   "ai": {
+    "cls": "table",
+    "conf": 0.837,
+    "half": [
+     0.204,
+     0.05,
+     0.086
+    ]
+   }
+  },
+  {
+   "id": "table-21",
+   "name": "Table 21",
+   "cat": "Furniture",
+   "p": [
+    0.831,
+    0.541,
+    0.707
+   ],
+   "pinned": false,
+   "ai": {
+    "cls": "table",
+    "conf": 0.833,
+    "half": [
+     0.266,
+     0.076,
+     0.459
+    ]
+   }
+  },
+  {
+   "id": "table-22",
+   "name": "Table 22",
+   "cat": "Furniture",
+   "p": [
+    0.869,
+    0.535,
+    -0.172
+   ],
+   "pinned": false,
+   "ai": {
+    "cls": "table",
+    "conf": 0.829,
+    "half": [
+     0.253,
+     0.081,
+     0.565
+    ]
+   }
+  },
+  {
+   "id": "table-23",
+   "name": "Table 23",
+   "cat": "Furniture",
+   "p": [
+    3.062,
+    0.573,
+    1.94
+   ],
+   "pinned": false,
+   "ai": {
+    "cls": "table",
+    "conf": 0.825,
+    "half": [
+     0.216,
+     0.05,
+     0.236
+    ]
+   }
+  },
+  {
+   "id": "table-24",
+   "name": "Table 24",
+   "cat": "Furniture",
+   "p": [
+    1.708,
+    0.524,
+    -2.355
+   ],
+   "pinned": false,
+   "ai": {
+    "cls": "table",
+    "conf": 0.823,
+    "half": [
+     0.21,
+     0.05,
+     0.057
+    ]
+   }
+  },
+  {
+   "id": "table-25",
+   "name": "Table 25",
+   "cat": "Furniture",
+   "p": [
+    0.736,
+    0.552,
+    -0.885
+   ],
+   "pinned": false,
+   "ai": {
+    "cls": "table",
+    "conf": 0.82,
+    "half": [
+     0.341,
+     0.087,
+     0.467
+    ]
+   }
+  },
+  {
+   "id": "table-26",
+   "name": "Table 26",
+   "cat": "Furniture",
+   "p": [
+    -0.739,
+    0.49,
+    -1.557
+   ],
+   "pinned": false,
+   "ai": {
+    "cls": "table",
+    "conf": 0.82,
+    "half": [
+     0.208,
+     0.109,
+     0.306
+    ]
+   }
+  },
+  {
+   "id": "table-27",
+   "name": "Table 27",
+   "cat": "Furniture",
+   "p": [
+    0.581,
+    0.547,
+    -1.825
+   ],
+   "pinned": false,
+   "ai": {
+    "cls": "table",
+    "conf": 0.819,
+    "half": [
+     0.518,
+     0.063,
+     0.587
+    ]
+   }
+  },
+  {
+   "id": "table-28",
+   "name": "Table 28",
+   "cat": "Furniture",
+   "p": [
+    4.798,
+    0.608,
+    0.529
+   ],
+   "pinned": false,
+   "ai": {
+    "cls": "table",
+    "conf": 0.818,
+    "half": [
+     0.111,
+     0.05,
+     0.216
+    ]
+   }
+  },
+  {
+   "id": "table-29",
+   "name": "Table 29",
+   "cat": "Furniture",
+   "p": [
+    1.56,
+    0.571,
+    2.011
+   ],
+   "pinned": false,
+   "ai": {
+    "cls": "table",
+    "conf": 0.815,
+    "half": [
+     0.134,
+     0.05,
+     0.273
+    ]
+   }
+  },
+  {
+   "id": "table-30",
+   "name": "Table 30",
+   "cat": "Furniture",
+   "p": [
+    0.896,
+    0.563,
+    -2.109
+   ],
+   "pinned": false,
+   "ai": {
+    "cls": "table",
+    "conf": 0.815,
+    "half": [
+     0.196,
+     0.05,
+     0.272
+    ]
+   }
+  },
+  {
+   "id": "table-31",
+   "name": "Table 31",
+   "cat": "Furniture",
+   "p": [
+    -0.005,
+    0.596,
+    -1.564
+   ],
+   "pinned": false,
+   "ai": {
+    "cls": "table",
+    "conf": 0.81,
+    "half": [
+     0.348,
+     0.05,
+     0.507
+    ]
+   }
+  },
+  {
+   "id": "table-32",
+   "name": "Table 32",
+   "cat": "Furniture",
+   "p": [
+    2.172,
+    0.296,
+    -2.918
+   ],
+   "pinned": false,
+   "ai": {
+    "cls": "table",
+    "conf": 0.803,
+    "half": [
+     0.136,
+     0.05,
+     0.113
+    ]
+   }
+  },
+  {
+   "id": "table-33",
+   "name": "Table 33",
+   "cat": "Furniture",
+   "p": [
+    -4.189,
+    1.056,
+    -1.763
+   ],
+   "pinned": false,
+   "ai": {
+    "cls": "table",
+    "conf": 0.799,
+    "half": [
+     0.05,
+     0.05,
+     0.197
+    ]
+   }
+  },
+  {
+   "id": "table-34",
+   "name": "Table 34",
+   "cat": "Furniture",
+   "p": [
+    0.094,
+    0.598,
+    -0.742
+   ],
+   "pinned": false,
+   "ai": {
+    "cls": "table",
+    "conf": 0.791,
+    "half": [
+     0.293,
+     0.051,
+     0.297
+    ]
+   }
+  },
+  {
+   "id": "table-35",
+   "name": "Table 35",
+   "cat": "Furniture",
+   "p": [
+    -0.203,
+    0.561,
+    0.837
+   ],
+   "pinned": false,
+   "ai": {
+    "cls": "table",
+    "conf": 0.761,
+    "half": [
+     0.301,
+     0.05,
+     0.504
+    ]
+   }
+  },
+  {
+   "id": "table-36",
+   "name": "Table 36",
+   "cat": "Furniture",
+   "p": [
+    -0.115,
+    0.59,
+    0.987
+   ],
+   "pinned": false,
+   "ai": {
+    "cls": "table",
+    "conf": 0.759,
+    "half": [
+     0.221,
+     0.05,
+     0.052
+    ]
+   }
+  },
+  {
+   "id": "table-37",
+   "name": "Table 37",
+   "cat": "Furniture",
+   "p": [
+    4.672,
+    0.656,
+    1.099
+   ],
+   "pinned": false,
+   "ai": {
+    "cls": "table",
+    "conf": 0.752,
+    "half": [
+     0.05,
+     0.05,
+     0.25
+    ]
+   }
+  },
+  {
+   "id": "table-38",
+   "name": "Table 38",
+   "cat": "Furniture",
+   "p": [
+    -0.056,
+    0.58,
+    1.282
+   ],
+   "pinned": false,
+   "ai": {
+    "cls": "table",
+    "conf": 0.737,
+    "half": [
+     0.302,
+     0.078,
+     0.207
+    ]
+   }
+  },
+  {
+   "id": "table-39",
+   "name": "Table 39",
+   "cat": "Furniture",
+   "p": [
+    0.452,
+    0.469,
+    0.34
+   ],
+   "pinned": false,
+   "ai": {
+    "cls": "table",
+    "conf": 0.727,
+    "half": [
+     0.523,
+     0.094,
+     0.285
+    ]
+   }
+  },
+  {
+   "id": "table-40",
+   "name": "Table 40",
+   "cat": "Furniture",
+   "p": [
+    4.82,
+    0.63,
+    1.528
+   ],
+   "pinned": false,
+   "ai": {
+    "cls": "table",
+    "conf": 0.72,
+    "half": [
+     0.218,
+     0.05,
+     0.308
+    ]
+   }
+  },
+  {
+   "id": "table-41",
+   "name": "Table 41",
+   "cat": "Furniture",
+   "p": [
+    0.568,
+    0.669,
+    -2.901
+   ],
+   "pinned": false,
+   "ai": {
+    "cls": "table",
+    "conf": 0.695,
+    "half": [
+     0.311,
+     0.05,
+     0.134
+    ]
+   }
+  },
+  {
+   "id": "table-42",
+   "name": "Table 42",
+   "cat": "Furniture",
+   "p": [
+    -0.829,
+    0.508,
+    1.96
+   ],
+   "pinned": false,
+   "ai": {
+    "cls": "table",
+    "conf": 0.694,
+    "half": [
+     0.584,
+     0.108,
+     0.485
+    ]
+   }
+  },
+  {
+   "id": "table-43",
+   "name": "Table 43",
+   "cat": "Furniture",
+   "p": [
+    -0.813,
+    0.192,
+    1.032
+   ],
+   "pinned": false,
+   "ai": {
+    "cls": "table",
+    "conf": 0.691,
+    "half": [
+     0.056,
+     0.171,
+     0.134
+    ]
+   }
+  },
+  {
+   "id": "table-44",
+   "name": "Table 44",
+   "cat": "Furniture",
+   "p": [
+    1.621,
+    0.589,
+    0.396
+   ],
+   "pinned": false,
+   "ai": {
+    "cls": "table",
+    "conf": 0.686,
+    "half": [
+     0.079,
+     0.05,
+     0.119
+    ]
+   }
+  },
+  {
+   "id": "table-45",
+   "name": "Table 45",
+   "cat": "Furniture",
+   "p": [
+    4.034,
+    0.527,
+    -1.874
+   ],
+   "pinned": false,
+   "ai": {
+    "cls": "table",
+    "conf": 0.569,
+    "half": [
+     0.256,
+     0.05,
+     0.174
+    ]
+   }
+  },
+  {
+   "id": "window-1",
+   "name": "Window",
+   "cat": "Things",
+   "p": [
+    1.783,
+    1.452,
+    -3.097
+   ],
+   "pinned": false,
+   "ai": {
+    "cls": "window",
+    "conf": 0.968,
+    "half": [
+     0.354,
+     0.568,
+     0.05
+    ]
+   }
+  },
+  {
+   "id": "window-2",
+   "name": "Window 2",
+   "cat": "Things",
+   "p": [
+    0.393,
+    1.482,
+    -3.111
+   ],
+   "pinned": false,
+   "ai": {
+    "cls": "window",
+    "conf": 0.966,
+    "half": [
+     0.342,
+     0.552,
+     0.05
+    ]
+   }
+  },
+  {
+   "id": "window-3",
+   "name": "Window 3",
+   "cat": "Things",
+   "p": [
+    -2.514,
+    1.518,
+    -3.12
+   ],
+   "pinned": false,
+   "ai": {
+    "cls": "window",
+    "conf": 0.966,
+    "half": [
+     0.336,
+     0.524,
+     0.05
+    ]
+   }
+  },
+  {
+   "id": "window-4",
+   "name": "Window 4",
+   "cat": "Things",
+   "p": [
+    4.751,
+    1.54,
+    -3.086
+   ],
+   "pinned": false,
+   "ai": {
+    "cls": "window",
+    "conf": 0.96,
+    "half": [
+     0.359,
+     0.541,
+     0.05
+    ]
+   }
+  },
+  {
+   "id": "window-5",
+   "name": "Window 5",
+   "cat": "Things",
+   "p": [
+    5.018,
+    2.365,
+    3.053
+   ],
+   "pinned": false,
+   "ai": {
+    "cls": "window",
+    "conf": 0.933,
+    "half": [
+     0.252,
+     0.133,
+     0.05
+    ]
+   }
+  },
+  {
+   "id": "window-6",
+   "name": "Window 6",
+   "cat": "Things",
+   "p": [
+    -3.249,
+    2.393,
+    3.023
+   ],
+   "pinned": false,
+   "ai": {
+    "cls": "window",
+    "conf": 0.842,
+    "half": [
+     0.528,
+     0.127,
+     0.05
+    ]
+   }
+  }
+ ]
+}

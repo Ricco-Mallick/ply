@@ -10,10 +10,10 @@ export interface Settings {
   preset: 'quick' | 'standard' | 'high';
   advanced: { iterations?: number; shDegree?: number; maxSplats?: number; mapper: 'global' | 'incremental'; features: 'aliked' | 'sift'; fps?: number; cameraHeight: number; focal35?: number; };
 }
-export const PRESETS: Record<Settings['preset'], { label: string; note: string; iterations: number; shDegree: number; maxSplats: number }> = {
-  quick: { label: 'Quick', note: 'About 10 min on a T4. Good for checking a capture.', iterations: 7000, shDegree: 2, maxSplats: 600_000 },
-  standard: { label: 'Standard', note: 'About 35 min. What judges should see.', iterations: 30000, shDegree: 3, maxSplats: 1_500_000 },
-  high: { label: 'High', note: 'About 70 min on an L40S. For the final venue.', iterations: 40000, shDegree: 3, maxSplats: 3_000_000 },
+export const PRESETS: Record<Settings['preset'], { label: string; note: string; multiplier: string; iterations: number; shDegree: number; maxSplats: number }> = {
+  quick: { label: 'Quick', note: 'A fast look at the capture. Good for a coverage check.', multiplier: 'light', iterations: 7000, shDegree: 2, maxSplats: 600_000 },
+  standard: { label: 'Standard', note: 'The normal run. Detail follows your clips.', multiplier: 'balanced', iterations: 30000, shDegree: 3, maxSplats: 1_500_000 },
+  high: { label: 'High', note: 'More training time, finer detail. For the final venue.', multiplier: 'best', iterations: 40000, shDegree: 3, maxSplats: 2_000_000 },
 };
 
 export const API = (import.meta.env.VITE_API as string | undefined)?.replace(/\/$/, '');

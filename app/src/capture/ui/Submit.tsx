@@ -37,7 +37,7 @@ export function Submit({ capture, onRename, onBack, onQueued }: { capture: Captu
         {(Object.keys(PRESETS) as Settings['preset'][]).map(k => (
           <Glass as="button" key={k} role="radio" aria-checked={s.preset === k} className={`preset ${s.preset === k ? 'on' : ''}`} opts={{ shader: false, press: true, radius: 18 }} onClick={() => setS(o => ({ ...o, preset: k, advanced: { ...o.advanced, iterations: undefined, shDegree: undefined, maxSplats: undefined } }))}>
             <span className="preset-t">{PRESETS[k].label}</span><span className="preset-d">{PRESETS[k].note}</span>
-            <span className="mono preset-m">{(PRESETS[k].iterations / 1000)}k steps · SH{PRESETS[k].shDegree} · {(PRESETS[k].maxSplats / 1e6).toFixed(1)}M splats</span>
+            <span className="mono preset-m">{PRESETS[k].multiplier} · SH{PRESETS[k].shDegree} · sized from your capture</span>
           </Glass>
         ))}
       </div>
@@ -45,12 +45,12 @@ export function Submit({ capture, onRename, onBack, onQueued }: { capture: Captu
       <button className="adv-toggle mono" aria-expanded={adv} onClick={() => setAdv(v => !v)}>{adv ? '−' : '+'} Advanced settings</button>
       {adv && (
         <Glass className="adv" opts={{ shader: false, radius: 18 }}>
-          <Num label="Training steps" v={a.iterations ?? p.iterations} min={1000} max={60000} step={1000} on={v => setA('iterations', v)} hint="More steps, finer detail, longer wait." />
-          <Num label="Max splats" v={a.maxSplats ?? p.maxSplats} min={200000} max={6000000} step={100000} on={v => setA('maxSplats', v)} hint="Cap on gaussians (MCMC). Phones load ~1M comfortably." />
+          <Num label="Training steps" v={a.iterations ?? p.iterations} min={1000} max={60000} step={1000} on={v => setA('iterations', v)} hint="Auto by default. More steps, finer detail, longer wait." />
+          <Num label="Max splats" v={a.maxSplats ?? p.maxSplats} min={200000} max={6000000} step={100000} on={v => setA('maxSplats', v)} hint="Auto by default, from the room's surface area. Phones load ~1M comfortably." />
           <Sel label="Colour detail (SH degree)" v={String(a.shDegree ?? p.shDegree)} opts={[['0', '0 · flat colour'], ['1', '1'], ['2', '2'], ['3', '3 · view-dependent shine']]} on={v => setA('shDegree', +v)} />
           <Sel label="Camera solver" v={a.mapper} opts={[['global', 'Global (fast, default)'], ['incremental', 'Incremental (if global folds the path)']]} on={v => setA('mapper', v)} />
           <Sel label="Feature matching" v={a.features} opts={[['aliked', 'ALIKED + LightGlue (GPU)'], ['sift', 'SIFT (classic, CPU-friendly)']]} on={v => setA('features', v)} />
-          <Num label="Frames per second kept" v={a.fps ?? 2.5} min={1} max={6} step={.5} on={v => setA('fps', v)} hint="Higher for fast walks or tight spaces." />
+          <Num label="Frames per second kept" v={a.fps ?? 2.5} min={1} max={6} step={.5} on={v => setA('fps', v)} hint="Auto by default, from how fast you walked. Raise it for a sprint or a tight space." />
           <Num label="Phone height (m)" v={a.cameraHeight} min={.8} max={2} step={.05} on={v => setA('cameraHeight', v)} hint="Sets real-world scale. Chest height is about 1.45 m." />
         </Glass>
       )}

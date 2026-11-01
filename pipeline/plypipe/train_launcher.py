@@ -24,7 +24,7 @@ PRESETS = {
     # steps, SH degree, max Gaussians (MCMC cap), PPISP on by default
     "quick": {"max_steps": 7_000, "sh_degree": 2, "cap_max": 600_000, "ppisp": False},
     "standard": {"max_steps": 30_000, "sh_degree": 3, "cap_max": 1_500_000, "ppisp": True},
-    "high": {"max_steps": 40_000, "sh_degree": 3, "cap_max": 3_000_000, "ppisp": True},
+    "high": {"max_steps": 40_000, "sh_degree": 3, "cap_max": 2_000_000, "ppisp": True},
 }
 
 

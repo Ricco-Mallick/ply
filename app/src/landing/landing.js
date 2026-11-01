@@ -11,6 +11,7 @@ import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
 
 const RM = matchMedia('(prefers-reduced-motion: reduce)').matches;
 const MOBILE = matchMedia('(max-width: 860px), (pointer: coarse)').matches;
+let scan = null, scanLoad = null, scanDead = new URLSearchParams(location.search).get('scan') === '0';  // ?scan=0 keeps the film only
 const clamp = (v, a = 0, b = 1) => Math.min(b, Math.max(a, v)), lerp = (a, b, t) => a + (b - a) * t;
 const ss = t => t * t * (3 - 2 * t), win = (p, a, b) => ss(clamp((p - a) / (b - a)));
 const easeOutCubic = t => 1 - Math.pow(1 - t, 3);
@@ -400,7 +401,7 @@ $('skip').addEventListener('click', () => {
 /* ================= cursor ================= */
 const cur = $('cursor'), orb = $('orb'), hintEl = $('hint'); let mx = innerWidth / 2, my = innerHeight / 2, cx = mx, cy = my, mN = new THREE.Vector2(9, 9), lastX = null, rotT = 0, rotV = 0, rot = 0;
 let hintTxt = ''; function setHint(t) { if (t === hintTxt) return; hintTxt = t; if (!t) { hintEl.textContent = ''; return; } scramble(hintEl, t, 1.4); }
-addEventListener('pointermove', e => { const dx = lastX === null ? 0 : e.clientX - lastX; lastX = e.clientX; mx = e.clientX; my = e.clientY; mN.set(mx / innerWidth * 2 - 1, -(my / innerHeight * 2 - 1)); if (dragging) rotV += dx * .0045; });
+addEventListener('pointermove', e => { const dx = lastX === null ? 0 : e.clientX - lastX; lastX = e.clientX; mx = e.clientX; my = e.clientY; mN.set(mx / innerWidth * 2 - 1, -(my / innerHeight * 2 - 1)); if (dragging) { if (scan && scan.ready && scanK(pNow) > .2) scan.yaw -= dx * .0042; else rotV += dx * .0045; } });
 const exploring = p => p > .445 && p < .535;
 $('gl').addEventListener('pointerdown', e => { lastX = e.clientX; if (exploring(pNow)) { dragging = true; $('gl').setPointerCapture(e.pointerId); sfx('blip'); } });
 addEventListener('pointerup', () => dragging = false); addEventListener('pointercancel', () => dragging = false);
@@ -408,7 +409,8 @@ addEventListener('pointerup', () => dragging = false); addEventListener('pointer
 /* ================= resize + adaptive DPR ================= */
 function resize() { const w = innerWidth, h = innerHeight; renderer.setPixelRatio(DPR); renderer.setSize(w, h); composer.setPixelRatio(DPR); composer.setSize(w, h); bloom.resolution.set(w / 2, h / 2);
   camera.aspect = w / h; camera.updateProjectionMatrix(); const px = h * DPR; [roomMat, twinMat].forEach(m => { m.uniforms.uPx.value = px; m.uniforms.uAspect.value = w / h; }); roomDust.material.uniforms.uPx.value = px; twinDust.material.uniforms.uPx.value = px;
-  finalPass.uniforms.uAspect.value = w / h; }
+  finalPass.uniforms.uAspect.value = w / h;
+  if (scan) { scan.r.setSize(w, h); scan.cam.aspect = w / h; scan.cam.updateProjectionMatrix(); } }
 addEventListener('resize', resize); resize();
 let fpsAcc = 0, fpsN = 0, fpsT = 0;
 
@@ -502,6 +504,65 @@ glassAttach($('search'), { vis: op('search'), radius: 16, thick: 1.6 });
 glassAttach($('audio'), { shader: false, press: true, vis: () => $('audio').classList.contains('on') ? 1 : 0 });
 document.querySelectorAll('.btn.ghost').forEach(b => glassAttach(b, { shader: false, press: true, vis: () => +($('final').style.opacity || 0) }));
 
+
+/* ================= real scan =================
+   A chapel, captured with the same pipeline and streamed only while the visitor is in the Explore
+   chapter. It has its own renderer and canvas so it cannot disturb the film's composer, and it
+   starts downloading a third of the way through the scroll, not on load. */
+const scanEl = $('scan');
+const scanK = p => clamp(Math.min((p - .447) / .012, (.534 - p) / .014));
+/* Spark only starts pulling splats once its renderer has drawn a frame, so the scan renders from the
+   first moment even while the canvas is invisible. The canvas is revealed when the data is in. */
+function startScan() {
+  if (scan || scanLoad || scanDead) return scanLoad;
+  scanLoad = (async () => {
+    const S = await import('@sparkjsdev/spark');
+    if (!scanEl) throw new Error('no scan canvas');
+    const r = new THREE.WebGLRenderer({ canvas: scanEl, antialias: false, alpha: false, powerPreference: 'high-performance' });
+    r.setPixelRatio(Math.min(devicePixelRatio || 1, 1.5)); r.setSize(innerWidth, innerHeight);
+    r.outputColorSpace = THREE.SRGBColorSpace; r.setClearColor(0x070b14, 1);
+    const scene = new THREE.Scene(); scene.background = new THREE.Color('#070B14');
+    scene.add(new S.SparkRenderer({ renderer: r }));
+    const cam = new THREE.PerspectiveCamera(52, innerWidth / innerHeight, .1, 2000);
+    cam.position.set(0, 4, 12); cam.lookAt(0, 2, 0);
+    scan = { r, scene, cam, yaw: 2.35, pitch: .34, ready: false };
+    const mesh = new S.SplatMesh({ url: `${import.meta.env.BASE_URL}models/chapel.spz` });
+    scene.add(mesh);
+    await mesh.initialized;
+    const box = mesh.getBoundingBox(), c = box.getCenter(new THREE.Vector3()), sz = box.getSize(new THREE.Vector3());
+    /* cut the roof off, the way the dollhouse view does: an interior scan reads as walls and a floor
+       from the outside only once the top is gone */
+    const cut = box.min.y + sz.y * .62;
+    const edit = new S.SplatEdit({ rgbaBlendMode: S.SplatEditRgbaBlendMode.MULTIPLY, softEdge: .06 });
+    const cutter = new S.SplatEditSdf({ type: S.SplatEditSdfType.BOX, opacity: 0, color: new THREE.Color(1, 1, 1) });
+    cutter.position.set(c.x, cut + 60, c.z); cutter.scale.set(700, 60, 700);
+    edit.addSdf(cutter); mesh.add(edit);
+    const radius = Math.max(sz.x, sz.z) * .82;
+    Object.assign(scan, {
+      c, sz, cut, radius, ready: true,
+      place: () => {
+        const k = scan, cp = Math.cos(k.pitch);
+        k.cam.near = Math.max(.05, sz.length() / 900); k.cam.far = sz.length() * 8;
+        k.cam.position.set(k.c.x + Math.sin(k.yaw) * k.radius * cp, k.cut + k.radius * Math.sin(k.pitch), k.c.z + Math.cos(k.yaw) * k.radius * cp);
+        k.cam.lookAt(k.c.x, k.cut * .5, k.c.z); k.cam.updateProjectionMatrix();
+      },
+    });
+    scan.place();
+  })().catch(() => { scanDead = true; scan = null; if (scanEl) scanEl.remove(); });
+  return scanLoad;
+}
+function drawScan(p) {
+  if (scanDead) return;
+  const k = scanK(p);
+  if (!scan && p > .30) startScan();  // prefetch a third of the way in, whether or not the chapter is on screen yet
+  if (scan) {
+    if (!RM && scan.ready) scan.yaw += .0011;
+    if (scan.place) scan.place();
+    scan.r.render(scan.scene, scan.cam);
+  }
+  if (scanEl) scanEl.style.opacity = String(scan && scan.ready ? k : 0);
+}
+
 /* ================= frame ================= */
 let pNow = 0, pPrev = 0, last = performance.now(), lastChap = -1;
 const CHN = ['Capture', 'Reconstruct', 'Twin', 'Explore', 'Label', 'Navigate', 'Arrive', 'Map your own'];
@@ -591,6 +652,7 @@ function frame(now) { requestAnimationFrame(frame); const dt = Math.min(.05, (no
   $('cue').classList.toggle('on', ((gate === 'intro' && introT < .05 && now - lastIn > 600) || (gate === 'open' && p < .1 && now - lastIn > 1300)));
   /* render */
   composer.render(dt);
+  try { drawScan(p); } catch (e) { scanDead = true; if (scanEl) scanEl.remove(); }
   glassFrame(dt);
   /* adaptive DPR after warm-up */
   if (time > 4) { fpsAcc += dt; fpsN++; if (fpsAcc > 2) { const fps = fpsN / fpsAcc; fpsAcc = fpsN = 0; if (fps < 42 && DPR > .65) { DPR = Math.max(.65, DPR - .15); resize(); } else if (fps > 58 && DPR < Math.min(devicePixelRatio, 1.5) - .1) { DPR += .1; resize(); } } }

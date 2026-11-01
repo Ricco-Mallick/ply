@@ -112,16 +112,35 @@ def run_stage(ctx: Ctx) -> dict:
     if b0:
         diag = float(np.linalg.norm(np.array(b0["max"]) - np.array(b0["min"]))) or 10.0
     min_op = float(ctx.opt("min_opacity", 0.03))
-    clean_flags = ["-V", f"opacity,gt,{min_op:.3f}", "-V", f"scale_0,lt,{max(1.0, 0.12 * diag):.2f}",
-                   "-V", f"scale_1,lt,{max(1.0, 0.12 * diag):.2f}", "-V", f"scale_2,lt,{max(1.0, 0.12 * diag):.2f}"]
+    scale_cap = max(1.0, 0.12 * diag)
+    # the value filters cut thin, translucent gaussians; how many that is depends on how the model was
+    # trained, so the thresholds are tried against the model itself instead of assumed. The floor is
+    # "keep at least 85% of what training fitted": below that the filter is deleting detail, not noise.
+    candidates = [
+        {"opacity": min_op, "scale": scale_cap, "why": f"opacity>{min_op:.3f} and scale<{scale_cap:.2f}"},
+        {"opacity": 0.02, "scale": None, "why": "opacity>0.020 (scale caps dropped)"},
+        {"opacity": 0.01, "scale": None, "why": "opacity>0.010 (measured: the stricter filters ate detail)"},
+    ]
+    def flags_for(c: dict) -> list[str]:
+        f = ["-V", f"opacity,gt,{c['opacity']:.3f}"]
+        if c["scale"]:
+            f += ["-V", f"scale_0,lt,{c['scale']:.2f}", "-V", f"scale_1,lt,{c['scale']:.2f}", "-V", f"scale_2,lt,{c['scale']:.2f}"]
+        return f
+    clean_flags = flags_for(candidates[0])
+    chosen = candidates[0]
     if clean and probes:  # probe the value filters before using them on the real pass
         probe_v = ctx.out / "_clean_probe.ply"
         try:
-            run([*st, "-w", str(ply), "-N", *clean_flags, str(probe_v)], ctx, "export")
-            kept_v = ply_count(probe_v)
-            if total and kept_v < 0.6 * total:
-                ctx.log.emit("export", "warn", f"value filters kept only {kept_v}/{total} splats: opacity only")
-                clean_flags = ["-V", "opacity,gt,0.02"]
+            for c in candidates:
+                run([*st, "-w", str(ply), "-N", *flags_for(c), str(probe_v)], ctx, "export")
+                kept_v = ply_count(probe_v)
+                chosen = c
+                if not total or kept_v >= 0.85 * total:
+                    clean_flags = flags_for(c)
+                    break
+                ctx.log.emit("export", "warn", f"{c['why']} kept only {kept_v}/{total} splats: trying a looser filter")
+            else:
+                clean_flags = flags_for(chosen)
         except Exception as e:
             ctx.log.emit("export", "warn", f"value-filter probe failed ({str(e)[-120:]})")
         finally:
@@ -134,7 +153,7 @@ def run_stage(ctx: Ctx) -> dict:
         try:
             run([*st, "-w", str(ply), "-N", "-B", box, str(probe)], ctx, "export")
             kept = ply_count(probe)
-            if total and kept < 0.5 * total:
+            if total and kept < 0.7 * total:
                 drop_crop = True
                 ctx.log.emit("export", "warn", f"crop box kept only {kept}/{total} splats: exporting without it")
                 base = [b for i, b in enumerate(base) if not (b == "-B" or (i and base[i - 1] == "-B"))]
@@ -185,4 +204,6 @@ def run_stage(ctx: Ctx) -> dict:
         run(src + ["-H", "0", str(lite)], ctx, "export")
     update_scene(ctx, {"splat": {"file": "scene.spz", "lite": "scene_lite.spz", "format": "spz"}})
     return {"spz": full.name, "spzMB": round(full.stat().st_size / 2**20, 2), "lite": lite.name, "liteMB": round(lite.stat().st_size / 2**20, 2),
-            "cropBox": box, "cropDropped": drop_crop, "gaussiansIn": ply_count(ply), "gaussiansOut": n, "floaterFilter": floaters, "liteGaussians": min(n, LITE_MAX)}
+            "cropBox": box, "cropDropped": drop_crop, "gaussiansIn": total, "gaussiansOut": n, "floaterFilter": floaters, "liteGaussians": min(n, LITE_MAX),
+            "keptFraction": round(n / total, 3) if total else None,
+            "exportFilters": {"opacity": chosen["opacity"], "scaleCap": chosen["scale"], "why": chosen["why"]}}

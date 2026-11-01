@@ -14,7 +14,8 @@ import shutil
 import sys
 from pathlib import Path
 
-from plypipe.util import Ctx, run
+from plypipe import plan
+from plypipe.util import Ctx, read_scene, run
 
 GSPLAT_SHA = "512d366b67073d77ca099ede742683c165dfc23b"  # nerfstudio-project/gsplat main, 2026-09-19 (v1.6.0)
 
@@ -38,10 +39,23 @@ def run_stage(ctx: Ctx) -> dict:
         cmd.append("--no-ppisp")
     if ctx.opt("train_dry_run"):
         cmd.append("--dry-run")
-    for k, flag in (("iterations", "--iterations"), ("sh_degree", "--sh-degree"), ("cap_max", "--cap-max")):
-        if ctx.opt(k) is not None:
-            cmd += [flag, str(ctx.opt(k))]
-    if ctx.opt("antialiased"):
+    # the training budget comes from this model, not from a house number: surface area sets the gaussian
+    # cap, the solved views set the steps, and the preset only scales the two
+    scene = read_scene(ctx) or {}
+    shell = scene.get("shell") or {}
+    bounds = scene.get("bounds") or {}
+    views = len(list(ctx.frames_dir.glob("*.jpg"))) if ctx.frames_dir.exists() else 0
+    if not views:  # a resumed job may have the solved frames only
+        views = len(list((ctx.data_dir / "images").glob("*.jpg"))) if (ctx.data_dir / "images").exists() else 0
+    height = min(shell.get("ceilingY") or 0, (bounds.get("max") or [0, 0, 0])[1] or 0) or None
+    budget = plan.model_plan(views, bounds or None, preset, height,
+                             iterations=ctx.opt("iterations"), cap_max=ctx.opt("cap_max"))
+    plan.write(ctx.out, "model", budget)
+    ctx.log.emit("train", "progress", f"plan: {budget['why']}")
+    cmd += ["--iterations", str(budget["iterations"]), "--cap-max", str(budget["capMax"])]
+    if ctx.opt("sh_degree") is not None:
+        cmd += ["--sh-degree", str(ctx.opt("sh_degree"))]
+    if not ctx.opt("no_antialias"):
         cmd.append("--antialiased")
     pkg_root = Path(__file__).resolve().parents[2]
     # MPLBACKEND: notebooks (Kaggle) export an inline backend that a separate training venv can't load
@@ -57,4 +71,5 @@ def run_stage(ctx: Ctx) -> dict:
     shutil.copy2(plys[-1], ctx.out / "scene.ply")
     preset_info = json.loads((result / "ply_preset.json").read_text()) if (result / "ply_preset.json").exists() else {}
     return {"ply": "scene.ply", "sizeMB": round((ctx.out / "scene.ply").stat().st_size / 2**20, 1),
-            "fromStep": int(plys[-1].stem.rsplit("_", 1)[1]), **preset_info}
+            "fromStep": int(plys[-1].stem.rsplit("_", 1)[1]), **preset_info,
+            "plan": {k: budget[k] for k in ("iterations", "capMax", "why")}}

@@ -57,7 +57,7 @@ export function Walk() {
         <Glass as="a" href={BASE} className="brand pill" opts={{ shader: false, press: true }}><span className="mark" aria-hidden="true" />PLY<span className="scene-name">{manifest?.name ?? 'Loading'}</span></Glass>
         <div className="top-right">
           <Glass className="seg pill" opts={{ shader: false }} role="radiogroup" aria-label="Movement mode">
-            {(['walk', 'fly'] as Mode[]).map(m => <button key={m} role="radio" aria-checked={s?.mode === m} className={s?.mode === m ? 'on' : ''} onClick={() => engine?.setMode(m)}>{m === 'walk' ? 'Walk' : 'Fly'}</button>)}
+            {(['fly', 'walk'] as Mode[]).map(m => <button key={m} role="radio" aria-checked={s?.mode === m} className={s?.mode === m ? 'on' : ''} onClick={() => engine?.setMode(m)}>{m === 'fly' ? 'Free' : 'Walk'}</button>)}
           </Glass>
           {tour && entered && <Glass as="button" className={`tour-btn pill ${tour.playing ? 'on' : ''}`} opts={{ shader: false, press: true }} onClick={() => { if (tour.playing) tour.stop(); else { setViews(false); document.exitPointerLock?.(); tour.play(); } }}>{tour.playing ? '■ Stop tour' : '▶ Tour'}</Glass>}
           {tour && entered && <div className="views-wrap"><Glass as="button" className="tour-btn pill" opts={{ shader: false, press: true }} aria-expanded={views} onClick={() => setViews(v => !v)}>Views</Glass>
@@ -76,10 +76,10 @@ export function Walk() {
 
       <Glass className={`hint ${help && entered && !tour?.playing ? 'on' : ''}`} opts={{ radius: 16, vis: () => (help && entered && !tour?.playing ? 1 : 0) }} aria-hidden={!(help && entered && !tour?.playing)}>
         {TOUCH ? (
-          <ul><li><b>Left thumb</b> move</li><li><b>Drag right side</b> look</li><li><b>Fly</b> switch top right</li></ul>
+          <ul><li><b>Left thumb</b> move</li><li><b>Drag right side</b> look</li><li><b>Free</b> switch top right</li></ul>
         ) : (
           <ul>
-            <li><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> move</li><li><kbd>Shift</kbd> run</li><li><kbd>F</kbd> walk / fly</li>
+            <li><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> move</li><li><kbd>Shift</kbd> run</li><li><kbd>F</kbd> free / walk</li>
             {s?.mode === 'fly' && <li><kbd>Space</kbd>/<kbd>C</kbd> up / down</li>}<li><kbd>Scroll</kbd> speed {s ? s.speed.toFixed(1) : '1.0'}×</li><li><kbd>Esc</kbd> free the mouse</li>
           </ul>
         )}
@@ -98,7 +98,7 @@ export function Walk() {
             <>
               <div className="bar" role="progressbar" aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.round((s?.progress ?? 0) * 100)} aria-label="Loading the space"><i style={{ transform: `scaleX(${s?.progress ?? 0})` }} /></div>
               <p className="mono status">{ready ? 'Ready' : `Streaming splats · ${Math.round((s?.progress ?? 0) * 100)}%`}</p>
-              <button className="btn" disabled={!ready} onClick={enter}>{TOUCH ? 'Tap to walk in' : 'Click to walk in'}</button>
+              <button className="btn" disabled={!ready} onClick={enter}>{TOUCH ? 'Tap to explore' : 'Click to explore'}</button>
             </>
           )}
         </div>

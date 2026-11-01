@@ -1,0 +1,76 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Ply · Proof of concept and web viewer</title>
+<style>
+  @page { size: A4; margin: 15mm 17mm 13mm; }
+  html, body { margin: 0; }
+  body { font: 9.4pt/1.46 "Helvetica Neue", Helvetica, Arial, sans-serif; color: #14181d; }
+  .mono { font-family: "SF Mono", Menlo, Consolas, monospace; font-size: 8.4pt; }
+  .brandline { display: flex; justify-content: space-between; font-size: 7.8pt; letter-spacing: .15em; text-transform: uppercase; color: #5b6572; border-bottom: 1px solid #d8dde3; padding-bottom: 1.8mm; margin-bottom: 7mm; }
+  h1 { font-size: 21pt; letter-spacing: -.02em; margin: 0 0 2mm; }
+  h2 { font-size: 10.4pt; margin: 5mm 0 1.6mm; }
+  p { margin: 0 0 2.2mm; }
+  .lead { font-size: 10.4pt; color: #333c46; max-width: 158mm; }
+  .linkbox { border: 1px solid #ffcf9e; background: #fff6ee; border-radius: 4px; padding: 3.4mm 4mm; margin: 4mm 0 1.6mm; }
+  .linkbox b { display: block; font-size: 7.6pt; letter-spacing: .13em; text-transform: uppercase; color: #a8560c; margin-bottom: 1.6mm; }
+  .linkbox a, .linkbox span.u { font-family: "SF Mono", Menlo, Consolas, monospace; font-size: 10.4pt; color: #14181d; text-decoration: none; word-break: break-all; }
+  .linkbox em { display: block; font-style: normal; font-size: 8.4pt; color: #5b6572; margin-top: 1.6mm; }
+  table { width: 100%; border-collapse: collapse; font-size: 8.8pt; }
+  td { padding: 1.5mm 2mm 1.5mm 0; border-bottom: 1px solid #eceff2; vertical-align: top; }
+  td:first-child { width: 38mm; color: #5b6572; }
+  td.u { word-break: break-all; }
+  ol { margin: 0 0 2.4mm; padding-left: 4.4mm; }
+  li { margin-bottom: 1.3mm; }
+  .box { border: 1px solid #e2e7ec; border-radius: 3px; padding: 2.8mm 3.2mm; font-size: 8.7pt; margin-top: 4mm; }
+  .box b { font-size: 7.6pt; letter-spacing: .12em; text-transform: uppercase; color: #5b6572; display: block; margin-bottom: 1.4mm; }
+</style>
+</head>
+<body>
+
+<div class="brandline"><span>Team Ply</span><span>Techfest 2026-27 · Namma Space · Round 1</span></div>
+
+<h1>Proof of concept and web viewer</h1>
+<p class="lead">A working link to the web viewer, with free-roaming through a reconstructed room. No install, no account,
+no plugin. Open it on a desktop browser and walk.</p>
+
+<div class="linkbox">
+  <b>Free-roaming web viewer</b>
+  <span class="u">https://ricco.codes/ply/walk.html?scene=https%3A%2F%2Fply-api.ricco-ply.workers.dev%2Fv1%2Fscenes%2Fhq-classroom-1%2Fscene.json</span>
+  <em>The classroom twin: 10.5 × 6.3 m, 1.35 M Gaussians streamed in the browser. Click once to take the mouse, then W A S D to walk, mouse to look, Esc to release.</em>
+</div>
+
+<h2>Other entry points</h2>
+<table>
+  <tr><td>Landing film</td><td class="u"><span class="mono">https://ricco.codes/ply/</span></td></tr>
+  <tr><td>Capture app</td><td class="u"><span class="mono">https://ricco.codes/ply/capture.html</span></td></tr>
+  <tr><td>Semantic model</td><td class="u"><span class="mono">https://ricco.codes/ply/model.html?scene=https%3A%2F%2Fply-api.ricco-ply.workers.dev%2Fv1%2Fscenes%2Fhq-classroom-1%2Fscene.json&amp;module=/ply/models/classroom2.js</span></td></tr>
+  <tr><td>LiDAR point cloud</td><td class="u"><span class="mono">https://ricco.codes/ply/lidar.html?ply=https%3A%2F%2Fply-api.ricco-ply.workers.dev%2Fv1%2Fscenes%2Flidar-office-1%2Foffice.ply</span></td></tr>
+  <tr><td>Capture procedure</td><td class="u"><span class="mono">https://ricco.codes/ply/guide.html</span></td></tr>
+</table>
+
+<h2>What to do when it opens</h2>
+<ol>
+  <li><b>Free roam.</b> Click the scene, walk with W A S D, look with the mouse. The floor is the real floor; the spawn is at the door.</li>
+  <li><b>Change view.</b> <b>Plan</b> for a top-down floor plan, <b>Dollhouse</b> for the cutaway, <b>Views</b> for saved shots.</li>
+  <li><b>Search a place.</b> Type a room or object name, pick it, and follow the route: it is computed on the occupancy grid, so it bends around the desks instead of through them.</li>
+  <li><b>Measure.</b> <b>Measured</b> overlays the derived shell (walls, openings, object boxes) so the splat and the geometry can be compared.</li>
+  <li><b>On Android Chrome</b>, the <b>AR</b> button starts an immersive session and projects the same route on the real floor, aligned with two taps.</li>
+</ol>
+
+<h2>Reconstruction behind the link</h2>
+<p>Ply's own pipeline made the scene from eight minutes of handheld video: 542 solved poses at 0.82 px mean
+reprojection, a floor at 2.5 mm residual, 194 detected objects, 1.35 M Gaussians in a 37 MB SPZ, plus a 12.9 MB phone
+file and a 72-chunk LOD set so the viewer picks what the device can carry.</p>
+
+<h2>Browsers</h2>
+<p>Chrome or Edge on desktop for the full walkthrough; Safari on macOS and iOS loads the model and capture pages.
+AR needs WebXR, so it is Android Chrome today; on iPhone the AR entry point is hidden rather than broken. Every URL
+here returned HTTP 200 when this document was written; if a scene does not load, open
+<span class="mono">https://ricco.codes/ply/</span> and use the entry card, which links to the same scenes.</p>
+
+
+
+</body>
+</html>

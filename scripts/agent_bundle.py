@@ -18,7 +18,6 @@ import subprocess
 import sys
 from pathlib import Path
 
-import numpy as np
 
 API = os.environ.get("PLY_API", "https://ply-api.ricco-ply.workers.dev")
 UA = {"user-agent": "ply-agent-bundle/1.0"}

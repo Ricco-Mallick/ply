@@ -71,7 +71,7 @@ export function PlacesLayer({ engine, base, entered, onMap, onData }: { engine: 
   useEffect(() => {
     if (!guide || !path) return; const fixed = path.slice(), L = pathLength(fixed); let d = 0;
     const at = (s: number): [number, number] => { let acc = 0; for (let i = 1; i < fixed.length; i++) { const seg = Math.hypot(fixed[i][0] - fixed[i - 1][0], fixed[i][1] - fixed[i - 1][1]); if (acc + seg >= s) { const k = (s - acc) / seg; return [fixed[i - 1][0] + (fixed[i][0] - fixed[i - 1][0]) * k, fixed[i - 1][1] + (fixed[i][1] - fixed[i - 1][1]) * k]; } acc += seg; } return fixed[fixed.length - 1]; };
-    if (engine.state.mode !== 'walk') engine.setMode('walk');
+    engine.state.pos.y = engine.floorY;  // follow at eye height in either mode; do not switch the visitor into walk
     const hook = (dt: number) => {
       d = Math.min(L, d + dt * 1.25); const [x, z] = at(d), [ax, az] = at(Math.min(L, d + .6)); engine.state.pos.x = x; engine.state.pos.z = z;
       if (Math.hypot(ax - x, az - z) > .05) { const want = Math.atan2(-(ax - x), -(az - z)); let dy = want - engine.state.yaw; while (dy > Math.PI) dy -= 2 * Math.PI; while (dy < -Math.PI) dy += 2 * Math.PI; engine.state.yaw += dy * Math.min(1, dt * 3); }

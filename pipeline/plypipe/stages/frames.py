@@ -18,6 +18,7 @@ from pathlib import Path
 import cv2
 import numpy as np
 
+from plypipe import plan
 from plypipe.util import Ctx, need, run
 
 IMAGE_EXT = {".jpg", ".jpeg", ".png", ".webp", ".heic", ".tif", ".tiff"}
@@ -69,6 +70,34 @@ def probe_duration(video: Path) -> float | None:
         return None
 
 
+def probe_video(video: Path) -> dict:
+    """Duration and pixel size of a clip, for the plan (the stage itself only needs the duration)."""
+    if not shutil.which("ffprobe"):
+        return {"durationSec": None, "width": None, "height": None, "longSide": None}
+    try:
+        out = subprocess.run(["ffprobe", "-v", "error", "-select_streams", "v:0",
+                              "-show_entries", "stream=width,height:format=duration", "-of", "json", str(video)],
+                             capture_output=True, text=True, check=True).stdout
+        j = json.loads(out)
+        st = (j.get("streams") or [{}])[0]
+        w, h = st.get("width"), st.get("height")
+        dur = j.get("format", {}).get("duration")
+        return {"durationSec": float(dur) if dur else None, "width": w, "height": h,
+                "longSide": max(w, h) if w and h else None}
+    except Exception:
+        return {"durationSec": None, "width": None, "height": None, "longSide": None}
+
+
+def _capture(src: Path, ctx: Ctx) -> dict | None:
+    """capture.json as the app wrote it: the phone's own quality and motion samples."""
+    for f in ((src / "capture.json") if src.is_dir() else Path("/nonexistent"), ctx.out / "capture.json"):
+        try:
+            return json.loads(f.read_text())
+        except (OSError, ValueError):
+            continue
+    return None
+
+
 def _scale_filter(long_side: int) -> str:
     # never upscale; keep even dimensions
     return (f"scale='if(gte(iw,ih),min({long_side},iw),-2)':'if(gte(iw,ih),-2,min({long_side},ih))'"
@@ -76,9 +105,10 @@ def _scale_filter(long_side: int) -> str:
 
 
 def run_stage(ctx: Ctx, src: Path) -> dict:
+    # defaults until the plan has looked at the clips (a folder of photos skips the plan entirely)
     fps = float(ctx.opt("fps", 2.5))
-    oversample = int(ctx.opt("oversample", 4))
     long_side = int(ctx.opt("long_side", 1600))
+    oversample = int(ctx.opt("oversample", 4))
     max_frames = ctx.opt("max_frames")
     out = ctx.frames_dir
     if out.exists():
@@ -108,6 +138,17 @@ def run_stage(ctx: Ctx, src: Path) -> dict:
 
     tars = sorted(p for p in src.iterdir() if p.suffix.lower() == ".tar") if src.is_dir() else []
     videos = sorted(p for p in src.iterdir() if p.suffix.lower() in VIDEO_EXT) if src.is_dir() else [src]
+    # what this capture needs, from the clips themselves: a fast hand-held walk wants more frames per
+    # second than a slow tripod pass, and a 4k clip has the pixels for a bigger working resolution
+    probes = [probe_video(v) for v in videos]
+    duration = sum(p["durationSec"] or 0 for p in probes)
+    source_long = max((p["longSide"] or 0 for p in probes), default=0) or 1920
+    planned = plan.input_plan(duration, len(videos), source_long, _capture(src, ctx))
+    fps = float(ctx.opt("fps", planned["keptFps"]))
+    long_side = int(ctx.opt("long_side", planned["longSide"]))
+    planned.update(fpsUsed=fps, longSideUsed=long_side)
+    plan.write(ctx.out, "input", planned)
+    ctx.log.emit("frames", "progress", f"plan: {planned['why']}")
     if tars:
         return _ar_frames(ctx, src, tars, videos, out, fps, oversample, long_side, max_frames)
     if not videos:
@@ -149,7 +190,10 @@ def _video_frames(ctx: Ctx, src: Path, out: Path, start: int, fps: float, oversa
     need("ffmpeg", "Install ffmpeg (apt install ffmpeg) or put a static build on PATH.")
     duration = probe_duration(src)
     if max_frames and duration:
-        fps = min(fps, float(max_frames) / duration)
+        capped = min(fps, float(max_frames) / duration)
+        if capped < fps - 0.05:
+            ctx.log.emit("frames", "warn", f"{src.name}: frame cap {int(max_frames)} lowers the kept rate from {fps:.2f} to {capped:.2f}/s")
+        fps = capped
     raw = ctx.out / "frames_raw"
     if raw.exists():
         shutil.rmtree(raw)
@@ -176,6 +220,7 @@ def _video_frames(ctx: Ctx, src: Path, out: Path, start: int, fps: float, oversa
     _note_frames(ctx, [{"frame": f"{start + n:06d}.jpg", "clip": src.name, "t": round(i / rate, 2)} for n, i in enumerate(keep)])
     shutil.rmtree(raw)
     return {"source": "video", "durationSec": duration, "fps": fps, "oversample": oversample,
+            "keptPerSecond": round(len(keep) / duration, 3) if duration else None,
             "extracted": len(files), "windows": -(-len(files) // oversample), "kept": len(keep),
             "dropped": -(-len(files) // oversample) - len(keep), "excluded": len(excluded),
             "sharpnessMedian": float(np.median([scores[i] for i in keep])) if keep else 0.0}

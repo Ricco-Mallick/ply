@@ -56,6 +56,10 @@ Duration: a small room takes 1–2 min, a 4-room floor 5–8 min. The pipeline k
 - **Pixel:** use "Lock" in the video exposure and focus menu, and turn stabilisation to "Standard/Off".
 - **iPhone:** a third-party app (Blackmagic Camera or ProCamera) for shutter, ISO and WB lock; turn Action Mode off; 4K 30.
 
+## 2.5 Hand-off to the pipeline
+
+Nothing to dial in. `plypipe` plans each run from the clips: the kept frame rate follows how fast you walked, the working resolution follows the pixels you shot, and the gaussian budget follows the solved room. Do not pass `--max-frames` to make it quicker, it only throws views away. See [PROCESSING.md](PROCESSING.md) for the rules and the post-run checklist.
+
 ## 3. How to walk
 
 ```
