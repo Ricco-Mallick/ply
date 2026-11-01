@@ -9,7 +9,6 @@
 </head>
 <body>
 <canvas id="gl" aria-label="Ply story film: capture, reconstruct, twin, explore, label, navigate, arrive"></canvas>
-<canvas id="scan" aria-hidden="true"></canvas>
 
 <header><div class="logo" id="logo"><span class="mark" aria-hidden="true"></span>PLY</div>
   <button class="audio mono lg" id="audio" aria-pressed="false"><span class="eq" aria-hidden="true"><b></b><b></b><b></b><b></b></span><span id="audio-l">Audio</span></button></header>
@@ -25,7 +24,7 @@
 <section class="chap" data-w="0.015,0.125"><div class="mono"><span class="idx">01</span> / Capture</div><h2 data-t="Walk it once"></h2><p>Every frame you keep becomes a camera in space. Ply coaches you live until every wall, corner and doorway is covered.</p></section>
 <section class="chap" data-w="0.145,0.255"><div class="mono"><span class="idx">02</span> / Reconstruct</div><h2 data-t="Photons to splats"></h2><p>Cameras are solved, then millions of gaussians are trained to reproduce what the phone saw. Exposure flicker is corrected on the way.</p></section>
 <section class="chap" data-w="0.295,0.435"><div class="mono"><span class="idx">03</span> / Twin</div><h2 data-t="The blueprint, replaced"></h2><p>Floors are levelled, walls found and the walkable area extracted. Every distance is in real metres.</p></section>
-<section class="chap" data-w="0.445,0.535"><div class="mono"><span class="idx">04</span> / Explore</div><h2 data-t="A real capture, live"></h2><p>A real chapel scan, replayed along the path the scanner walked. Geometry in the browser, not a video.</p></section>
+<section class="chap" data-w="0.445,0.535"><div class="mono"><span class="idx">04</span> / Explore</div><h2 data-t="Drag to look around"></h2><p>This is the room, not a render. Walk it in the browser with WASD. No install.</p></section>
 <section class="chap" data-w="0.575,0.695"><div class="mono"><span class="idx">05</span> / Label</div><h2 data-t="It knows the room"></h2><p>AI finds rooms, doors and objects and reads the signs on the doors. People confirm, the twin learns the place.</p></section>
 <section class="chap" data-w="0.705,0.825"><div class="mono"><span class="idx">06</span> / Navigate</div><h2 data-t="Around everything"></h2><p>Search any room or object. The route stays on the floor and bends around tables, seats and walls.</p></section>
 <section class="chap" data-w="0.835,0.915"><div class="mono"><span class="idx">07</span> / Arrive</div><h2 data-t="Then walk it for real"></h2><p>Scan the marker at the entrance. Arrows appear on the real floor and update as you walk.</p></section>
@@ -33,16 +32,6 @@
 <div class="hud lg" id="hud" aria-hidden="true"><div id="hudtx"></div></div>
 <div id="anchors" aria-hidden="true"></div>
 <div class="search lg" id="search" aria-hidden="true"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg><span id="q"></span><span class="caret"></span><kbd>⌘K</kbd></div>
-
-<div class="scan-ui" id="scanui" aria-hidden="true">
-  <div class="scan-beats" id="scanbeats">
-    <div class="sb" data-b="0"><span class="sb-k mono">01 · real geometry</span><b>600,000 Gaussians</b><span>one chapel, colour and all</span></div>
-    <div class="sb" data-b="1"><span class="sb-k mono">02 · streamed</span><b>13.5 MB</b><span>not a video: every pixel is geometry</span></div>
-    <div class="sb" data-b="2"><span class="sb-k mono">03 · drawn in the browser</span><b>three.js + Spark</b><span>no plugin, no install, no app</span></div>
-  </div>
-  <div class="scan-rail" id="scanrail"><i></i><i></i><i></i></div>
-  <div class="scan-credit mono">scan: aHolo · streamed by Ply</div>
-</div>
 
 <div class="dimblur" id="dimblur"></div><div class="band t" id="bt"></div><div class="band b" id="bb"></div>
 <div class="ending"><div class="eline" id="e1">This floor <b>was mapped in 24 minutes.</b></div><div class="eline" id="e2">From one walk <b>with one phone.</b></div>

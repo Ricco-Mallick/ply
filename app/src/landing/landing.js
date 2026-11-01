@@ -11,7 +11,6 @@ import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
 
 const RM = matchMedia('(prefers-reduced-motion: reduce)').matches;
 const MOBILE = matchMedia('(max-width: 860px), (pointer: coarse)').matches;
-let scan = null, scanLoad = null, scanDead = new URLSearchParams(location.search).get('scan') === '0';  // ?scan=0 keeps the film only
 const clamp = (v, a = 0, b = 1) => Math.min(b, Math.max(a, v)), lerp = (a, b, t) => a + (b - a) * t;
 const ss = t => t * t * (3 - 2 * t), win = (p, a, b) => ss(clamp((p - a) / (b - a)));
 const easeOutCubic = t => 1 - Math.pow(1 - t, 3);
@@ -410,7 +409,7 @@ addEventListener('pointerup', () => dragging = false); addEventListener('pointer
 function resize() { const w = innerWidth, h = innerHeight; renderer.setPixelRatio(DPR); renderer.setSize(w, h); composer.setPixelRatio(DPR); composer.setSize(w, h); bloom.resolution.set(w / 2, h / 2);
   camera.aspect = w / h; camera.updateProjectionMatrix(); const px = h * DPR; [roomMat, twinMat].forEach(m => { m.uniforms.uPx.value = px; m.uniforms.uAspect.value = w / h; }); roomDust.material.uniforms.uPx.value = px; twinDust.material.uniforms.uPx.value = px;
   finalPass.uniforms.uAspect.value = w / h;
-  if (scan) { scan.r.setSize(w, h); scan.cam.aspect = w / h; scan.cam.updateProjectionMatrix(); } }
+  }
 addEventListener('resize', resize); resize();
 let fpsAcc = 0, fpsN = 0, fpsT = 0;
 
@@ -505,89 +504,8 @@ glassAttach($('audio'), { shader: false, press: true, vis: () => $('audio').clas
 document.querySelectorAll('.btn.ghost').forEach(b => glassAttach(b, { shader: false, press: true, vis: () => +($('final').style.opacity || 0) }));
 
 
-/* ================= real scan =================
-   A chapel, captured with the same pipeline and streamed only while the visitor is in the Explore
-   chapter. It has its own renderer and canvas so it cannot disturb the film's composer, and it
-   starts downloading a third of the way through the scroll, not on load. */
-const scanEl = $('scan');
-const scanK = p => clamp(Math.min((p - .451) / .010, (.528 - p) / .010));  // the wipe leads, the scan follows
-/* The scan is Z-up, and its own sample path is written in that frame as [x, y, height] in metres.
-   three.js wants Y up, so every point and every camera goes through (x, y, z) -> (x, z, -y). */
-const SCAN_KF = [
-  { p: [8.3, 2.15, 0], l: [2.0, 1.5, 0], fov: 65, dur: 0 },
-  { p: [7.6, 1.85, 0], l: [-2.0, 1.45, 0], fov: 63, dur: 2500 },
-  { p: [7.0, 1.65, 0], l: [-6.0, 1.45, 0], fov: 62, dur: 2500 },
-  { p: [4.5, 1.62, 0], l: [-7.0, 1.4, 0], fov: 60, dur: 2500 },
-  { p: [1.5, 1.6, 0], l: [-7.5, 1.35, 0], fov: 58, dur: 2500 },
-  { p: [-1.8, 1.58, 0], l: [-8.0, 1.3, 0], fov: 56, dur: 2500 },
-  { p: [-5.8, 1.55, 1.0], l: [-6.0, 2.0, -3.5], fov: 58, dur: 2500 },
-  { p: [-7.5, 1.7, -0.5], l: [2.5, 1.8, 0], fov: 65, dur: 2500 },
-  { p: [-2.0, 3.8, -0.5], l: [1.0, 2.5, 3.5], fov: 66, dur: 2500 },
-  { p: [2.5, 5.8, 0], l: [-7.0, 1.5, 0], fov: 75, dur: 2500 },
-];
-const SCAN_TOTAL = SCAN_KF.reduce((a, k) => a + k.dur, 0);
-const V3 = (a) => new THREE.Vector3(a[0], a[1], a[2]);
-
-/* Spark only starts pulling splats once its renderer has drawn a frame, so the scan renders from the
-   first moment even while the canvas is invisible. The canvas is revealed when the data is in. */
-function startScan() {
-  if (scan || scanLoad || scanDead) return scanLoad;
-  scanLoad = (async () => {
-    const S = await import('@sparkjsdev/spark');
-    if (!scanEl) throw new Error('no scan canvas');
-    const r = new THREE.WebGLRenderer({ canvas: scanEl, antialias: false, alpha: false, powerPreference: 'high-performance' });
-    r.setPixelRatio(Math.min(devicePixelRatio || 1, 1.5)); r.setSize(innerWidth, innerHeight);
-    r.outputColorSpace = THREE.SRGBColorSpace; r.setClearColor(0x070b14, 1);
-    const scene = new THREE.Scene(); scene.background = new THREE.Color('#070B14');
-    scene.add(new S.SparkRenderer({ renderer: r }));
-    const cam = new THREE.PerspectiveCamera(65, innerWidth / innerHeight, .05, 260);
-    cam.position.set(8.3, 2.15, 0); cam.lookAt(2, 1.5, 0);
-    scan = { r, scene, cam, t: 0, ready: false };
-    const mesh = new S.SplatMesh({ url: `${import.meta.env.BASE_URL}models/chapel.spz` });
-    mesh.rotation.x = -Math.PI / 2;  // the scan is Z-up
-    scene.add(mesh);
-    await mesh.initialized;
-    scan.ready = true;
-  })().catch(() => { scanDead = true; scan = null; if (scanEl) scanEl.remove(); });
-  return scanLoad;
-}
-function scanShot(t) {  // which pair of keyframes, and how far between them
-  let acc = 0;
-  for (let i = 1; i < SCAN_KF.length; i++) {
-    const d = SCAN_KF[i].dur || 1;
-    if (t < acc + d) return { a: SCAN_KF[i - 1], b: SCAN_KF[i], k: ss((t - acc) / d) };
-    acc += d;
-  }
-  return { a: SCAN_KF[SCAN_KF.length - 2], b: SCAN_KF[SCAN_KF.length - 1], k: 1 };
-}
-function drawScan(p, dt) {
-  if (scanDead) return;
-  const k = scanK(p);
-  if (!scan && p > .30) startScan();  // prefetch a third of the way in, whether or not the chapter is on screen yet
-  if (scan && scan.ready) {
-    scan.t = (scan.t + dt * 1000) % SCAN_TOTAL;  // the rig only advances while the chapter is visible
-    const { a, b, k: e } = scanShot(scan.t);
-    scan.cam.position.lerpVectors(V3(a.p), V3(b.p), e);
-    scan.cam.lookAt(new THREE.Vector3().lerpVectors(V3(a.l), V3(b.l), e));
-    const fov = a.fov + (b.fov - a.fov) * e;
-    if (Math.abs(scan.cam.fov - fov) > .01) { scan.cam.fov = fov; scan.cam.updateProjectionMatrix(); }
-  }
-  if (scan) scan.r.render(scan.scene, scan.cam);
-  const shown = !!(scan && scan.ready && k > 0);
-  if (scanEl) scanEl.style.opacity = String(shown ? k : 0);
-  if (scanUI) scanUI.style.opacity = String(shown ? k : 0);
-  if (shown) {
-    if (!scanOn) { scan.t = 0; scan.beat = -1; }  // arrived at the chapter: start at the entrance
-    const beat = scan.t < 7000 ? 0 : scan.t < 14000 ? 1 : 2;
-    if (beat !== scan.beat) { scan.beat = beat; scanBeats.forEach((el, i) => el.classList.toggle('on', i === beat)); scanRail.forEach((el, i) => el.classList.toggle('on', i <= beat)); }
-  }
-  scanOn = shown;
-}
-
 /* ================= frame ================= */
-let pNow = 0, pPrev = 0, pPrev2 = 0, last = performance.now(), lastChap = -1;
-const scanUI = $('scanui'), scanBeats = [...document.querySelectorAll('#scanbeats .sb')], scanRail = [...document.querySelectorAll('#scanrail i')];
-let scanOn = false;
+let pNow = 0, pPrev = 0, last = performance.now(), lastChap = -1;
 const CHN = ['Capture', 'Reconstruct', 'Twin', 'Explore', 'Label', 'Navigate', 'Arrive', 'Map your own'];
 const QUERY = 'meeting room 4';
 const dummy = new THREE.Object3D();
@@ -646,12 +564,8 @@ function frame(now) { requestAnimationFrame(frame); const dt = Math.min(.05, (no
   /* post */
   const F = finalPass.uniforms; F.uTime.value = time;
   const w1 = clamp((p - .248) / (.292 - .248)), w3 = clamp((p - .818) / (.858 - .818));
-  const wIn = clamp((p - .436) / (.452 - .436)), wOut = clamp((p - .526) / (.542 - .526));
-  const wipeK = w1 > 0 && w1 < 1 ? w1 : wIn > 0 && wIn < 1 ? wIn : wOut > 0 && wOut < 1 ? wOut : -1;
-  if (wipeK >= 0) { F.uWipeOn.value = 1; F.uWipe.value = wipeK; F.uDir.value = 0; F.uCA.value = 7.5; }
+  if (w1 > 0 && w1 < 1) { F.uWipeOn.value = 1; F.uWipe.value = w1; F.uDir.value = 0; F.uCA.value = 7.5; }
   else F.uWipeOn.value = 0;
-  if ((p > .436 && pPrev2 <= .436) || (p > .526 && pPrev2 <= .526)) sfx('whoosh');
-  pPrev2 = p;
   F.uZoom.value = RM ? 0 : Math.sin(Math.PI * w3) * .28 + bangPulse * .3; F.uCAg.value = RM ? 0 : frontOn * .05;
   const ce = chromT < 0 ? 0 : clamp((now - chromT) / 2600); F.uChrom.value = RM ? 0 : ss(1 - Math.abs(2 * ce - 1)) * (ce < 1 ? 1 : 0);
   bloom.strength = .5 - win(p, .15, .2) * .2 + win(p, .27, .3) * .2 - win(p, .4, .44) * .15 + win(p, .7, .76) * .3 + frontOn * .05 + bangPulse * .9;
@@ -674,12 +588,11 @@ function frame(now) { requestAnimationFrame(frame); const dt = Math.min(.05, (no
   const sk = gate !== 'locked' && !skipping && p < .9 ? 1 : 0; $('skip').style.opacity = sk; $('skip').style.pointerEvents = sk ? 'auto' : 'none';
   /* cursor */
   cx = lerp(cx, mx, 1 - Math.exp(-dt * 12)); cy = lerp(cy, my, 1 - Math.exp(-dt * 12)); cur.style.transform = `translate(${cx}px,${cy}px)`;
-  const ex = gate === 'open' && exploring(p) && !(scan && scan.ready && scanK(p) > .2); orb.classList.toggle('on', ex);
+  const ex = gate === 'open' && exploring(p); orb.classList.toggle('on', ex);
   setHint(gate === 'locked' ? '' : ex ? (dragging ? 'Rotating' : 'Drag to rotate') : '');
   $('cue').classList.toggle('on', ((gate === 'intro' && introT < .05 && now - lastIn > 600) || (gate === 'open' && p < .1 && now - lastIn > 1300)));
   /* render */
   composer.render(dt);
-  try { drawScan(p, dt); } catch (e) { scanDead = true; if (scanEl) scanEl.remove(); }
   glassFrame(dt);
   /* adaptive DPR after warm-up */
   if (time > 4) { fpsAcc += dt; fpsN++; if (fpsAcc > 2) { const fps = fpsN / fpsAcc; fpsAcc = fpsN = 0; if (fps < 42 && DPR > .65) { DPR = Math.max(.65, DPR - .15); resize(); } else if (fps > 58 && DPR < Math.min(devicePixelRatio, 1.5) - .1) { DPR += .1; resize(); } } }
