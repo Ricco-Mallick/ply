@@ -72,7 +72,8 @@ export function Walk() {
             {views && <Glass className="views-menu" opts={{ radius: 14, shader: false }}>{tour.keys.map((_, i) => <button key={i} onClick={() => { setViews(false); document.exitPointerLock?.(); tour.goTo(i); }}><span className="mono">{String(i + 1).padStart(2, '0')}</span>{SHOT_NAMES[i] ?? `View ${i + 1}`}</button>)}</Glass>}</div>}
           {entered && shell?.walls?.length && <Glass as="button" className={`tour-btn pill ${measured ? 'on' : ''}`} opts={{ shader: false, press: true }} aria-pressed={measured} title="Measured shell: walls and object boxes from the solve" onClick={() => setMeasured(v => !v)}>Measured</Glass>}
           {entered && manifest && base && <Glass as="a" className="tour-btn pill" opts={{ shader: false, press: true }} title="Open this twin in the editor (SuperSplat)"
-            href={`${BASE}editor/index.html?load=${encodeURIComponent(new URL(manifest.splat.replace('_lite', ''), base).href)}&filename=${encodeURIComponent((manifest.name || 'twin').replace(/[^\w.-]+/g, '_'))}.spz`}>Edit</Glass>}
+            target="_blank" rel="noopener"
+            href={`${BASE}editor/index.html?load=${encodeURIComponent(new URL(manifest.splat, base).href)}&filename=${encodeURIComponent((manifest.name || 'twin').replace(/[^\w.-]+/g, '_'))}.spz`}>Edit</Glass>}
           {entered && engine && manifest && base && <ArLauncher places={arData.places.filter(p => p.pinned).map(p => ({ id: p.id, name: p.name, x: p.p[0], z: p.p[2] }))} nav={arData.nav}
             splatUrl={new URL(manifest.splat, base).href} bounds={manifest.bounds ?? null} floorY={engine.floorY} />}
           {entered && <Glass as="button" className="tour-btn pill" opts={{ shader: false, press: true }} title="Display exposure: [ dimmer, ] brighter, \\ reset" aria-label={`Exposure ${Math.round(exposure * 100)} percent`} onClick={() => setExposure(e => e >= 1.55 ? .7 : +(e + .1).toFixed(2))}>☀ {Math.round(exposure * 100)}%</Glass>}

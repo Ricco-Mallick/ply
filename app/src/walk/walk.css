@@ -45,7 +45,7 @@ button { font: inherit; color: inherit; cursor: pointer; }
 .btn:disabled { opacity: .35; cursor: default; }
 
 @media (max-width: 640px) { .scene-name { display: none; } .map { transform: scale(.78); transform-origin: bottom right; } .hint ul { font-size: 11px; } }
-.tour-btn { height: 40px; padding: 0 16px; border: 1px solid var(--lg-edge); font: 400 10px/1 var(--font-wide); letter-spacing: .16em; text-transform: uppercase; color: var(--fg); }
+.tour-btn { display: inline-flex; align-items: center; justify-content: center; text-decoration: none; height: 40px; padding: 0 16px; border: 1px solid var(--lg-edge); font: 400 10px/1 var(--font-wide); letter-spacing: .16em; text-transform: uppercase; color: var(--fg); }
 .tour-btn.on { border-color: var(--accent); color: var(--accent); }
 .views-wrap { position: relative; }
 .views-menu { position: absolute; right: 0; top: 48px; min-width: 190px; padding: 6px; display: grid; --lg-tint: rgba(8, 11, 18, .72); }

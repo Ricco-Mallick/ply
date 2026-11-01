@@ -21,7 +21,34 @@
         </script>
     </head>
 
-    <body>
-        <script type="module" src="./index.js"></script>
+        <script>
+            // Every twin opens through ?load=, and the editor's own camera starts wherever it was left,
+            // which for a fresh tab is outside the room. Press the editor's own focus shortcut once the
+            // splat count leaves zero, so the model is framed in the viewport the moment it appears.
+            (() => {
+                if (!new URLSearchParams(location.search).has('load')) return;
+                let tries = 0, done = false;
+                const press = (key, code, shift) => {
+                    const ev = new KeyboardEvent('keydown', { key, code, shiftKey: !!shift, bubbles: true, cancelable: true });
+                    document.dispatchEvent(ev);
+                };
+                const poll = () => {
+                    if (done) return;
+                    const text = document.body ? document.body.innerText : '';
+                    const m = text.match(/Splats\s+([\d,]+)/i);
+                    const count = m ? parseInt(m[1].replace(/,/g, ''), 10) : 0;
+                    if (count > 0) {
+                        done = true;
+                        // focus on the scene (F), then once more shortly after in case the first lands
+                        // while the import is still settling
+                        setTimeout(() => press('f', 'KeyF'), 250);
+                        setTimeout(() => press('f', 'KeyF'), 1400);
+                        return;
+                    }
+                    if (++tries < 900) setTimeout(poll, 200);   // up to three minutes on a slow machine
+                };
+                addEventListener('DOMContentLoaded', () => setTimeout(poll, 600));
+            })();
+        </script>
     </body>
 </html>
