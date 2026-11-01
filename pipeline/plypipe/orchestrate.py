@@ -33,9 +33,14 @@ def _set(args: list[str], flag: str, value: str) -> list[str]:
 
 
 def refine(report: dict, args: list[str], plan: dict | None = None) -> tuple[list[str], list[str]]:
-    """Next attempt's flags and the reasons, from a report that failed the gate."""
+    """Next attempt's flags, the reasons, and the stage to restart from.
+
+    Cheap failures get cheap retries. If everything except export passed the gate, the trained model is
+    good and only the filters were wrong, so the attempt restarts at export rather than at frames.
+    """
     out = list(args)
     notes: list[str] = []
+    force = "frames"
     frames = report.get("frames") or {}
     clips = frames.get("clips") or []
     seconds = sum(float(c.get("durationSec") or 0) for c in clips) if clips else float(frames.get("durationSec") or 0)
@@ -50,13 +55,19 @@ def refine(report: dict, args: list[str], plan: dict | None = None) -> tuple[lis
         out = _set(out, "--fps", f"{min(3.2, max(target, views * 2)):.2f}")
         notes.append(f"views were {views:.2f}/s: dropped any frame cap, kept rate set to {min(3.2, max(target, views * 2)):.2f}/s")
 
-    # 2. export deleted most of what training fitted: cap above what the room can carry
+    # 2. export deleted most of what training fitted. The trained model is usually fine; the filters are
+    #    not. Re-exporting from the checkpoint costs minutes, so always try that before rebuilding.
     export = report.get("export") or {}
     kept_fraction, gaussians_out = export.get("keptFraction"), export.get("gaussiansOut")
-    if isinstance(kept_fraction, (int, float)) and kept_fraction < 0.85 and gaussians_out:
-        cap = int(min(4_000_000, max(400_000, gaussians_out * 1.25)))
-        out = _set(out, "--cap-max", str(cap))
-        notes.append(f"export kept {kept_fraction:.0%}: training cap set to {cap:,} so the budget matches what ships")
+    if isinstance(kept_fraction, (int, float)) and kept_fraction < 0.85:
+        if export.get("scenePlyMB"):
+            force = "export"
+            out = _set(out, "--min-opacity", "0.002")
+            notes.append(f"export kept {kept_fraction:.0%}: the model is fine, re-exporting with a 0.2% visibility floor")
+        elif gaussians_out:
+            cap = int(min(4_000_000, max(400_000, gaussians_out * 1.25)))
+            out = _set(out, "--cap-max", str(cap))
+            notes.append(f"export kept {kept_fraction:.0%}: no saved model, training cap set to {cap:,}")
 
     # 3. antialiasing was off for some reason (old preset, explicit flag)
     if (report.get("train") or {}).get("antialiased") is False:
@@ -70,7 +81,7 @@ def refine(report: dict, args: list[str], plan: dict | None = None) -> tuple[lis
         out = _set(out, "--mapper", "incremental")
         notes.append(f"only {ratio:.0%} registered: SIFT features and the incremental mapper")
 
-    return out, notes
+    return out, notes, force
 
 
 def decide(input_plan: dict | None, attempt: int) -> dict:

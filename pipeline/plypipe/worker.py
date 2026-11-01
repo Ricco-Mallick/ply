@@ -38,6 +38,9 @@ from plypipe.progress import SfmProgress
 WEIGHTS = {"frames": .05, "sfm": .20, "align": .02, "occupancy": .02, "label": .04, "train": .62, "export": .05}
 ORDER = list(WEIGHTS)
 RESULTS = ["scene.spz", "scene_lite.spz", "scene.json", "occupancy.png", "occupancy.json", "places.json", "report.json", "mesh.ply"]
+# the trained model is what the GPU hours bought. Uploading it means a bad export filter is a re-export,
+# not a rebuild: 400 MB of transfer against three hours of L40S
+KEEP_MODEL = ["scene.ply", "scene_clean.ply"]
 PART = 32 * 1024 * 1024
 # stop-loss: a stage that runs past its limit is killed and the job fails with a clear message (minutes;
 # PLY_STAGE_LIMITS="sfm=30,train=60" overrides). Generous for a T4; they exist to cap a stuck run, not to race.
@@ -463,10 +466,10 @@ def run_job(api: Api, job: dict, work: Path, extra: list[str]) -> None:
                              "settings": report.get("plan") or {}, "quality": quality})
             if not judged or quality["ok"] or attempt == orchestrate.MAX_ATTEMPTS:
                 break
-            refined, notes = orchestrate.refine(report, args, report.get("plan"))
+            refined, notes, force = orchestrate.refine(report, args, report.get("plan"))
             if refined == args or not notes:
                 break  # nothing settings can do; the failure is the capture itself
-            args = [*refined, "--force", "frames"]
+            args = [*refined, "--force", force]
             state["frac"] = 0.0
             post(stage="frames", progress=0, message="quality gate: " + "; ".join(notes)[:200])
             print(f"[worker] attempt {attempt} failed the gate, retrying: " + "; ".join(notes), flush=True)
@@ -537,6 +540,14 @@ def run_job(api: Api, job: dict, work: Path, extra: list[str]) -> None:
             if f.exists():
                 api.upload(f"scenes/{jid}/{name}", f, CTYPE.get(f.suffix, "application/octet-stream"))
                 files[name] = f.stat().st_size
+        for name in KEEP_MODEL:  # best effort: never fail a good run because the archive upload timed out
+            f = out / name
+            if f.exists() and f.stat().st_size < 1_500_000_000:
+                try:
+                    api.upload(f"scenes/{jid}/{name}", f, CTYPE.get(f.suffix, "application/octet-stream"))
+                    files[name] = f.stat().st_size
+                except Exception as e:
+                    print(f"[worker] could not archive {name}: {e}", flush=True)
         if "scene.spz" not in files:
             raise RuntimeError("pipeline finished without scene.spz")
         state["alive"] = False
