@@ -440,7 +440,7 @@ def run_job(api: Api, job: dict, work: Path, extra: list[str]) -> None:
         # one attempt is judged, not trusted: the plan sets the run, the gate reads the result, and a
         # failure that settings can fix is retried once with those settings changed. Each attempt is
         # recorded, so the operator sees what was tried and why.
-        from plypipe import orchestrate, verify as verify_mod
+        from plypipe import orchestrate, plan as plan_mod, verify as verify_mod
         args = list(job["args"])
         attempts: list[dict] = []
         # a coverage preview and a rehearsal are not twins: only a full run is judged and retried
@@ -461,12 +461,13 @@ def run_job(api: Api, job: dict, work: Path, extra: list[str]) -> None:
             if code != 0:
                 break
             report = json.loads((out / "report.json").read_text()) if (out / "report.json").exists() else {}
-            quality = verify_mod.check(report)
+            run_plan = plan_mod.read(out)
+            quality = verify_mod.check(report, run_plan)
             attempts.append({"attempt": attempt, "args": args,
                              "settings": report.get("plan") or {}, "quality": quality})
             if not judged or quality["ok"] or attempt == orchestrate.MAX_ATTEMPTS:
                 break
-            refined, notes, force = orchestrate.refine(report, args, report.get("plan"))
+            refined, notes, force = orchestrate.refine(report, args, run_plan)
             if refined == args or not notes:
                 break  # nothing settings can do; the failure is the capture itself
             args = [*refined, "--force", force]
@@ -524,7 +525,7 @@ def run_job(api: Api, job: dict, work: Path, extra: list[str]) -> None:
         except Exception as e:
             print(f"[worker] evidence upload failed: {e}", flush=True)
         report = json.loads((out / "report.json").read_text()) if (out / "report.json").exists() else {}
-        quality = verify_mod.check(report)
+        quality = verify_mod.check(report, plan_mod.read(out))
         report["quality"] = quality
         report["attempts"] = attempts
         from plypipe import review as review_mod
