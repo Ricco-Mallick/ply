@@ -74,6 +74,19 @@ def align_actions(T: np.ndarray) -> list[str]:
     return ["-r", f"{ax:.6f},{ay:.6f},{az:.6f}", "-s", f"{s:.8f}", "-t", f"{t_e[0]:.6f},{t_e[1]:.6f},{t_e[2]:.6f}"]
 
 
+def value_filter_flags(opacity: float, scale: float | None) -> list[str]:
+    """splat-transform `-V` filters in its user-facing units: opacity as a probability, scale in metres.
+
+    splat-transform (3.10.1) converts these to the PLY's raw logit / log-scale itself and rejects an
+    opacity outside (0, 1), so passing a logit here crashes the export instead of filtering.
+    """
+    p = min(max(float(opacity), 1e-4), 1 - 1e-4)
+    f = ["-V", f"opacity,gt,{p:.4f}"]
+    if scale:
+        f += ["-V", f"scale_0,lt,{scale:.2f}", "-V", f"scale_1,lt,{scale:.2f}", "-V", f"scale_2,lt,{scale:.2f}"]
+    return f
+
+
 def crop_box(scene: dict) -> str | None:
     """Room box (scene bounds + 1 m sideways, y from -0.5 to top + 0.5) in splat-transform's frame."""
     b = scene.get("bounds")
@@ -123,13 +136,7 @@ def run_stage(ctx: Ctx) -> dict:
         {"opacity": 0.01, "scale": None, "why": "opacity>0.010 (measured: the stricter filters ate detail)"},
     ]
     def flags_for(c: dict) -> list[str]:
-        # the PLY stores opacity as a logit, so a threshold written as a probability has to be converted
-        # or the filter quietly means "keep only what is more than half visible" (0.03 -> sigmoid 0.51)
-        p = min(max(c["opacity"], 1e-4), 1 - 1e-4)
-        f = ["-V", f"opacity,gt,{math.log(p / (1 - p)):.3f}"]
-        if c["scale"]:
-            f += ["-V", f"scale_0,lt,{c['scale']:.2f}", "-V", f"scale_1,lt,{c['scale']:.2f}", "-V", f"scale_2,lt,{c['scale']:.2f}"]
-        return f
+        return value_filter_flags(c["opacity"], c["scale"])
     clean_flags = flags_for(candidates[0])
     chosen = candidates[0]
     if clean and probes:  # probe the value filters before using them on the real pass
