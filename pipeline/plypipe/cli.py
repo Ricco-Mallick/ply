@@ -98,6 +98,10 @@ def build_parser() -> argparse.ArgumentParser:
     g.add_argument("--min-opacity", type=float, default=0.03,
                    help="export drops splats below this activated opacity (0.03 default; lower keeps fine detail)")
     g.add_argument("--train-dry-run", action="store_true", help="rehearsal: load the scene in the trainer but skip GPU training")
+    g.add_argument("--holdout", type=int, default=30,
+                   help="hold every Nth view out of training and score the twin on it (PSNR/SSIM/LPIPS); 0 disables")
+    g.add_argument("--pose-opt", action="store_true", help="refine camera poses during training (A/B option)")
+    g.add_argument("--depth-loss", action="store_true", help="supervise depth at the SfM track points (A/B option)")
     g.add_argument("--antialiased", dest="antialiased", action="store_true", default=True,
                    help="antialias the splats while training (on by default; --no-antialias turns it off)")
     g.add_argument("--no-antialias", dest="no_antialias", action="store_true",

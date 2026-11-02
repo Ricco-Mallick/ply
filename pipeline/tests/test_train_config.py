@@ -72,3 +72,34 @@ def test_mcmc_stops_relocating_before_the_end(steps):
     """gsplat stops relocation at 25k of 30k; a fixed 25k never stops an 18k run, so it scales with the run."""
     cfg, _ = train_launcher.build_config(st, "/d", "/r", "standard", None, True, iterations=steps)
     assert cfg.strategy.refine_stop_iter == int(steps * 0.83) < steps
+
+
+def test_holdout_scores_the_last_step_only_when_asked():
+    cfg, info = train_launcher.build_config(st, "/d", "/r", "standard", None, True, iterations=30_000, holdout=30)
+    assert cfg.test_every == 30 and cfg.eval_steps == [30_000] and cfg.use_color_correction_metric
+    assert info["holdout"] == 30 and not cfg.pose_opt and not cfg.depth_loss
+    cfg, info = train_launcher.build_config(st, "/d", "/r", "standard", None, True, iterations=30_000)
+    assert cfg.test_every == 10**9 and cfg.eval_steps == [] and info["holdout"] == 0
+
+
+def test_ab_options_reach_gsplat():
+    cfg, info = train_launcher.build_config(st, "/d", "/r", "quick", None, True, pose_opt=True, depth_loss=True)
+    assert cfg.pose_opt and cfg.depth_loss and info["poseOpt"] and info["depthLoss"]
+
+
+def test_held_out_scores_are_read_from_gsplat_stats(tmp_path):
+    import json
+    from plypipe.stages import train as train_stage
+    res = tmp_path / "train"
+    (res / "stats").mkdir(parents=True)
+    (res / "renders").mkdir()
+    (res / "stats" / "val_step29999.json").write_text(json.dumps(
+        {"psnr": 28.51234, "ssim": 0.8912, "lpips": 0.231, "cc_psnr": 29.1, "cc_ssim": 0.9, "cc_lpips": 0.22, "num_GS": 812345}))
+    for i in range(9):
+        (res / "renders" / f"val_step29999_{i:04d}.png").write_bytes(b"png")
+    (res / "renders" / "val_step6999_0000.png").write_bytes(b"older run")
+    out = train_stage.held_out_scores(res, tmp_path / "eval")
+    assert out["psnr"] == 28.5123 and out["ccPsnr"] == 29.1 and out["gaussians"] == 812345 and out["views"] == 9
+    kept = sorted(p.name for p in (tmp_path / "eval").glob("*.png"))
+    assert len(kept) == 4 and all(n.startswith("val_step29999_") for n in kept)
+    assert train_stage.held_out_scores(tmp_path / "missing", tmp_path / "eval2") is None
