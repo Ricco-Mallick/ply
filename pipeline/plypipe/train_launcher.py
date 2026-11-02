@@ -39,7 +39,9 @@ def build_config(st, data: str, result: str, preset: str, ppisp: bool | None, an
     steps = p["max_steps"]
     cfg = st.Config(
         init_opa=0.5, init_scale=0.1, opacity_reg=0.01, scale_reg=0.01,  # the "mcmc" preset of simple_trainer
-        strategy=st.MCMCStrategy(verbose=True, cap_max=p["cap_max"]),
+        # MCMC relocates until refine_stop_iter (25k by default, i.e. 25k of gsplat's 30k). Below 25k steps it never
+        # stops, so the last splats are teleported with no time left to fit; keep upstream's ratio at any length
+        strategy=st.MCMCStrategy(verbose=True, cap_max=p["cap_max"], refine_stop_iter=int(steps * 0.83)),
     )
     cfg.data_dir = data
     cfg.data_factor = 1  # frames are already capped at 1600 px
