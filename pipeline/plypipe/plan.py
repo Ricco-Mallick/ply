@@ -30,18 +30,21 @@ _FRAMES_MIN, _FRAMES_MAX = 700, 3200
 _SIDE_MIN, _SIDE_MAX = 1280, 2048
 _SIDE_SHARE = 0.45
 
-# gaussians: enough to cover the surfaces once, capped again per view so a short capture cannot
-# train a model the views cannot support (that is how a 4M cap ends up deleting two thirds at export)
+# gaussians: enough to cover the surfaces once, capped again by what the views can support. The view cap
+# counts pixels, not frames: 2400 per view-megapixel is the old 2200 per 1280x720 video frame, while a
+# 1.2 MP photo carries more. Both caps scale with the preset; a view cap that ignored it made `high` equal `standard`
 _GAUSSIANS_PER_M2 = 4200
-_GAUSSIANS_PER_VIEW = 2200
-_CAP_MIN, _CAP_MAX = 400_000, 4_000_000
+_GAUSSIANS_PER_VIEW_MP = 2400
+_DEFAULT_VIEW_MP = 0.92  # 1280 x 720, the planned working size of a 1080p clip
+_CAP_MIN = 300_000
+_PRESET_CAP_MAX = {"quick": 2_000_000, "standard": 4_000_000, "high": 6_000_000}
 
-# steps: one view every ~50 steps is where gsplat stops adding detail; the preset scales it
+# steps: one view every ~50 steps is where gsplat stops adding detail. Small captures still need gsplat's
+# own schedules (7k / 30k), which is what the per-preset floors are; the preset scales the rest
 _STEPS_PER_VIEW = 50
-_STEPS_MIN = 18_000
-_STEPS_MAX = 55_000
 _PRESET_STEP = {"quick": 0.35, "standard": 1.0, "high": 1.25}
-_PRESET_CAP = {"quick": 0.5, "standard": 1.0, "high": 1.15}
+_PRESET_CAP = {"quick": 0.5, "standard": 1.0, "high": 2.0}
+_PRESET_FLOOR = {"quick": 7_000, "standard": 30_000, "high": 40_000}
 _PRESET_CEIL = {"quick": 24_000, "standard": 55_000, "high": 60_000}
 
 
@@ -113,23 +116,28 @@ def surface_area(bounds: dict | None, ceiling: float | None = None) -> dict:
 
 
 def model_plan(images: int, bounds: dict | None, preset: str = "standard", ceiling: float | None = None,
-               *, iterations: int | None = None, cap_max: int | None = None) -> dict:
-    """Training budget and export thresholds, once the model is solved."""
+               *, iterations: int | None = None, cap_max: int | None = None, megapixels: float | None = None) -> dict:
+    """Training budget once the model is solved. `megapixels` is the size of one training view."""
     area = surface_area(bounds, ceiling)
+    mult = _PRESET_CAP.get(preset, 1.0)
+    mp = megapixels or _DEFAULT_VIEW_MP
     notes: list[str] = []
     if area["surfaceM2"]:
-        cap = int(area["surfaceM2"] * _GAUSSIANS_PER_M2 * _PRESET_CAP.get(preset, 1.0))
-        notes.append(f"{area['surfaceM2']} m² of surface × {_GAUSSIANS_PER_M2}/m²")
+        cap = int(area["surfaceM2"] * _GAUSSIANS_PER_M2 * mult)
+        notes.append(f"{area['surfaceM2']} m² of surface × {_GAUSSIANS_PER_M2}/m² × {mult}")
     else:  # no bounds yet: fall back to what the views can carry
-        cap = int(images * _GAUSSIANS_PER_VIEW) if images else _CAP_MIN
-        notes.append("no bounds: budget from the view count")
-    cap = int(_clamp(cap, _CAP_MIN, _CAP_MAX))
+        cap = int(images * mp * _GAUSSIANS_PER_VIEW_MP * mult) if images else _CAP_MIN
+        notes.append("no bounds: budget from the views")
+    cap_hi = _PRESET_CAP_MAX.get(preset, _PRESET_CAP_MAX["standard"])
+    cap = int(_clamp(cap, _CAP_MIN, cap_hi))
     if images:
-        per_view = int(images * _GAUSSIANS_PER_VIEW)
+        per_view = int(images * mp * _GAUSSIANS_PER_VIEW_MP * mult)
         if cap > per_view:
-            cap, _ = per_view, notes.append(f"capped at {_GAUSSIANS_PER_VIEW}/view × {images} views")
+            cap = max(_CAP_MIN, per_view)
+            notes.append(f"capped at {_GAUSSIANS_PER_VIEW_MP}/view-MP × {images} views × {mp:.2f} MP × {mult}")
+    floor = _PRESET_FLOOR.get(preset, _PRESET_FLOOR["standard"])
     steps = int(_clamp(images * _STEPS_PER_VIEW * _PRESET_STEP.get(preset, 1.0),
-                       _STEPS_MIN, _PRESET_CEIL.get(preset, _STEPS_MAX)))
+                       floor, _PRESET_CEIL.get(preset, _PRESET_CEIL["standard"])))
     notes.append(f"{images} views → {steps} steps ({steps / max(images, 1):.0f}/view)")
     return {
         "preset": preset,
@@ -138,6 +146,7 @@ def model_plan(images: int, bounds: dict | None, preset: str = "standard", ceili
         "planIterations": steps,
         "planCapMax": cap,
         "views": images,
+        "viewMegapixels": round(mp, 3),
         **area,
         "why": "; ".join(notes),
     }
