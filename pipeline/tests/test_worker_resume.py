@@ -14,6 +14,9 @@ for st in ["frames", "sfm", "align", "occupancy", "train", "export"]:
         print(json.dumps({"stage": st, "event": "skip", "msg": ""}), flush=True); continue
     print(json.dumps({"stage": st, "event": "start", "msg": ""}), flush=True)
     if st == slow_at:
+        if st == "train" and os.environ.get("FAKE_SNAPSHOT"):  # gsplat's part-way PLY (PLY_LIVE_SNAPSHOTS)
+            (out / "train" / "ply").mkdir(parents=True, exist_ok=True)
+            (out / "train" / "ply" / "point_cloud_1200.ply").write_bytes(b"ply snapshot")
         time.sleep(60)
     if st == crash_at:
         print("boom", flush=True); sys.exit(3)
@@ -67,7 +70,7 @@ def test_retry_resumes_after_the_last_checkpoint_without_redownloading(tmp_path,
     assert store.clip_downloads == 1
     monkeypatch.delenv("FAKE_CRASH_AT")
     worker.run_job(store, job(), tmp_path / "w2", [])
-    assert store.posts[-1]["status"] == "done"
+    assert store.posts[-1]["status"] == "review"
     assert store.clip_downloads == 1                                  # resumed past SfM: no second 179 MB download
     assert any("resuming after occupancy" in (p.get("message") or "") for p in store.posts if isinstance(p, dict))
 
@@ -79,7 +82,7 @@ def test_checkpoint_from_other_settings_is_ignored(tmp_path, monkeypatch):
     worker.run_job(store, job(), tmp_path / "w1", [])
     monkeypatch.delenv("FAKE_CRASH_AT")
     worker.run_job(store, job(("--preset", "quick", "--features", "sift")), tmp_path / "w2", [])
-    assert store.posts[-1]["status"] == "done" and store.clip_downloads == 2   # started over
+    assert store.posts[-1]["status"] == "review" and store.clip_downloads == 2   # started over
 
 
 def test_stage_over_its_limit_is_stopped(tmp_path, monkeypatch):
@@ -115,7 +118,7 @@ def test_a_slow_checkpoint_upload_does_not_trip_the_stage_watchdog(tmp_path, mon
     store = SlowStore()
     monkeypatch.setenv("PLY_STAGE_LIMITS", "occupancy=0.03,align=0.03,sfm=0.03")  # ~2 s each
     worker.run_job(store, job(), tmp_path / "w", [])
-    assert store.posts[-1]["status"] == "done", store.posts[-1]
+    assert store.posts[-1]["status"] == "review", store.posts[-1]
     assert "scenes/j1/checkpoint.tar" in store.objects  # and the checkpoint still made it
 
 
@@ -124,4 +127,42 @@ def test_big_checkpoints_are_skipped(tmp_path, monkeypatch):
     monkeypatch.setattr(worker, "CKPT_MAX_MB", 0)
     store = Store()
     worker.run_job(store, job(), tmp_path / "w", [])
-    assert store.posts[-1]["status"] == "done" and "scenes/j1/checkpoint.tar" not in store.objects
+    assert store.posts[-1]["status"] == "review" and "scenes/j1/checkpoint.tar" not in store.objects
+
+
+def test_training_over_its_limit_keeps_the_newest_snapshot(tmp_path, monkeypatch):
+    """A training run that hits its limit used to fail the job and throw the GPU hours away."""
+    setup(tmp_path, monkeypatch)
+    store = Store()
+    monkeypatch.setenv("FAKE_SLOW_AT", "train")
+    monkeypatch.setenv("FAKE_SNAPSHOT", "1")
+    monkeypatch.setenv("PLY_STAGE_LIMITS", "train=0.05")            # 3 seconds
+    worker.run_job(store, job(), tmp_path / "w1", [])
+    final = store.posts[-1]
+    assert final["status"] == "review", final
+    assert any("exporting that snapshot" in (p.get("message") or "") for p in store.posts if isinstance(p, dict))
+    out = tmp_path / "w1" / "j1" / "out"
+    assert (out / "scene.ply").read_bytes() == b"ply snapshot"
+    assert store.objects["scenes/j1/scene.ply"] == b"ply snapshot"      # the model is kept with the results
+    assert "scenes/j1/checkpoint.tar" in store.objects
+
+
+def test_training_stopped_before_any_snapshot_still_fails_clearly(tmp_path, monkeypatch):
+    setup(tmp_path, monkeypatch)
+    store = Store()
+    monkeypatch.setenv("FAKE_SLOW_AT", "train")
+    monkeypatch.setenv("PLY_STAGE_LIMITS", "train=0.05")
+    worker.run_job(store, job(), tmp_path / "w1", [])
+    final = store.posts[-1]
+    assert final["status"] == "failed" and "train exceeded its 0.05-minute limit" in final["message"]
+
+
+def test_train_limit_stretches_to_the_projected_finish_within_the_deadline():
+    base = 120 * 60
+    # 40 % done after 100 min: finishing needs ~287 min with margin; a deadline 5 h away allows it
+    assert abs(worker.train_limit_s(base, 6000, 0.4, 10_000 + 5 * 3600, 70 * 60, 10_000) - 6000 / 0.4 * 1.15) < 1
+    # the deadline leaves only 30 min after export's reserve: stop there (and salvage), never past the machine
+    assert worker.train_limit_s(base, 7200, 0.4, 10_000 + 100 * 60, 70 * 60, 10_000) == 7200 + 30 * 60
+    # too early to project, or no deadline: the fixed limit, at most tripled
+    assert worker.train_limit_s(base, 600, 0.02, 0, 0, 0) == base
+    assert worker.train_limit_s(base, 7000, 0.1, 0, 0, 0) == 3 * base

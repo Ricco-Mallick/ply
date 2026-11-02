@@ -17,7 +17,10 @@ Claims marked *(unverified)* come from public docs or papers and have not been r
 | The views gate failed anything under 1.8 views/s, while the plan picks ~1.5/s for a slow walk. | Once the plan applied, a slow, careful walk would have **failed for following the plan**. | With `plan.json` present, the floor is 80 % of the planned rate, clamped to [1.2, 1.8]. The classroom (1.12/s vs 2.5 planned) and the chapel (0.53/s) still fail. Worker, CLI and `python -m plypipe.verify` all pass the plan, and the retry logic now reads it too. Before, it got `report["plan"]`, which never existed. |
 | MCMC `refine_stop_iter` was fixed at 25k (gsplat stops relocating at 25k of 30k steps). The plan trains for 18k–55k steps. | Runs under 25k steps (the plan's 18k floor and the 7k quick preset) relocated splats until the last refine, with no settling phase. | Set to 0.83 × steps, upstream's ratio. The PPISP controller already uses that ratio. |
 
-## 2. Ranked roadmap (not yet implemented)
+## 2. Ranked roadmap
+
+**Status, 2026-11-02:** items 1 and 2 are done and item 3 is partly done. Section 4 covers them, plus two faults found
+while doing them. Items 4–7 are still open.
 
 ### 1. Measure image quality, then gate and retry on it
 The pipeline cannot see sharpness today: `test_every=10**9` and `eval_steps=[]`. Every gate is a proxy (views/s, kept
@@ -83,6 +86,20 @@ The capture app already records `quality` samples, so it can coach these live.
 - `LITE_MAX` 800k
 - the +1 m crop box, which removes what is seen through windows
 - `--max-frames` being accepted at all
+
+## 4. Second pass, 2026-11-02 (Dr Johnson benchmark)
+
+| Change | Why |
+|---|---|
+| Every 30th view is held out and scored after training (`report.train.eval`, renders in `eval/`). The gate warns below 20 dB. | Item 1: the pipeline can now see sharpness. |
+| `sfm` probes ALIKED in a throwaway process. | **ALIKED never ran in production.** The pycolmap-cuda12 4.2.1 wheel has no ONNX, and COLMAP *aborts the process* instead of raising, so the `except` fallback never ran. Every job crashed in `sfm` and survived only through the worker's crash retry (SIFT + incremental + sequential). |
+| `sfm` drops views with fewer than 20 points, or more than 20× the median camera distance. | The global mapper keeps views registered with 0 points wherever global positioning left them, one of them 4 million median distances away. gsplat sizes its learning rates from the farthest camera, so training diverged (CUDA error in MCMC relocation). `train` now refuses such a solve instead of burning GPU time. |
+| Sequential matching adds retrieval loop closure (COLMAP's vocab trees, fetched and sha256-checked by us), and photo sets use exhaustive matching, then retrieval. | Item 2. COLMAP's own downloader aborts on a TLS error, so it is never used. |
+| A path that jumps, or a solve under 90 % registered, is re-solved with the incremental mapper, and the better model is kept. | Item 2. Before, it only logged a warning. |
+| Plan: per-preset step floors (7k / 30k / 40k), the view cap counted in pixels and scaled with the preset, and `high` at 2× the budget. | The presets were indistinguishable on small captures (see `docs/BENCHMARK.md`). |
+| Worker: checkpoints after `label` and `train` too. Training's 120-min limit stretches to the projected finish while the machine's deadline allows, and a stopped training run exports its newest snapshot (now taken at 10/30/60/85 %) instead of failing. | Jobs lost hours of training to a fixed limit, with nothing saved. |
+| `pipeline/modal/ply_bench.py` runs a dataset through the pipeline on the worker's image, saving to a Volume after every stage and every 3 minutes of training. | Benchmarks never lose progress and never touch the job queue. |
+| A/B flags `--pose-opt`, `--depth-loss` and `--scale-mcmc` (all off). | Item 3. The `--scale-mcmc` A/B on Dr Johnson was a tie. |
 
 ## 3. Real Horizons Studio (studio.realhorizons.ai)
 
