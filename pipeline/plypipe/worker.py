@@ -51,7 +51,9 @@ JOB_MAX_MIN = sum(STAGE_LIMITS_MIN.values())
 PRESET_STEPS = {"quick": 7_000, "standard": 30_000, "high": 40_000}
 # checkpoints: after these stages the out/ folder (minus re-creatable bulk) goes to B2, so a retry with the same
 # settings resumes there instead of re-downloading the clips and redoing frames + SfM
-CHECKPOINT_AFTER = ("sfm", "occupancy")
+# label and train too: a job that dies in training resumes at training, and one that dies in export resumes with the
+# trained model instead of buying the GPU hours again
+CHECKPOINT_AFTER = ("sfm", "occupancy", "label", "train")
 CKPT_SKIP = {"frames", "frames_raw", "colmap", "train"}
 # Cloudflare rejects the default "Python-urllib" user agent with 403 before the request reaches the API
 UA = {"user-agent": "ply-worker/1.0 (+https://ricco.codes/ply)"}
@@ -212,6 +214,49 @@ def eta(t0: float, f: float) -> str:
     return f" · ~{max(1, round(left / 60))} min left" if left >= 60 else " · under a minute left"
 
 
+def train_limit_s(base_s: float, elapsed_s: float, frac: float, deadline: float, reserve_s: float, now: float) -> float:
+    """Training's stop-loss. The fixed limit is a guess; a plan with more views or gaussians trains longer. Once 5 %
+    is done the projected finish is known: allow it (plus 15 %) as long as the machine's deadline leaves room for
+    export after it, and never more than 3x the fixed limit on a machine without a deadline."""
+    if not base_s or frac < 0.05:
+        return base_s
+    projected = elapsed_s / frac * 1.15
+    room = elapsed_s + max(0.0, deadline - now - reserve_s) if deadline else 3 * base_s
+    return max(base_s, min(projected, room))
+
+
+def salvage_training(out: Path, planned_steps: int | None) -> dict | None:
+    """Training was stopped: keep the newest snapshot as the model instead of throwing the hours away.
+
+    Marks `train` done (partial) so the next pipeline run starts at export. None when no snapshot exists yet."""
+    plys = sorted((out / "train" / "ply").glob("point_cloud_*.ply"), key=lambda q: int(q.stem.rsplit("_", 1)[1]))
+    if not plys:
+        return None
+    shutil.copy2(plys[-1], out / "scene.ply")
+    preset = out / "train" / "ply_preset.json"
+    step = int(plys[-1].stem.rsplit("_", 1)[1])
+    rep = {"ply": "scene.ply", "sizeMB": round((out / "scene.ply").stat().st_size / 2**20, 1), "fromStep": step,
+           **(json.loads(preset.read_text()) if preset.exists() else {}), "partial": True, "plannedSteps": planned_steps}
+    (out / ".done").mkdir(parents=True, exist_ok=True)
+    (out / ".done" / "train.json").write_text(json.dumps(rep, indent=2))
+    report_path = out / "report.json"
+    report = json.loads(report_path.read_text()) if report_path.exists() else {}
+    report["train"] = rep
+    report_path.write_text(json.dumps(report, indent=2))
+    return rep
+
+
+def _restart_at(args: list[str], stage: str) -> list[str]:
+    out, i = [], 0
+    while i < len(args):
+        if args[i] in ("--force", "--from", "--only"):
+            i += 2
+            continue
+        out.append(args[i])
+        i += 1
+    return [*out, "--from", stage]
+
+
 def stage_limits() -> dict:
     lim = dict(STAGE_LIMITS_MIN)
     for part in filter(None, os.environ.get("PLY_STAGE_LIMITS", "").split(",")):
@@ -358,11 +403,19 @@ def run_job(api: Api, job: dict, work: Path, extra: list[str]) -> None:
             ckpt_lock = threading.Lock()  # checkpoints upload in stage order (the later one replaces the earlier)
             step = {"key": None, "t0": time.time()}
 
+            deadline = float(os.environ.get("PLY_DEADLINE") or 0)
+
             def watchdog():  # stop-loss per stage
                 while p.poll() is None:
                     st, lim = state["stage"], limits.get(state["stage"] or "", 0)
-                    if st and lim and time.time() - state["stage_t0"] > lim * 60:
-                        state["timeout"] = f"{st} exceeded its {lim:g}-minute limit and was stopped"
+                    now = time.time()
+                    lim_s = lim * 60
+                    if st == "train":
+                        lim_s = train_limit_s(lim_s, now - state["stage_t0"], state["frac"], deadline,
+                                              (limits.get("export", 15) + 10) * 60, now)
+                    if st and lim_s and now - state["stage_t0"] > lim_s:
+                        state["timeout"] = f"{st} exceeded its {lim_s / 60:g}-minute limit and was stopped"
+                        state["salvage"] = st == "train"
                         p.kill()
                         return
                     time.sleep(2)
@@ -458,6 +511,23 @@ def run_job(api: Api, job: dict, work: Path, extra: list[str]) -> None:
                 state["frac"] = 0.0
                 code, last_err, tail = pipeline(retry)
                 args = retry
+            if state.get("salvage"):  # training ran out of time: export the newest snapshot rather than fail the job
+                state["salvage"] = False
+                kept = salvage_training(out, planned_steps())
+                if kept:
+                    msg = (f"training stopped at step {kept['fromStep']} of {kept['plannedSteps']} ({state['timeout']}); "
+                           "exporting that snapshot")
+                    print(f"[worker] {msg}", flush=True)
+                    post(stage="export", progress=overall("export", 0.0), message=msg[:200])
+                    if not rehearsal:
+                        try:
+                            if checkpoint_size(out) <= CKPT_MAX_MB * 2**20:
+                                save_checkpoint(api, jid, out, root, job["args"], "train")
+                        except Exception as e:
+                            print(f"[worker] checkpoint after salvaged train failed: {e}", flush=True)
+                    state.update(timeout=None, stage=None, frac=0.0, stage_t0=time.time())  # a fresh clock for export
+                    args = _restart_at(args, "export")
+                    code, last_err, tail = pipeline(args)
             if code != 0:
                 break
             report = json.loads((out / "report.json").read_text()) if (out / "report.json").exists() else {}
@@ -568,7 +638,8 @@ def run_job(api: Api, job: dict, work: Path, extra: list[str]) -> None:
 
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
-    os.environ.setdefault("PLY_LIVE_SNAPSHOTS", "0.1,0.3,0.6")  # live view: the twin at 10, 30 and 60 % of training
+    # live view: the twin at 10, 30, 60 and 85 % of training; the newest is also what a stopped training run keeps
+    os.environ.setdefault("PLY_LIVE_SNAPSHOTS", "0.1,0.3,0.6,0.85")
     ap.add_argument("--api", default=os.environ.get("PLY_API"))
     ap.add_argument("--token", default=os.environ.get("PLY_WORKER_TOKEN"))
     ap.add_argument("--name", default=os.environ.get("PLY_WORKER_NAME", socket.gethostname()))
