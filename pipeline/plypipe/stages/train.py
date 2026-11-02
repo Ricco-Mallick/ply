@@ -76,7 +76,7 @@ def run_stage(ctx: Ctx) -> dict:
     holdout = int(ctx.opt("holdout", 30) or 0)
     if holdout > 1:
         cmd += ["--holdout", str(holdout)]
-    for flag in ("pose_opt", "depth_loss"):
+    for flag in ("pose_opt", "depth_loss", "bilateral_grid", "random_bkgd"):
         if ctx.opt(flag):
             cmd.append("--" + flag.replace("_", "-"))
     pkg_root = Path(__file__).resolve().parents[2]
