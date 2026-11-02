@@ -105,6 +105,9 @@ def build_parser() -> argparse.ArgumentParser:
                    help="hold every Nth view out of training and score the twin on it (PSNR/SSIM/LPIPS); 0 disables")
     g.add_argument("--pose-opt", action="store_true", help="refine camera poses during training (A/B option)")
     g.add_argument("--depth-loss", action="store_true", help="supervise depth at the SfM track points (A/B option)")
+    g.add_argument("--bilateral-grid", action="store_true",
+                   help="exposure/white balance per photo with bilateral grids instead of PPISP (the twin keeps the photos' brightness)")
+    g.add_argument("--random-bkgd", action="store_true", help="random training backgrounds: no see-through splats")
     g.add_argument("--scale-mcmc", action="store_true",
                    help="scale gsplat's MCMC noise and scale_reg to the room size (A/B: no gain measured on Dr Johnson)")
     g.add_argument("--antialiased", dest="antialiased", action="store_true", default=True,
