@@ -15,12 +15,44 @@ Outputs:
 
 from __future__ import annotations
 
+import hashlib
 import json
-
+import os
 import shutil
+import urllib.request
 from pathlib import Path
 
 from plypipe.util import Ctx
+
+# COLMAP's own retrieval trees (the URIs pycolmap 4.2.1 carries), one per descriptor. They are fetched here rather
+# than by COLMAP: its downloader aborts the whole process on a TLS error instead of raising.
+VOCAB_TREES = {
+    "aliked": ("https://github.com/colmap/colmap/releases/download/3.13.0/vocab_tree_faiss_flickr100K_words64K_aliked_n16rot.bin",
+               "8b2f9bdc44ca7204d8543bb3adab4c03ba9336c84ef41220b5007991036f075e"),
+    "sift": ("https://github.com/colmap/colmap/releases/download/3.11.1/vocab_tree_faiss_flickr100K_words256K.bin",
+             "96ca8ec8ea60b1f73465aaf2c401fd3b3ca75cdba2d3c50d6a2f6f760f275ddc"),
+}
+ORDERED_SOURCES = ("video", "videos", "ar")
+
+
+def vocab_tree(features: str, cache: Path | None = None) -> Path | None:
+    """Local copy of the retrieval tree for these features (sha256-checked), or None if it cannot be fetched."""
+    url, sha = VOCAB_TREES[features]
+    cache = Path(cache or os.environ.get("PLY_CACHE_DIR") or Path.home() / ".cache" / "plypipe")
+    dest = cache / url.rsplit("/", 1)[1]
+    if dest.exists():
+        return dest
+    try:
+        cache.mkdir(parents=True, exist_ok=True)
+        data = urllib.request.urlopen(url, timeout=300).read()
+        if hashlib.sha256(data).hexdigest() != sha:
+            return None
+        tmp = dest.with_suffix(".part")
+        tmp.write_bytes(data)
+        tmp.replace(dest)
+        return dest
+    except OSError:
+        return None
 
 
 def _pycolmap():
@@ -47,6 +79,34 @@ def focal_prior_params(images: Path, focal_35mm: float) -> str:
     return f"{f:.3f},{w / 2:.3f},{h / 2:.3f},0"
 
 
+_PROBE = r"""
+import sys, pycolmap
+ext = pycolmap.FeatureExtractionOptions(pycolmap.FeatureExtractorType.ALIKED_N16ROT)
+ext.max_image_size = 320
+pycolmap.extract_features(sys.argv[1], sys.argv[2], extraction_options=ext, device=pycolmap.Device(sys.argv[3]))
+"""
+
+
+def aliked_available(images: Path, device: str = "auto") -> bool:
+    """ALIKED needs a pycolmap built with ONNX. Without it COLMAP aborts the process instead of raising (the
+    pycolmap-cuda12 4.2.1 wheel does exactly that), so one frame is tried in a throwaway process first."""
+    import subprocess
+    import sys
+    import tempfile
+    first = next(iter(sorted(images.glob("*.jpg"))), None)
+    if first is None:
+        return False
+    with tempfile.TemporaryDirectory() as tmp:
+        (Path(tmp) / "img").mkdir()
+        shutil.copy2(first, Path(tmp) / "img" / first.name)
+        try:
+            r = subprocess.run([sys.executable, "-c", _PROBE, str(Path(tmp) / "probe.db"), str(Path(tmp) / "img"), device],
+                               capture_output=True, text=True, timeout=600)
+        except subprocess.TimeoutExpired:
+            return False
+    return r.returncode == 0
+
+
 def _camera_mode(pycolmap, images: Path):
     """One shared camera when every frame has the same size (one phone or one action cam); per-image cameras when
     clips were shot at different resolutions or aspect ratios (a single camera would be wrong for some of them)."""
@@ -71,20 +131,39 @@ def _extract(pycolmap, db: Path, images: Path, features: str, device, camera_par
     return features
 
 
-def _match(pycolmap, db: Path, features: str, n_images: int, matcher: str, exhaustive_max: int, device) -> str:
+def _match(pycolmap, db: Path, features: str, n_images: int, matcher: str, exhaustive_max: int, device,
+           tree: Path | None = None, unordered: bool = False) -> str:
+    """Pairs and matches. Video: sequential, plus loop closure by retrieval when a tree is available (walking back
+    into a room is a loop the neighbours never see). Photos: file order says nothing about overlap, so exhaustive
+    while affordable, then retrieval."""
     mtype = (pycolmap.FeatureMatcherType.ALIKED_LIGHTGLUE if features == "aliked"
              else pycolmap.FeatureMatcherType.SIFT_BRUTEFORCE)
     mopts = pycolmap.FeatureMatchingOptions(mtype)
     if matcher == "auto":
-        matcher = "exhaustive" if n_images <= exhaustive_max else "sequential"
+        matcher = ("exhaustive" if n_images <= exhaustive_max
+                   else "vocabtree" if unordered and tree else "sequential")
     if matcher == "exhaustive":
         pycolmap.match_exhaustive(db, matching_options=mopts, device=device)
+    elif matcher == "vocabtree":
+        if tree is None:
+            raise RuntimeError("vocabtree matching needs the retrieval tree, which could not be downloaded")
+        pairing = pycolmap.VocabTreePairingOptions()
+        pairing.vocab_tree_path = str(tree)
+        pairing.num_images = 50
+        pycolmap.match_vocabtree(db, matching_options=mopts, pairing_options=pairing, device=device)
     else:
         pairing = pycolmap.SequentialPairingOptions()
         pairing.overlap = 20
         pairing.quadratic_overlap = True
+        if tree is not None:
+            pairing.loop_detection = True
+            pairing.vocab_tree_path = str(tree)
         pycolmap.match_sequential(db, matching_options=mopts, pairing_options=pairing, device=device)
     return matcher
+
+
+def _best(models: dict):
+    return max(models.items(), key=lambda kv: kv[1].num_reg_images())[1] if models else None
 
 
 def trajectory_jumps(rec, ratio: float = 8.0) -> int:
@@ -123,7 +202,10 @@ def run_stage(ctx: Ctx) -> dict:
     cdir.mkdir(parents=True)
     db = cdir / "database.db"
 
-    features = ctx.opt("features", "aliked")
+    features = requested = ctx.opt("features", "aliked")
+    if features == "aliked" and not aliked_available(images, ctx.opt("device", "auto")):
+        ctx.log.emit("sfm", "warn", "this pycolmap has no ONNX runtime, so ALIKED would abort the process: using SIFT")
+        features = "sift"
     cam_params = focal_prior_params(images, float(ctx.opt("focal_35mm"))) if ctx.opt("focal_35mm") else None
     ctx.log.emit("sfm", "progress", f"extracting {features} features", images=n_images, cameraPrior=cam_params)
     try:
@@ -140,18 +222,35 @@ def run_stage(ctx: Ctx) -> dict:
     # several clips: frames from different clips sit next to each other in the numbering, so sequential pairing
     # would try to join unrelated views and miss the real overlaps; pair exhaustively while that stays affordable
     exhaustive_max = int(ctx.opt("exhaustive_max", 250))
+    source = None
     try:
         source = json.loads((ctx.out / ".done" / "frames.json").read_text()).get("source")
-        if source == "videos":
-            exhaustive_max = max(exhaustive_max, 700)
-        elif source == "ar" and exhaustive_max == 250:  # 250 = the CLI default: an explicit value is respected
-            # AR keyframes come in walking order, many of them: sequential pairing with quadratic overlap finds the
-            # loops too, at a fraction of exhaustive matching's cost (n^2 pairs took 20 min for 146 frames on a T4)
-            exhaustive_max = 150
     except (OSError, ValueError):
         pass
+    if source == "videos":
+        exhaustive_max = max(exhaustive_max, 700)
+    elif source == "images" and exhaustive_max == 250:  # 250 = the CLI default: an explicit value is respected
+        exhaustive_max = 500  # a photo set has no order to exploit; 500 photos is ~125k pairs, minutes on a GPU
+    elif source == "ar" and exhaustive_max == 250:
+        # AR keyframes come in walking order, many of them: sequential pairing with quadratic overlap finds the
+        # loops too, at a fraction of exhaustive matching's cost (n^2 pairs took 20 min for 146 frames on a T4)
+        exhaustive_max = 150
+    unordered = source == "images"
+    want = ctx.opt("matcher", "auto")
+    needs_tree = not ctx.opt("no_loop_detection") and (want in ("sequential", "vocabtree") or
+                                                       (want == "auto" and n_images > exhaustive_max))
+
+    def tree_for(feat: str) -> Path | None:
+        if not needs_tree:
+            return None
+        t = vocab_tree(feat)
+        if t is None:
+            ctx.log.emit("sfm", "warn", f"retrieval tree for {feat} could not be fetched: matching without loop closure")
+        return t
+
+    tree = tree_for(features)
     try:
-        matcher = _match(pycolmap, db, features, n_images, ctx.opt("matcher", "auto"), exhaustive_max, device)
+        matcher = _match(pycolmap, db, features, n_images, want, exhaustive_max, device, tree, unordered)
     except Exception as e:
         if features != "aliked":
             raise
@@ -159,7 +258,9 @@ def run_stage(ctx: Ctx) -> dict:
         db.unlink(missing_ok=True)
         features = "sift"
         _extract(pycolmap, db, images, features, device, cam_params, ctx.opt("camera_model", "SIMPLE_RADIAL"))
-        matcher = _match(pycolmap, db, features, n_images, ctx.opt("matcher", "auto"), exhaustive_max, device)
+        tree = tree_for(features)
+        matcher = _match(pycolmap, db, features, n_images, want, exhaustive_max, device, tree, unordered)
+    loops = matcher == "sequential" and tree is not None
 
     mapper = ctx.opt("mapper", "global")
     ctx.log.emit("sfm", "progress", f"{mapper} mapping")
@@ -170,11 +271,31 @@ def run_stage(ctx: Ctx) -> dict:
         models = pycolmap.global_mapping(db, images, raw_out, pycolmap.GlobalPipelineOptions())
     if not models:
         raise RuntimeError(f"{mapper} mapping produced no model: capture lacks overlap or texture (see docs/SOP.md)")
-    best_idx, best = max(models.items(), key=lambda kv: kv[1].num_reg_images())
-    jumps = trajectory_jumps(best)
+    best = _best(models)
+    ordered = source in ORDERED_SOURCES
+    jumps = trajectory_jumps(best) if ordered else 0
+    # the global mapper can fold a video walk into a model with an excellent reprojection error (glomap#145);
+    # a camera path that jumps, or a solve that drops views, is re-solved incrementally and the better model kept
+    fallback = None
+    reg_ratio = best.num_reg_images() / n_images
+    if mapper == "global" and not ctx.opt("no_mapper_fallback") and (jumps or reg_ratio < 0.9):
+        why = f"{jumps} path jumps" if jumps else f"{reg_ratio:.0%} registered"
+        ctx.log.emit("sfm", "warn", f"global solve looks wrong ({why}): solving again with the incremental mapper")
+        opts = pycolmap.IncrementalPipelineOptions()
+        opts.max_runtime_seconds = int(ctx.opt("incremental_max_s", 5400))
+        inc = pycolmap.incremental_mapping(db, images, cdir / "sparse_inc", opts)
+        alt = _best(inc)
+        fallback = {"reason": why, "global": {"registered": best.num_reg_images(), "jumps": jumps}, "used": "global"}
+        if alt is not None:
+            alt_jumps = trajectory_jumps(alt) if ordered else 0
+            fallback["incremental"] = {"registered": alt.num_reg_images(), "jumps": alt_jumps}
+            score = lambda m, j: (j == 0 and m.num_reg_images() >= 0.6 * n_images, m.num_reg_images())
+            if score(alt, alt_jumps) > score(best, jumps):
+                best, jumps, models, fallback["used"] = alt, alt_jumps, inc, "incremental"
+        ctx.log.emit("sfm", "progress", f"kept the {fallback['used']} model")
     if jumps:
         ctx.log.emit("sfm", "warn", f"camera path has {jumps} discontinuities between consecutive frames: the model "
-                     "may be folded. Re-run with --force sfm --mapper incremental, or recapture (SOP: slower turns).")
+                     "may be folded. Recapture (SOP: slower turns) if the twin shows doubled walls.")
     sparse0 = cdir / "sparse" / "0"
     sparse0.mkdir(parents=True, exist_ok=True)
     best.write(sparse0)
@@ -190,7 +311,8 @@ def run_stage(ctx: Ctx) -> dict:
     rec.write_text(txt)
 
     reg = rec.num_reg_images()
-    report = {"features": features, "matcher": matcher, "mapper": mapper, "trajectoryJumps": jumps, "images": n_images, "registered": reg,
+    report = {"features": features, "featuresRequested": requested, "matcher": matcher, "loopDetection": loops, "mapper": mapper, "mapperFallback": fallback,
+              "trajectoryJumps": jumps, "images": n_images, "registered": reg,
               "registeredRatio": reg / n_images, "models": len(models), "points": rec.num_points3D(),
               "meanReprojErrorPx": float(rec.compute_mean_reprojection_error()),
               "focalPx": float(next(iter(rec.cameras.values())).params[0]), "focalPrior": cam_params}
