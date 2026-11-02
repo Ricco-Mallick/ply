@@ -136,10 +136,30 @@ def train(name: str, preset: str, extra: list[str], tag: str = "") -> dict:
     return {"exit": code, "files": files}
 
 
+@app.function(gpu=GPUS, cpu=4, memory=16384, timeout=1800, volumes={"/vol": vol}, secrets=[hf])
+def rescore(name: str, folder: str) -> dict:
+    """Export a trained preset again (current export code, including the viewer evaluation): no retraining."""
+    root = Path("/vol") / name
+    _restore(root / "prep")
+    _restore(root / folder)
+    (JOB / ".done" / "export.json").unlink(missing_ok=True)
+    code = _plypipe(["--only", "export"])
+    import json
+    rep = json.loads((JOB / "report.json").read_text())
+    return {"exit": code, "export": rep.get("export"), "train": rep.get("train")}
+
+
 @app.local_entrypoint()
 def main(name: str = "bench", presets: str = "quick,standard,high", args: str = "", out: str = "bench-out",
-         prep_only: bool = False, tag: str = ""):
+         prep_only: bool = False, tag: str = "", rescore_only: str = ""):
     extra = args.split()
+    if rescore_only:  # comma-separated folders already on the Volume
+        import json
+        for folder, res in zip(rescore_only.split(","), rescore.map(*zip(*[(name, f) for f in rescore_only.split(",")]))):
+            ex = res["export"] or {}
+            print(f"[bench] rescore {folder}: exit {res['exit']} viewer {json.dumps(ex.get('viewerEval'))} "
+                  f"held-out {json.dumps((res['train'] or {}).get('eval'))}", flush=True)
+        return
     t0 = time.time()
     prep.remote(name, extra)
     print(f"[bench] prep done in {(time.time() - t0) / 60:.1f} min", flush=True)

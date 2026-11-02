@@ -30,6 +30,9 @@ WARN_KEPT_FRACTION = 0.85
 MAX_CLIPPED_FRACTION = 0.02
 # held-out views (train --holdout): below this the twin does not reproduce photos it was not trained on
 WARN_HELD_OUT_PSNR = 20.0
+# the exported twin rendered without any appearance model, at the held-out photos (export.viewerEval)
+BRIGHTNESS_TOLERANCE = 0.08
+WARN_HOLES = 0.03
 
 
 def _views_per_second(frames: dict) -> float | None:
@@ -106,6 +109,16 @@ def check(report: dict, plan: dict | None = None) -> dict:
         elif kept < WARN_KEPT_FRACTION:
             add("warn", "pruned-some", f"export kept {kept:.0%} of the trained splats; the cap is above what the room holds.")
 
+    viewer = export.get("viewerEval") or {}
+    gain = viewer.get("brightness")
+    if isinstance(gain, (int, float)) and abs(gain - 1) > BRIGHTNESS_TOLERANCE:
+        add("warn", "brightness", f"the twin renders ×{gain:.2f} the photos' brightness in the viewer. The appearance model "
+            "(PPISP) corrected exposure during training but is not part of the file; train with --bilateral-grid.")
+    holes = viewer.get("holes")
+    if isinstance(holes, (int, float)) and holes > WARN_HOLES:
+        add("warn", "holes", f"{holes:.1%} of the held-out views is see-through (splat coverage under 90 %): expect dark gaps. "
+            "More gaussians (--cap-max) or --random-bkgd close them.")
+
     spz = export.get("spzMB")
     if isinstance(spz, (int, float)) and spz < MIN_SPZ_MB:
         add("fail", "tiny", f"{spz} MB twin: that is not a room, something collapsed during export.")
@@ -121,7 +134,8 @@ def check(report: dict, plan: dict | None = None) -> dict:
         "metrics": {"viewsPerSecond": views, "viewsFloor": fail_vps, "plannedViewsPerSecond": planned,
                     "registeredRatio": ratio, "antialiased": train.get("antialiased"),
                     "keptFraction": kept, "clippedFraction": clipped, "spzMB": spz,
-                    "heldOut": {k: held.get(k) for k in ("psnr", "ssim", "lpips", "ccPsnr", "views")} if held else None},
+                    "heldOut": {k: held.get(k) for k in ("psnr", "ssim", "lpips", "ccPsnr", "views")} if held else None,
+                    "viewer": viewer or None},
     }
 
 
