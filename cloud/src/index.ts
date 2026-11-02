@@ -22,6 +22,7 @@
  */
 
 import { completeMultipart, createMultipart, presign, signedFetch, type S3Conf } from './s3';
+import { cdnRedirect, isBulk } from './cdn';
 
 interface Env { DB: any; APP_KEY: string; WORKER_TOKEN: string; ALLOWED_ORIGINS: string;
   S3_ENDPOINT: string; S3_REGION: string; S3_BUCKET: string; S3_KEY_ID: string; S3_SECRET: string;
@@ -262,6 +263,11 @@ async function route(req: Request, env: Env, ctx: Ctx): Promise<Response> {
 
 /** Results for the viewer: fetched from the bucket with a signed URL and streamed through, Range passed along. */
 async function serve(env: Env, key: string, req: Request, cache: string, ctx?: ExecutionContext) {
+  // splats, meshes and LOD chunks: the browser fetches them from Hugging Face's CDN (src/cdn.ts), not through here
+  if (env.HF_REPO && env.HF_TOKEN && key.startsWith('scenes/') && isBulk(key)) {
+    const r = await cdnRedirect(env.HF_REPO, env.HF_TOKEN, key, req.url, caches.default, ctx ? p => ctx.waitUntil(p) : undefined);
+    if (r) return r;
+  }
   // Whole-file GETs are cached at Cloudflare's edge. The bucket's free tier counts every download (1 GB/day),
   // and the same twin is fetched again on every view; a cache hit costs neither bucket bandwidth nor quota.
   const range = req.headers.get('range');
@@ -270,18 +276,6 @@ async function serve(env: Env, key: string, req: Request, cache: string, ctx?: E
   if (cacheKey) {
     const hit = await caches.default.match(cacheKey);
     if (hit) { const h = new Headers(hit.headers); h.set('x-ply-cache', 'hit'); return new Response(hit.body, { status: hit.status, headers: h }); }
-  }
-  // Streaming LOD chunks are large and requested in parallel by Spark's pager. Proxying them through the Worker
-  // runs at ~1 MB/s (2-3 s per 3 MB chunk, serialised); the signed CDN URL Hugging Face hands back works without
-  // our token, so hand it to the browser and let it fetch chunks directly from HF's edge.
-  if (env.HF_REPO && env.HF_TOKEN && (key.endsWith('.rad') || key.endsWith('.radc'))) {
-    const h = new Headers({ authorization: `Bearer ${env.HF_TOKEN}` });
-    if (range) h.set('range', range);
-    const r = await fetch(`https://huggingface.co/datasets/${env.HF_REPO}/resolve/main/${key}`, { method: 'GET', headers: h, redirect: 'manual' });
-    const loc = r.headers.get('location');
-    if (loc && (r.status === 302 || r.status === 301 || r.status === 307)) {
-      return new Response(null, { status: 307, headers: { location: loc, 'access-control-allow-origin': '*', 'cache-control': 'no-store', 'accept-ranges': 'bytes' } });
-    }
   }
   let up: Response | null = null;
   // results live on Hugging Face when configured (100 GB, no daily download cap); inputs and old jobs stay on the bucket
