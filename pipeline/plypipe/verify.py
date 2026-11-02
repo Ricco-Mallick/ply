@@ -28,6 +28,8 @@ MIN_SPZ_MB = 3.0
 MIN_KEPT_FRACTION = 0.5
 WARN_KEPT_FRACTION = 0.85
 MAX_CLIPPED_FRACTION = 0.02
+# held-out views (train --holdout): below this the twin does not reproduce photos it was not trained on
+WARN_HELD_OUT_PSNR = 20.0
 
 
 def _views_per_second(frames: dict) -> float | None:
@@ -79,6 +81,12 @@ def check(report: dict, plan: dict | None = None) -> dict:
     if train and train.get("antialiased") is False:
         add("warn", "antialias", "trained without antialiasing: distant gaussians will sparkle and read harsh.")
 
+    held = train.get("eval") or {}
+    psnr = held.get("ccPsnr") or held.get("psnr")
+    if isinstance(psnr, (int, float)) and psnr < WARN_HELD_OUT_PSNR:
+        add("warn", "held-out", f"held-out views score {psnr:.1f} dB PSNR (colour-corrected): the twin does not "
+            "reproduce the photos it was not trained on. Expect blur or doubled surfaces; check the camera solve first.")
+
     export = report.get("export") or {}
     clean = export.get("floaterClean")
     if export and not clean:
@@ -108,7 +116,8 @@ def check(report: dict, plan: dict | None = None) -> dict:
         "issues": issues,
         "metrics": {"viewsPerSecond": views, "viewsFloor": fail_vps, "plannedViewsPerSecond": planned,
                     "registeredRatio": ratio, "antialiased": train.get("antialiased"),
-                    "keptFraction": kept, "clippedFraction": clipped, "spzMB": spz},
+                    "keptFraction": kept, "clippedFraction": clipped, "spzMB": spz,
+                    "heldOut": {k: held.get(k) for k in ("psnr", "ssim", "lpips", "ccPsnr", "views")} if held else None},
     }
 
 
