@@ -149,3 +149,18 @@ def test_held_out_scores_are_reported_and_a_poor_twin_is_flagged():
     report["train"]["eval"] = {"psnr": 16.0, "ccPsnr": 17.5, "views": 9}
     result = verify.check(report)
     assert result["ok"] and "held-out" in {i["code"] for i in result["issues"]}
+
+
+def test_viewer_brightness_and_holes_are_flagged():
+    report = json.loads(json.dumps(GOOD))
+    report["export"]["viewerEval"] = {"psnr": 27.0, "brightness": 1.21, "holes": 0.06, "views": 9}
+    codes = {i["code"] for i in verify.check(report)["issues"]}
+    assert {"brightness", "holes"} <= codes and verify.check(report)["ok"]
+    report["export"]["viewerEval"] = {"psnr": 28.0, "brightness": 1.02, "holes": 0.01, "views": 9}
+    assert not {"brightness", "holes"} & {i["code"] for i in verify.check(report)["issues"]}
+
+
+def test_held_out_split_matches_gsplat():
+    from plypipe import viewer_eval
+    assert viewer_eval.held_out([f"{i:06d}.jpg" for i in range(70)], 30) == [0, 30, 60]
+    assert viewer_eval.held_out(["a"], 0) == []

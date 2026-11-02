@@ -200,6 +200,15 @@ def run_stage(ctx: Ctx) -> dict:
     else:
         run(base + [str(cleaned)], ctx, "export")
     clipped = clean_mod.clipped_fraction(cleaned)
+    viewer = None
+    try:  # what the viewer will show, scored on the held-out photos (GPU only; None elsewhere)
+        from plypipe import viewer_eval
+        viewer = viewer_eval.evaluate(cleaned, ctx.data_dir, int(ctx.opt("holdout", 30) or 0), not ctx.opt("no_antialias"))
+        if viewer:
+            ctx.log.emit("export", "progress", f"as the viewer shows it: PSNR {viewer['psnr']:.2f}, brightness ×{viewer['brightness']:.2f}, "
+                         f"holes {viewer['holes']:.1%} over {viewer['views']} held-out views")
+    except Exception as e:
+        ctx.log.emit("export", "warn", f"viewer evaluation skipped: {str(e)[-160:]}")
     src = [*st, "-w", "--spz-version", "3", str(cleaned)]
     run(src + [str(full)], ctx, "export")
     n = ply_count(cleaned)
@@ -215,4 +224,4 @@ def run_stage(ctx: Ctx) -> dict:
             "cropBox": box, "cropDropped": drop_crop, "gaussiansIn": total, "gaussiansOut": n, "floaterFilter": floaters, "liteGaussians": min(n, LITE_MAX),
             "keptFraction": round(n / total, 3) if total else None,
             "exportFilters": {"opacity": chosen["opacity"], "scaleCap": chosen["scale"], "why": chosen["why"]},
-            "floaterClean": clean_stats, "clippedFraction": clipped}
+            "floaterClean": clean_stats, "clippedFraction": clipped, **({"viewerEval": viewer} if viewer else {})}
