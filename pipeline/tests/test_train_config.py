@@ -61,9 +61,10 @@ def test_gsplat_without_ppisp_falls_back_to_appearance_model():
         steps_scaler: float = 1.0
 
     old = types.SimpleNamespace(Config=OldConfig, MCMCStrategy=FakeMCMC)
-    cfg, info = train_launcher.build_config(old, "/d", "/r", "standard", None, False)
+    # PPISP asked for explicitly (it is off by default) on a gsplat without it: the appearance embedding stands in
+    cfg, info = train_launcher.build_config(old, "/d", "/r", "standard", True, False)
     assert cfg.app_opt is True and info["ppisp"] is False and not hasattr(cfg, "post_processing")
-    cfg, info = train_launcher.build_config(old, "/d", "/r", "quick", None, False)
+    cfg, info = train_launcher.build_config(old, "/d", "/r", "standard", None, False)
     assert cfg.app_opt is False and info["ppisp"] is False
 
 
@@ -121,3 +122,26 @@ def test_camera_spread_flags_a_runaway_view(tmp_path):
     write_synthetic_model(tmp_path / "m")
     spread = train_stage.camera_spread(tmp_path / "m")
     assert spread["medianM"] > 0 and spread["maxOverMedian"] < 10
+
+
+def test_bilateral_grid_replaces_ppisp_and_random_backgrounds_reach_gsplat():
+    import dataclasses
+
+    @dataclasses.dataclass
+    class NewConfig:
+        strategy: object = None
+        init_opa: float = 0.1
+        init_scale: float = 1.0
+        opacity_reg: float = 0.0
+        scale_reg: float = 0.0
+        post_processing: object = None
+        app_opt: bool = False
+
+    st2 = types.SimpleNamespace(Config=NewConfig, MCMCStrategy=FakeMCMC)
+    cfg, info = train_launcher.build_config(st2, "/d", "/r", "high", None, True, bilateral_grid=True, random_bkgd=True)
+    assert cfg.post_processing == "bilateral_grid" and cfg.random_bkgd and info["appearance"] == "bilateral_grid"
+    assert info["ppisp"] is False and info["randomBkgd"] is True
+    cfg, info = train_launcher.build_config(st2, "/d", "/r", "high", None, True)
+    assert cfg.post_processing is None and not cfg.random_bkgd           # no appearance model by default
+    cfg, info = train_launcher.build_config(st2, "/d", "/r", "high", True, True)
+    assert cfg.post_processing == "ppisp" and info["ppisp"] is True

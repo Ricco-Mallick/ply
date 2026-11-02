@@ -21,16 +21,19 @@ import os
 import sys
 
 PRESETS = {
-    # steps, SH degree, max Gaussians (MCMC cap), PPISP on by default
+    # steps, SH degree, max Gaussians (MCMC cap), appearance model. No appearance model by default: PPISP and
+    # bilateral grids correct exposure only inside the trainer, so their twins opened ×1.20-1.28 brighter in the
+    # viewer (Dr Johnson, docs/BENCHMARK.md), while the plain fit matched the photos (×1.00, +9 dB as the viewer shows it)
     "quick": {"max_steps": 7_000, "sh_degree": 2, "cap_max": 600_000, "ppisp": False},
-    "standard": {"max_steps": 30_000, "sh_degree": 3, "cap_max": 1_500_000, "ppisp": True},
-    "high": {"max_steps": 40_000, "sh_degree": 3, "cap_max": 2_000_000, "ppisp": True},
+    "standard": {"max_steps": 30_000, "sh_degree": 3, "cap_max": 1_500_000, "ppisp": False},
+    "high": {"max_steps": 40_000, "sh_degree": 3, "cap_max": 2_000_000, "ppisp": False},
 }
 
 
 def build_config(st, data: str, result: str, preset: str, ppisp: bool | None, antialiased: bool,
                  iterations: int | None = None, sh_degree: int | None = None, cap_max: int | None = None,
-                 holdout: int = 0, pose_opt: bool = False, depth_loss: bool = False, world_scale: float | None = None):
+                 holdout: int = 0, pose_opt: bool = False, depth_loss: bool = False, world_scale: float | None = None,
+                 bilateral_grid: bool = False, random_bkgd: bool = False):
     p = dict(PRESETS[preset])
     # the capture app's advanced settings: explicit values win over the preset
     for k, v in (("max_steps", iterations), ("sh_degree", sh_degree), ("cap_max", cap_max)):
@@ -71,7 +74,20 @@ def build_config(st, data: str, result: str, preset: str, ppisp: bool | None, an
     cfg.disable_video = True
     cfg.antialiased = antialiased
     has_ppisp = "post_processing" in getattr(st.Config, "__dataclass_fields__", {"post_processing": None})
-    if use_ppisp and not has_ppisp:  # gsplat <= 1.5.x: exposure drift handled by the appearance embedding instead
+    # random backgrounds: a splat cannot pass as "dark" by being transparent over the black training background,
+    # which is what shows as see-through gaps in the viewer
+    cfg.random_bkgd = bool(random_bkgd)
+    if bilateral_grid and has_ppisp:
+        # per-photo affine colour grids, identity-initialised: they absorb exposure and white balance while the splats
+        # stay at the photos' average exposure. PPISP's splats live in pre-ISP radiance and open brighter in the viewer
+        use_ppisp = False
+        cfg.post_processing = "bilateral_grid"
+        try:
+            import fused_bilagrid  # noqa: F401
+            cfg.bilateral_grid_fused = True
+        except ImportError:
+            cfg.bilateral_grid_fused = False
+    elif use_ppisp and not has_ppisp:  # gsplat <= 1.5.x: exposure drift handled by the appearance embedding instead
         use_ppisp = False
         cfg.app_opt = True
     elif use_ppisp:
@@ -82,7 +98,9 @@ def build_config(st, data: str, result: str, preset: str, ppisp: bool | None, an
         cfg.app_opt = False
     return cfg, {"preset": preset, "maxSteps": steps, "shDegree": p["sh_degree"], "capMax": p["cap_max"],
                  "ppisp": use_ppisp, "antialiased": antialiased, "holdout": holdout if holdout and holdout > 1 else 0,
-                 "poseOpt": bool(pose_opt), "depthLoss": bool(depth_loss), "worldScale": round(ws, 4)}
+                 "poseOpt": bool(pose_opt), "depthLoss": bool(depth_loss), "worldScale": round(ws, 4),
+                 "appearance": getattr(cfg, "post_processing", None) or ("app_opt" if getattr(cfg, "app_opt", False) else None),
+                 "randomBkgd": bool(random_bkgd)}
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -101,6 +119,8 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--holdout", type=int, default=0, help="score every Nth view, held out of training (0: off)")
     ap.add_argument("--pose-opt", action="store_true")
     ap.add_argument("--depth-loss", action="store_true")
+    ap.add_argument("--bilateral-grid", action="store_true")
+    ap.add_argument("--random-bkgd", action="store_true")
     ap.add_argument("--world-scale", type=float, help="median camera distance (scene units): MCMC noise/scale_reg follow it")
     ap.add_argument("--dry-run", action="store_true",
                     help="everything except the GPU work: import the trainer, build the config, load the scene with gsplat's parser")
@@ -118,7 +138,8 @@ def main(argv: list[str] | None = None) -> int:
     import simple_trainer as st  # noqa: E402
 
     cfg, summary = build_config(st, os.path.abspath(a.data), os.path.abspath(a.result), a.preset, a.ppisp, a.antialiased,
-                                a.iterations, a.sh_degree, a.cap_max, a.holdout, a.pose_opt, a.depth_loss, a.world_scale)
+                                a.iterations, a.sh_degree, a.cap_max, a.holdout, a.pose_opt, a.depth_loss, a.world_scale,
+                                a.bilateral_grid, a.random_bkgd)
     cfg.adjust_steps(cfg.steps_scaler)
     os.makedirs(a.result, exist_ok=True)
     with open(os.path.join(a.result, "ply_preset.json"), "w") as f:

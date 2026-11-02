@@ -58,9 +58,9 @@ const DEMOS: { name: string; note: string; walk: string; model?: string }[] = [
   { name: 'Office (LiDAR)', note: '6.15 M points · measured shell · under development', walk: './lidar.html' },
   // Deep Blending's Dr Johnson house (263 photos) through the current pipeline, one twin per preset; numbers in docs/BENCHMARK.md
   ...([
-    ['low', 'quick preset · 270k splats · 5 MB · 29.0 dB on held-out photos'],
-    ['medium', 'standard preset · 623k splats · 14 MB · 29.6 dB on held-out photos'],
-    ['high', 'high preset · 1.18 M splats · 27 MB · sharpest fine detail'],
+    ['low', 'quick preset · 277k splats · 5 MB · 29.0 dB on held-out photos'],
+    ['medium', 'standard preset · 554k splats · 12 MB · 30.8 dB on held-out photos'],
+    ['high', 'high preset · 961k splats · 22 MB · 31.0 dB on held-out photos'],
   ] as const).map(([tier, note]) => ({
     name: `Dr Johnson house · ${tier}`, note,
     walk: './walk.html?scene=' + encodeURIComponent(`${API}/v1/scenes/drjohnson-${tier}/scene.json`),

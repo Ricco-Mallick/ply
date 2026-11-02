@@ -101,6 +101,19 @@ The capture app already records `quality` samples, so it can coach these live.
 | `pipeline/modal/ply_bench.py` runs a dataset through the pipeline on the worker's image, saving to a Volume after every stage and every 3 minutes of training. | Benchmarks never lose progress and never touch the job queue. |
 | A/B flags `--pose-opt`, `--depth-loss` and `--scale-mcmc` (all off). | Item 3. The `--scale-mcmc` A/B on Dr Johnson was a tie. |
 
+## 5. Third pass: score what the viewer shows (2026-11-02)
+
+The gaps and brightness the owner saw in the Dr Johnson twins were invisible to every metric the pipeline had.
+`plypipe/viewer_eval.py` renders the exported file at held-out cameras without any appearance model and reports
+PSNR, brightness and see-through pixels. With it:
+
+- **Crop and floater pass:** export now picks its cleanup by measurement. The crop box was hiding 43 % of every view.
+- **Floater pass:** splats at least a cell across are no longer removed.
+- **Appearance models:** PPISP and the bilateral grid are off by default, because their twins rendered ×1.2–1.3 too bright.
+- **Gate:** warns on brightness off by more than 8 % and on more than 3 % see-through pixels.
+
+Results are in `docs/BENCHMARK.md`.
+
 ## 3. Real Horizons Studio (studio.realhorizons.ai)
 
 The app requires login. The findings below come from marketing pages and the app's public JS bundles, read on
