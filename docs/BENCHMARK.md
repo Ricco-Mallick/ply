@@ -24,3 +24,33 @@ Rules for the next one:
 
 The two Ply rows were produced before the planning and gates landed; both would now fail the views check
 and never reach a viewer.
+
+## Dr Johnson (Deep Blending), 2026-11-02
+
+A public photo set: 263 photos at 1332×876 of one house, from Kaggle `thnhdg/tandt-db`. It ran through `plypipe` on
+Modal with `pipeline/modal/ply_bench.py`, which solves once and then trains each preset from that solve. The GPU was an
+L40S, because Modal had no L4 free. The held-out set is every 30th view (9 views), scored with gsplat's PSNR/SSIM/LPIPS.
+
+- **Solve:** SIFT, exhaustive pairs, global mapper. 260/263 views registered after 3 unanchored views were dropped.
+  Reprojection error 0.69 px, 56k points, 6.2 min.
+- **Align:** floor tilt 3.0°, 54 % floor inliers.
+- **Labels:** 43 objects.
+
+| Tier (`--preset`) | Steps | Gaussians, cap → exported | SPZ / lite | Train | Held-out PSNR / SSIM / LPIPS |
+|---|---|---|---|---|---|
+| low (`quick`) | 7,000 | 367k → 270k | 5.1 / 4.4 MB | 1.5 min | 29.02 / 0.891 / 0.274 |
+| medium (`standard`) | 30,000 | 733k → 623k | 14.4 / 9.9 MB | 6.9 min | 29.63 / 0.912 / 0.213 |
+| high (`high`) | 40,000 | 1.47M → 1.18M | 27.4 / 12.7 MB | 11.6 min | 29.13 / 0.910 / 0.207 |
+
+- **Cost:** the whole benchmark used $2.35 of Modal credit: two 60-photo demo runs, the solve, and four trainings.
+  The fourth training was the A/B below.
+- **Reference:** the 3DGS paper reports 28.77 / 0.899 / 0.244 for Dr Johnson at 30k steps. It holds out every 8th
+  view and uses the dataset's own poses, so treat the comparison as indicative only.
+- **Tiers before the plan change:** quick, standard and high would all have trained 18,000 steps, with caps of
+  400k / 579k / 579k. `standard` and `high` were the same run.
+- **High vs medium:** high is perceptually sharper (lower LPIPS) but not higher PSNR on these 9 views. The 2× budget
+  pays off in fine texture, not in average error.
+- **A/B, MCMC noise scaled to the room (`--scale-mcmc`):** the quick preset scored 28.94 / 0.892 / 0.273 with it,
+  against 29.02 / 0.891 / 0.274 without, at a median camera distance of 2.9 m. Export kept 88 % of the trained
+  splats with the flag and 74 % without, but held-out quality is the same, so the flag stays off by default.
+- **Results:** the twins, reports and held-out renders are in the HF results repo under `bench/drjohnson/{low,medium,high}/`.

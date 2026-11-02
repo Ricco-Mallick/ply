@@ -29,7 +29,8 @@ PRESETS = {
 
 
 def build_config(st, data: str, result: str, preset: str, ppisp: bool | None, antialiased: bool,
-                 iterations: int | None = None, sh_degree: int | None = None, cap_max: int | None = None):
+                 iterations: int | None = None, sh_degree: int | None = None, cap_max: int | None = None,
+                 holdout: int = 0, pose_opt: bool = False, depth_loss: bool = False, world_scale: float | None = None):
     p = dict(PRESETS[preset])
     # the capture app's advanced settings: explicit values win over the preset
     for k, v in (("max_steps", iterations), ("sh_degree", sh_degree), ("cap_max", cap_max)):
@@ -37,19 +38,30 @@ def build_config(st, data: str, result: str, preset: str, ppisp: bool | None, an
             p[k] = v
     use_ppisp = p["ppisp"] if ppisp is None else ppisp
     steps = p["max_steps"]
+    # world_scale: the median camera distance in metres. The MCMC recipe (noise_lr 5e5, scale_reg 0.01) is tuned
+    # for gsplat's normalised world, where that distance is 1. Training here runs in metres, and gsplat's position
+    # noise is lr x covariance (metres cubed), so a room 3 m across got 9x the intended noise and a hall far more.
+    # Dividing by the scale (squared for the noise) gives every room the noise the recipe was tuned with.
+    ws = world_scale if world_scale and world_scale > 0 else 1.0
     cfg = st.Config(
-        init_opa=0.5, init_scale=0.1, opacity_reg=0.01, scale_reg=0.01,  # the "mcmc" preset of simple_trainer
+        init_opa=0.5, init_scale=0.1, opacity_reg=0.01, scale_reg=0.01 / ws,  # the "mcmc" preset of simple_trainer
         # MCMC relocates until refine_stop_iter (25k by default, i.e. 25k of gsplat's 30k). Below 25k steps it never
         # stops, so the last splats are teleported with no time left to fit; keep upstream's ratio at any length
-        strategy=st.MCMCStrategy(verbose=True, cap_max=p["cap_max"], refine_stop_iter=int(steps * 0.83)),
+        strategy=st.MCMCStrategy(verbose=True, cap_max=p["cap_max"], refine_stop_iter=int(steps * 0.83), noise_lr=5e5 / ws**2),
     )
     cfg.data_dir = data
     cfg.data_factor = 1  # frames are already capped at 1600 px
     cfg.result_dir = result
     cfg.normalize_world_space = False
-    cfg.test_every = 10**9  # train on every frame (index 0 is the only hold-out)
+    # holdout N: every Nth view is kept out of training and scored (PSNR/SSIM/LPIPS) once, at the last step.
+    # 0 trains on every view (index 0 is still gsplat's only hold-out) and scores nothing
+    cfg.test_every = holdout if holdout and holdout > 1 else 10**9
     cfg.max_steps = steps
-    cfg.eval_steps = []
+    cfg.eval_steps = [steps] if holdout and holdout > 1 else []
+    # PPISP has no per-frame exposure for a held-out view: the colour-corrected scores separate tone from detail
+    cfg.use_color_correction_metric = bool(holdout and holdout > 1)
+    cfg.pose_opt = bool(pose_opt)
+    cfg.depth_loss = bool(depth_loss)  # disparity at the views' own SfM track points (sparse), already in gsplat
     cfg.save_steps = [steps]
     cfg.save_ply = True
     # PLY_LIVE_SNAPSHOTS="0.15,0.4,0.7": also save PLYs part-way, for the live view on the status page
@@ -69,7 +81,8 @@ def build_config(st, data: str, result: str, preset: str, ppisp: bool | None, an
         cfg.post_processing = None
         cfg.app_opt = False
     return cfg, {"preset": preset, "maxSteps": steps, "shDegree": p["sh_degree"], "capMax": p["cap_max"],
-                 "ppisp": use_ppisp, "antialiased": antialiased}
+                 "ppisp": use_ppisp, "antialiased": antialiased, "holdout": holdout if holdout and holdout > 1 else 0,
+                 "poseOpt": bool(pose_opt), "depthLoss": bool(depth_loss), "worldScale": round(ws, 4)}
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -85,6 +98,10 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--iterations", type=int)
     ap.add_argument("--sh-degree", type=int)
     ap.add_argument("--cap-max", type=int)
+    ap.add_argument("--holdout", type=int, default=0, help="score every Nth view, held out of training (0: off)")
+    ap.add_argument("--pose-opt", action="store_true")
+    ap.add_argument("--depth-loss", action="store_true")
+    ap.add_argument("--world-scale", type=float, help="median camera distance (scene units): MCMC noise/scale_reg follow it")
     ap.add_argument("--dry-run", action="store_true",
                     help="everything except the GPU work: import the trainer, build the config, load the scene with gsplat's parser")
     a = ap.parse_args(argv)
@@ -101,7 +118,7 @@ def main(argv: list[str] | None = None) -> int:
     import simple_trainer as st  # noqa: E402
 
     cfg, summary = build_config(st, os.path.abspath(a.data), os.path.abspath(a.result), a.preset, a.ppisp, a.antialiased,
-                                a.iterations, a.sh_degree, a.cap_max)
+                                a.iterations, a.sh_degree, a.cap_max, a.holdout, a.pose_opt, a.depth_loss, a.world_scale)
     cfg.adjust_steps(cfg.steps_scaler)
     os.makedirs(a.result, exist_ok=True)
     with open(os.path.join(a.result, "ply_preset.json"), "w") as f:
