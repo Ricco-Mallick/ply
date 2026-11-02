@@ -47,7 +47,7 @@ def test_gaussian_budget_follows_surface_area():
 
 def test_a_short_capture_cannot_claim_the_area_budget():
     few = plan.model_plan(200, {"min": [-12, 0, -9], "max": [12, 4.2, 9]}, "standard", 3.4)
-    assert few["capMax"] <= 200 * plan._GAUSSIANS_PER_VIEW
+    assert few["capMax"] <= 200 * plan._DEFAULT_VIEW_MP * plan._GAUSSIANS_PER_VIEW_MP
 
 
 def test_preset_scales_but_never_past_the_ceiling():
@@ -55,17 +55,34 @@ def test_preset_scales_but_never_past_the_ceiling():
     best = plan.model_plan(900, ROOM, "high", 3.1)
     assert light["capMax"] < best["capMax"]
     assert best["iterations"] <= plan._PRESET_CEIL["high"]
-    assert best["capMax"] <= plan._CAP_MAX
+    assert best["capMax"] <= plan._PRESET_CAP_MAX["high"]
 
 
 def test_steps_follow_the_view_count():
     few = plan.model_plan(300, ROOM, "standard", 3.1)
     many = plan.model_plan(900, ROOM, "standard", 3.1)
     assert few["iterations"] < many["iterations"]
-    assert few["iterations"] >= plan._STEPS_MIN
+    assert few["iterations"] >= plan._PRESET_FLOOR["standard"]
 
 
 def test_explicit_overrides_win():
     p = plan.model_plan(900, ROOM, "standard", 3.1, iterations=12345, cap_max=777_000)
     assert p["iterations"] == 12345 and p["capMax"] == 777_000
     assert p["planIterations"] != 12345  # the plan still records what it would have chosen
+
+
+def test_presets_differ_on_a_small_capture():
+    """263 photos (Dr Johnson): floors and the view cap used to make all three presets the same run."""
+    house = {"min": [-6.0, 0.0, -4.0], "max": [6.0, 3.0, 5.0]}
+    q, s, h = (plan.model_plan(263, house, p, 3.0, megapixels=1.17) for p in ("quick", "standard", "high"))
+    assert q["iterations"] < s["iterations"] < h["iterations"]
+    assert q["capMax"] < s["capMax"] < h["capMax"]
+    assert (q["iterations"], s["iterations"], h["iterations"]) == (7_000, 30_000, 40_000)
+
+
+def test_the_view_cap_counts_pixels():
+    house = {"min": [-6.0, 0.0, -4.0], "max": [6.0, 3.0, 5.0]}
+    video = plan.model_plan(263, house, "standard", 3.0)
+    photos = plan.model_plan(263, house, "standard", 3.0, megapixels=1.17)
+    assert photos["capMax"] > video["capMax"]
+    assert video["capMax"] == int(263 * 0.92 * 2400)  # unchanged for a 1280x720 video frame: 2200/view as before
