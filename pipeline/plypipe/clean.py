@@ -40,19 +40,28 @@ def neighbour_counts(xyz: np.ndarray, cell: float) -> np.ndarray:
     """Splats in each splat's own cell plus the 26 cells around it.
 
     Counting one cell alone splits a surface that crosses a cell boundary and punches holes in plain walls,
-    which MCMC covers with few, large splats."""
+    which MCMC covers with few, large splats. Splats far outside the bulk of the scene (beyond the 0.5-99.5
+    percentile box plus 64 cells) count as alone, which keeps the grid small whatever the outliers are."""
     keys = np.floor(xyz / cell).astype(np.int64)
-    keys -= keys.min(axis=0) - 1  # room for the -1 neighbour
-    dims = keys.max(axis=0) + 2
-    code = lambda k: (k[..., 0] * dims[1] + k[..., 1]) * dims[2] + k[..., 2]
-    uniq, inverse, counts = np.unique(code(keys), return_inverse=True, return_counts=True)
-    ucells = np.stack(np.unravel_index(uniq, tuple(int(d) for d in dims)), axis=1)
+    n = len(keys)
+    if not n:
+        return np.zeros(0, np.int64)
+    lo = np.percentile(keys, 0.5, axis=0).astype(np.int64) - 64
+    hi = np.percentile(keys, 99.5, axis=0).astype(np.int64) + 64
+    inside = np.all((keys >= lo) & (keys <= hi), axis=1)
+    out = np.ones(n, np.int64)
+    k = keys[inside] - lo + 1  # room for the -1 neighbour
+    dims = hi - lo + 3
+    code = lambda a: (a[..., 0] * dims[1] + a[..., 1]) * dims[2] + a[..., 2]
+    uniq, inverse, counts = np.unique(code(k), return_inverse=True, return_counts=True)
+    ucells = np.stack([uniq // (dims[1] * dims[2]), (uniq // dims[2]) % dims[1], uniq % dims[2]], axis=1)
     total = np.zeros(len(uniq), np.int64)
     for off in np.stack(np.meshgrid([-1, 0, 1], [-1, 0, 1], [-1, 0, 1], indexing="ij"), -1).reshape(-1, 3):
         nb = code(ucells + off)
         pos = np.clip(np.searchsorted(uniq, nb), 0, len(uniq) - 1)
         total += np.where(uniq[pos] == nb, counts[pos], 0)
-    return total[inverse.reshape(-1)]
+    out[inside] = total[inverse.reshape(-1)]
+    return out
 
 
 def floater_filter(src: Path, dest: Path, *, cell: float = 0.12, min_neighbours: int = 3,
@@ -69,10 +78,16 @@ def floater_filter(src: Path, dest: Path, *, cell: float = 0.12, min_neighbours:
     opacity = 1.0 / (1.0 + np.exp(-cols["opacity"])) if "opacity" in cols else np.ones(n, np.float32)
 
     crowd = neighbour_counts(xyz, cell) if n else np.zeros(0, np.int64)
+    # a splat at least a cell across is a surface seen from afar (a far wall, a window's view), not a floater: alone in
+    # its cell by construction. Removing those cost Dr Johnson 1 dB and 5 % see-through pixels
+    big = np.zeros(n, bool)
+    if all(f"scale_{i}" in cols for i in range(3)):
+        big = np.exp(np.stack([cols[f"scale_{i}"] for i in range(3)], axis=1)).max(axis=1) >= cell
+    alone = (crowd < min_neighbours) & ~big
 
-    keep = (crowd >= min_neighbours) & (opacity >= min_opacity)
-    removed_isolated = int((crowd < min_neighbours).sum())
-    removed_faint = int(((crowd >= min_neighbours) & (opacity < min_opacity)).sum())
+    keep = ~alone & (opacity >= min_opacity)
+    removed_isolated = int(alone.sum())
+    removed_faint = int((~alone & (opacity < min_opacity)).sum())
 
     out = {p: v[keep] for p, v in cols.items()}
     header = "\n".join(
@@ -82,7 +97,7 @@ def floater_filter(src: Path, dest: Path, *, cell: float = 0.12, min_neighbours:
     with Path(dest).open("wb") as f:
         f.write(header.encode("latin-1"))
         np.stack([out[p] for p in cols], axis=1).astype(np.float32).tofile(f)
-    return {"method": "cpu-grid-27", "cell": cell, "minNeighbours": min_neighbours, "minOpacity": min_opacity,
+    return {"method": "cpu-grid-27-scale", "cell": cell, "minNeighbours": min_neighbours, "minOpacity": min_opacity,
             "in": n, "kept": int(keep.sum()), "removedIsolated": removed_isolated, "removedFaint": removed_faint,
             "keptFraction": round(float(keep.sum()) / n, 3) if n else None}
 

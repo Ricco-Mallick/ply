@@ -173,33 +173,76 @@ def run_stage(ctx: Ctx) -> dict:
             ctx.log.emit("export", "warn", f"crop probe failed ({str(e)[-120:]}); using the box as it is")
         finally:
             probe.unlink(missing_ok=True)
-    if clean:
-        base += clean_flags
     full = ctx.out / "scene.spz"
     lite = ctx.out / "scene_lite.spz"
     cleaned = ctx.out / "scene_clean.ply"
-    # one cleaned PLY first, then both web files from it. The floater pass is Python, not WebGPU:
-    # a container without an adapter used to skip it silently, and the blobs shipped with the twin.
-    floaters = False
-    clean_stats = None
-    if clean:
-        run(base + [str(cleaned)], ctx, "export")
-        # the opacity floor is the one the probe chose: a stricter second cut here would undo the probe
-        stats = clean_mod.floater_filter(cleaned, cleaned.with_name("scene_filtered.ply"), min_opacity=chosen["opacity"])
+    no_box = [b for i, b in enumerate(base) if not (b == "-B" or (i and base[i - 1] == "-B"))]
+
+    def build(with_box: bool, with_floaters: bool) -> dict | None:
+        """One cleaned PLY. The floater pass is Python, not WebGPU: a container without an adapter used to skip
+        it silently, and the blobs shipped with the twin. Returns the floater stats (None when not run)."""
+        run((base if with_box else no_box) + (clean_flags if clean else []) + [str(cleaned)], ctx, "export")
+        if not (clean and with_floaters):
+            return None
         scanned = cleaned.with_name("scene_filtered.ply")
+        # the opacity floor is the one the probe chose: a stricter second cut here would undo the probe
+        stats = clean_mod.floater_filter(cleaned, scanned, min_opacity=chosen["opacity"])
         if stats["keptFraction"] and stats["keptFraction"] >= 0.5:
             scanned.replace(cleaned)
-            floaters = True
-            clean_stats = stats
-            ctx.log.emit("export", "progress", f"floaters: removed {stats['removedIsolated']} isolated and "
-                         f"{stats['removedFaint']} faint splats, kept {stats['kept']}")
-        else:
-            ctx.log.emit("export", "warn", f"floater pass kept only {stats['keptFraction']}: exporting without it")
-            scanned.unlink(missing_ok=True)
-            clean_stats = {**stats, "skipped": True}
+            return stats
+        scanned.unlink(missing_ok=True)
+        return {**stats, "skipped": True, "why": f"kept only {stats['keptFraction']}"}
+
+    # with a GPU, every cleanup step is measured the way the viewer shows the twin (viewer_eval: the held-out photos,
+    # no appearance model) against the trained model itself, and a step that opens holes or costs detail is dropped.
+    # Splat counts were the wrong measure: a crop that removed 6 % of Dr Johnson's splats hid 43 % of every view.
+    holdout = int(ctx.opt("holdout", 30) or 0)
+    aa = not ctx.opt("no_antialias")
+    choice = None
+    viewer = None
+    try:
+        from plypipe import viewer_eval
+        reference = viewer_eval.evaluate(ply, ctx.data_dir, holdout, aa) if clean else None
+    except Exception as e:
+        reference = None
+        ctx.log.emit("export", "warn", f"viewer evaluation unavailable: {str(e)[-160:]}")
+    clean_stats = None
+    if reference:
+        tried = []
+        steps = [(True, True), (False, True), (False, False)] if box else [(False, True), (False, False)]
+        for with_box, with_floaters in steps:
+            stats = build(with_box, with_floaters)
+            score = viewer_eval.evaluate(cleaned, ctx.data_dir, holdout, aa)
+            name = "+".join(n for n, on in (("crop", with_box), ("floaters", with_floaters)) if on) or "values only"
+            tried.append({"cleanup": name, **(score or {})})
+            ok = score and score["psnr"] >= reference["psnr"] - 0.3 and score["holes"] <= reference["holes"] + 0.01
+            if ok or (with_box, with_floaters) == steps[-1]:
+                choice = {"cleanup": name, "reference": reference, "tried": tried}
+                viewer, clean_stats = score, stats
+                drop_crop = drop_crop or (box is not None and not with_box)
+                box = box if with_box else None
+                break
+            ctx.log.emit("export", "warn", f"cleanup '{name}' cost the viewer {reference['psnr'] - score['psnr']:.2f} dB and "
+                         f"{(score['holes'] - reference['holes']):.1%} more see-through pixels: trying a lighter one")
+        if clean_stats is None:  # the floater pass was measured and left out: record why, so the gate can tell
+            clean_stats = {"method": "cpu-grid-27", "skipped": True, "why": "measured: it opened holes in the twin",
+                           "kept": ply_count(cleaned)}
     else:
-        run(base + [str(cleaned)], ctx, "export")
+        clean_stats = build(box is not None, True) if clean else build(box is not None, False)
+    floaters = bool(clean_stats and not clean_stats.get("skipped"))
+    if floaters:
+        ctx.log.emit("export", "progress", f"floaters: removed {clean_stats['removedIsolated']} isolated and "
+                     f"{clean_stats['removedFaint']} faint splats, kept {clean_stats['kept']}")
     clipped = clean_mod.clipped_fraction(cleaned)
+    if viewer is None:
+        try:  # what the viewer will show, scored on the held-out photos (GPU only; None elsewhere)
+            from plypipe import viewer_eval
+            viewer = viewer_eval.evaluate(cleaned, ctx.data_dir, holdout, aa)
+        except Exception as e:
+            ctx.log.emit("export", "warn", f"viewer evaluation skipped: {str(e)[-160:]}")
+    if viewer:
+        ctx.log.emit("export", "progress", f"as the viewer shows it: PSNR {viewer['psnr']:.2f}, brightness ×{viewer['brightness']:.2f}, "
+                     f"holes {viewer['holes']:.1%} over {viewer['views']} held-out views")
     src = [*st, "-w", "--spz-version", "3", str(cleaned)]
     run(src + [str(full)], ctx, "export")
     n = ply_count(cleaned)
@@ -215,4 +258,5 @@ def run_stage(ctx: Ctx) -> dict:
             "cropBox": box, "cropDropped": drop_crop, "gaussiansIn": total, "gaussiansOut": n, "floaterFilter": floaters, "liteGaussians": min(n, LITE_MAX),
             "keptFraction": round(n / total, 3) if total else None,
             "exportFilters": {"opacity": chosen["opacity"], "scaleCap": chosen["scale"], "why": chosen["why"]},
-            "floaterClean": clean_stats, "clippedFraction": clipped}
+            "floaterClean": clean_stats, "clippedFraction": clipped, **({"viewerEval": viewer} if viewer else {}),
+            **({"cleanupChoice": choice} if choice else {})}
