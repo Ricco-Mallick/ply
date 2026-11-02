@@ -62,8 +62,18 @@ def _save(dst: Path, src: Path = JOB) -> None:
 
 
 def _restore(src: Path, dst: Path = JOB) -> None:
-    if src.exists():
-        shutil.copytree(src, dst, symlinks=True, dirs_exist_ok=True)
+    """Layer a saved folder onto the job (a preset over the shared prep): files replace, existing links stay."""
+    if not src.exists():
+        return
+    for p in sorted(src.rglob("*")):
+        q = dst / p.relative_to(src)
+        if p.is_symlink():
+            if not q.is_symlink() and not q.exists():
+                q.parent.mkdir(parents=True, exist_ok=True)
+                q.symlink_to(os.readlink(p))
+        elif p.is_file() and not any(par.is_symlink() for par in q.parents):
+            q.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(p, q)
 
 
 def _snapshots(dst: Path, stop: threading.Event) -> None:
@@ -136,10 +146,50 @@ def train(name: str, preset: str, extra: list[str], tag: str = "") -> dict:
     return {"exit": code, "files": files}
 
 
+@app.function(gpu=GPUS, cpu=4, memory=16384, timeout=1800, volumes={"/vol": vol}, secrets=[hf])
+def rescore(name: str, folder: str) -> dict:
+    """Export a trained preset again (current export code, including the viewer evaluation): no retraining."""
+    root = Path("/vol") / name
+    _restore(root / "prep")
+    _restore(root / folder)
+    (JOB / ".done" / "export.json").unlink(missing_ok=True)
+    code = _plypipe(["--only", "export"])
+    _save(root / folder)
+    import json
+    rep = json.loads((JOB / "report.json").read_text())
+    files = {k: (JOB / k).read_bytes() for k in ("report.json", "scene.json", "scene.spz", "scene_lite.spz") if (JOB / k).exists()}
+    return {"exit": code, "export": rep.get("export"), "train": rep.get("train"), "files": files}
+
+
+@app.function(gpu=GPUS, cpu=4, memory=16384, timeout=1200, volumes={"/vol": vol})
+def vieweval(name: str, folder: str, files: list[str]) -> dict:
+    """The viewer-side score of saved PLYs (trained vs exported), without re-running anything."""
+    sys.path.insert(0, "/root/pipeline")
+    from plypipe import viewer_eval
+    root = Path("/vol") / name
+    _restore(root / "prep")
+    return {f: viewer_eval.evaluate(root / folder / f, JOB / "data") for f in files}
+
+
 @app.local_entrypoint()
 def main(name: str = "bench", presets: str = "quick,standard,high", args: str = "", out: str = "bench-out",
-         prep_only: bool = False, tag: str = ""):
+         prep_only: bool = False, tag: str = "", rescore_only: str = ""):
     extra = args.split()
+    if args.startswith("vieweval:"):  # vieweval:<folder>:<file>,<file>
+        _, folder, files = args.split(":")
+        print("[bench] vieweval", folder, vieweval.remote(name, folder, files.split(",")), flush=True)
+        return
+    if rescore_only:  # comma-separated folders already on the Volume
+        import json
+        for folder, res in zip(rescore_only.split(","), rescore.map(*zip(*[(name, f) for f in rescore_only.split(",")]))):
+            ex = res["export"] or {}
+            print(f"[bench] rescore {folder}: exit {res['exit']} viewer {json.dumps(ex.get('viewerEval'))} "
+                  f"held-out {json.dumps((res['train'] or {}).get('eval'))}", flush=True)
+            d = Path(out) / name / folder
+            for k, v in (res.get("files") or {}).items():
+                d.mkdir(parents=True, exist_ok=True)
+                (d / k).write_bytes(v)
+        return
     t0 = time.time()
     prep.remote(name, extra)
     print(f"[bench] prep done in {(time.time() - t0) / 60:.1f} min", flush=True)
