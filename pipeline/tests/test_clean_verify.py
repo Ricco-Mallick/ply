@@ -139,3 +139,13 @@ def test_a_capped_run_still_fails_against_its_plan():
 def test_the_floor_never_drops_below_the_absolute_minimum():
     fail, warn, planned = verify.view_floors({"input": {"fpsUsed": 0.5}})
     assert fail == verify.ABS_MIN_VIEWS_PER_SECOND and warn >= fail and planned == 0.5
+
+
+def test_held_out_scores_are_reported_and_a_poor_twin_is_flagged():
+    report = json.loads(json.dumps(GOOD))
+    report["train"]["eval"] = {"psnr": 27.2, "ssim": 0.87, "lpips": 0.25, "ccPsnr": 27.9, "views": 9}
+    result = verify.check(report)
+    assert result["ok"] and result["metrics"]["heldOut"]["ccPsnr"] == 27.9
+    report["train"]["eval"] = {"psnr": 16.0, "ccPsnr": 17.5, "views": 9}
+    result = verify.check(report)
+    assert result["ok"] and "held-out" in {i["code"] for i in result["issues"]}

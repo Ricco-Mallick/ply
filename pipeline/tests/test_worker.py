@@ -51,7 +51,7 @@ def run(tmp_path, monkeypatch, script):
 def test_sfm_crash_is_retried_with_sift_and_succeeds(tmp_path, monkeypatch):
     api = run(tmp_path, monkeypatch, FAKE)
     final = api.posts[-1]
-    assert final["status"] == "done"
+    assert final["status"] == "review"
     assert any("retrying with SIFT" in (p.get("message") or "") for p in api.posts if isinstance(p, dict))
     assert "scenes/j1/scene.spz" in api.uploads
 
