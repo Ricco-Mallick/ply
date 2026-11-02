@@ -27,7 +27,11 @@ import { cdnRedirect, isBulk } from './cdn';
 interface Env { DB: any; APP_KEY: string; WORKER_TOKEN: string; ALLOWED_ORIGINS: string;
   S3_ENDPOINT: string; S3_REGION: string; S3_BUCKET: string; S3_KEY_ID: string; S3_SECRET: string;
   /** Modal GPU worker (pipeline/modal/ply_modal.py): trigger URL + shared token; unset = Kaggle only */
-  MODAL_TRIGGER?: string; MODAL_TRIGGER_TOKEN?: string; }
+  MODAL_TRIGGER?: string; MODAL_TRIGGER_TOKEN?: string;
+  /** results on Hugging Face (HF_REPO in wrangler.toml, HF_TOKEN a secret); unset = bucket only */
+  HF_REPO?: string; HF_TOKEN?: string;
+  /** commit and time of this deploy, set by .github/workflows/api.yml (--var); unset for a hand deploy */
+  VERSION?: string; DEPLOYED_AT?: string; }
 type Ctx = { waitUntil(p: Promise<unknown>): void };
 
 /** Wake the Modal GPU worker (it starts unless one is already up, and stops itself when the queue is empty). */
@@ -116,7 +120,8 @@ async function route(req: Request, env: Env, ctx: Ctx): Promise<Response> {
     return inv ? json({ role: 'invite', label: inv.label, expires: inv.expires }) : json({ error: 'that invite is not valid or has expired' }, 401);
   }
 
-  if (p === '/' || p === '/v1') return json({ ok: true, service: 'ply-api' });
+  // which code is live, in one request: a stale deploy shows here instead of as a slow viewer
+  if (p === '/' || p === '/v1') return json({ ok: true, service: 'ply-api', version: env.VERSION ?? 'manual', deployedAt: env.DEPLOYED_AT ?? null }, 200, { 'cache-control': 'no-store' });
   if (p === '/v1/health' && req.method === 'GET') {
     const w = await env.DB.prepare('SELECT name,last_seen,busy_job,note FROM workers WHERE last_seen > ? ORDER BY last_seen DESC').bind(now - 90_000).all();
     const q = await env.DB.prepare("SELECT COUNT(*) n FROM jobs WHERE status='queued'").first();

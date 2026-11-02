@@ -1,0 +1,47 @@
+# Deploys the Ply API (cloud/, a Cloudflare Worker) when it changes on main. GitHub Pages only publishes app/, so
+# without this an API fix stays undeployed after merge (PR #5 did).
+# Needs one repository secret: CLOUDFLARE_API_TOKEN (a Cloudflare API token with "Edit Cloudflare Workers").
+# Worker secrets (APP_KEY, WORKER_TOKEN, S3_*, HF_TOKEN) live in Cloudflare and are untouched by a deploy.
+name: api
+on:
+  push:
+    branches: [main]
+    paths: ['cloud/**', '.github/workflows/api.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: api
+  cancel-in-progress: false
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: tests
+        working-directory: cloud
+        run: |
+          node --experimental-strip-types test/sigv4.test.mts
+          node --experimental-strip-types test/cdn.test.mts
+      - name: deploy
+        working-directory: cloud
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          WRANGLER_SEND_METRICS: 'false'
+        run: |
+          test -n "$CLOUDFLARE_API_TOKEN" || { echo "::error::add the CLOUDFLARE_API_TOKEN repository secret"; exit 1; }
+          npx --yes wrangler@4.149.0 deploy --var "VERSION:${GITHUB_SHA::7}" --var "DEPLOYED_AT:$(date -u +%FT%TZ)"
+      - name: the live API reports this commit
+        env:
+          API: ${{ vars.PLY_API }}
+        run: |
+          test -n "$API" || { echo "PLY_API repository variable not set: skipping the live check"; exit 0; }
+          for i in $(seq 1 12); do
+            v=$(curl -fsS "$API/" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("version"))' || true)
+            [ "$v" = "${GITHUB_SHA::7}" ] && { echo "live: $v"; exit 0; }
+            sleep 5
+          done
+          echo "::error::the API still reports '$v', expected ${GITHUB_SHA::7}"; exit 1
