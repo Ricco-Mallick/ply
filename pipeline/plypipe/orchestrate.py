@@ -65,7 +65,7 @@ def refine(report: dict, args: list[str], plan: dict | None = None) -> tuple[lis
             out = _set(out, "--min-opacity", "0.002")
             notes.append(f"export kept {kept_fraction:.0%}: the model is fine, re-exporting with a 0.2% visibility floor")
         elif gaussians_out:
-            cap = int(min(4_000_000, max(400_000, gaussians_out * 1.25)))
+            cap = int(min(2_000_000, max(400_000, gaussians_out * 1.25)))  # plan.py: 3M diverged on Dr Johnson
             out = _set(out, "--cap-max", str(cap))
             notes.append(f"export kept {kept_fraction:.0%}: no saved model, training cap set to {cap:,}")
 

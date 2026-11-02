@@ -94,7 +94,9 @@ def build_parser() -> argparse.ArgumentParser:
     g.add_argument("--cell", type=float, default=0.1, help="occupancy cell size in metres")
     g = r.add_argument_group("train / export")
     g.add_argument("--preset", choices=["quick", "standard", "high"], default="standard")
-    g.add_argument("--no-ppisp", dest="ppisp", action="store_false", default=None)
+    g.add_argument("--no-ppisp", dest="ppisp", action="store_false", default=None, help="no PPISP (the default)")
+    g.add_argument("--ppisp", dest="ppisp", action="store_true",
+                   help="PPISP exposure model in training (the exported twin renders brighter than the photos)")
     g.add_argument("--iterations", type=int, help="override the preset's training steps")
     g.add_argument("--sh-degree", type=int, choices=[0, 1, 2, 3], help="override the preset's SH degree")
     g.add_argument("--cap-max", type=int, help="override the preset's MCMC splat cap")
@@ -105,6 +107,9 @@ def build_parser() -> argparse.ArgumentParser:
                    help="hold every Nth view out of training and score the twin on it (PSNR/SSIM/LPIPS); 0 disables")
     g.add_argument("--pose-opt", action="store_true", help="refine camera poses during training (A/B option)")
     g.add_argument("--depth-loss", action="store_true", help="supervise depth at the SfM track points (A/B option)")
+    g.add_argument("--bilateral-grid", action="store_true",
+                   help="exposure/white balance per photo with bilateral grids instead of PPISP (the twin keeps the photos' brightness)")
+    g.add_argument("--random-bkgd", action="store_true", help="random training backgrounds: no see-through splats")
     g.add_argument("--scale-mcmc", action="store_true",
                    help="scale gsplat's MCMC noise and scale_reg to the room size (A/B: no gain measured on Dr Johnson)")
     g.add_argument("--antialiased", dest="antialiased", action="store_true", default=True,
