@@ -149,3 +149,41 @@ def test_held_out_scores_are_reported_and_a_poor_twin_is_flagged():
     report["train"]["eval"] = {"psnr": 16.0, "ccPsnr": 17.5, "views": 9}
     result = verify.check(report)
     assert result["ok"] and "held-out" in {i["code"] for i in result["issues"]}
+
+
+def test_viewer_brightness_and_holes_are_flagged():
+    report = json.loads(json.dumps(GOOD))
+    report["export"]["viewerEval"] = {"psnr": 27.0, "brightness": 1.21, "holes": 0.06, "views": 9}
+    codes = {i["code"] for i in verify.check(report)["issues"]}
+    assert {"brightness", "holes"} <= codes and verify.check(report)["ok"]
+    report["export"]["viewerEval"] = {"psnr": 28.0, "brightness": 1.02, "holes": 0.01, "views": 9}
+    assert not {"brightness", "holes"} & {i["code"] for i in verify.check(report)["issues"]}
+
+
+def test_held_out_split_matches_gsplat():
+    from plypipe import viewer_eval
+    assert viewer_eval.held_out([f"{i:06d}.jpg" for i in range(70)], 30) == [0, 30, 60]
+    assert viewer_eval.held_out(["a"], 0) == []
+
+
+def test_neighbour_counts_survive_far_outliers():
+    """A trained model can carry a few splats kilometres out; the grid must not grow with them."""
+    rng = np.random.default_rng(2)
+    wall = np.c_[rng.uniform(0, 4, 5000), rng.uniform(0, 2.5, 5000), np.zeros(5000)]
+    far = np.array([[1e7, 0, 0], [-3e6, 5e6, 1e7]])
+    counts = clean.neighbour_counts(np.vstack([wall, far]), 0.12)
+    assert (counts[:5000] >= 3).all() and counts[-2:].tolist() == [1, 1]
+
+
+def test_big_lone_splats_are_surfaces_not_floaters(tmp_path):
+    """A far wall seen through a door is a few big splats, each alone in its 12 cm cell."""
+    header = ("ply\nformat binary_little_endian 1.0\nelement vertex 3\n"
+              "property float x\nproperty float y\nproperty float z\nproperty float opacity\n"
+              "property float scale_0\nproperty float scale_1\nproperty float scale_2\nend_header\n")
+    rows = [[0, 1, 0, 2.0, np.log(0.4), np.log(0.4), np.log(0.01)],       # 40 cm splat, alone: a far wall
+            [5, 1, 0, 2.0, np.log(0.02), np.log(0.02), np.log(0.02)],     # 2 cm splat, alone: a floater
+            [-5, 1, 0, 2.0, np.log(0.2), np.log(0.05), np.log(0.05)]]     # 20 cm along one axis: kept
+    with open(tmp_path / "in.ply", "wb") as f:
+        f.write(header.encode()); np.asarray(rows, np.float32).tofile(f)
+    stats = clean.floater_filter(tmp_path / "in.ply", tmp_path / "out.ply")
+    assert stats["kept"] == 2 and stats["removedIsolated"] == 1
