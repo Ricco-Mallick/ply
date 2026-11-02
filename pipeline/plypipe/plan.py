@@ -37,7 +37,9 @@ _GAUSSIANS_PER_M2 = 4200
 _GAUSSIANS_PER_VIEW_MP = 2400
 _DEFAULT_VIEW_MP = 0.92  # 1280 x 720, the planned working size of a 1080p clip
 _CAP_MIN = 300_000
-_PRESET_CAP_MAX = {"quick": 2_000_000, "standard": 4_000_000, "high": 6_000_000}
+# ceilings: Dr Johnson trained cleanly at 1.47M splats (31.0 dB as the viewer shows it) and went unstable at 3M in
+# both runs that tried (loss climbing from 3.6k steps, 10.7 dB). Until a larger cap is proven, stay under it
+_PRESET_CAP_MAX = {"quick": 1_000_000, "standard": 2_000_000, "high": 2_000_000}
 
 # steps: one view every ~50 steps is where gsplat stops adding detail. Small captures still need gsplat's
 # own schedules (7k / 30k), which is what the per-preset floors are; the preset scales the rest
