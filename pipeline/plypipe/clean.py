@@ -40,19 +40,28 @@ def neighbour_counts(xyz: np.ndarray, cell: float) -> np.ndarray:
     """Splats in each splat's own cell plus the 26 cells around it.
 
     Counting one cell alone splits a surface that crosses a cell boundary and punches holes in plain walls,
-    which MCMC covers with few, large splats."""
+    which MCMC covers with few, large splats. Splats far outside the bulk of the scene (beyond the 0.5-99.5
+    percentile box plus 64 cells) count as alone, which keeps the grid small whatever the outliers are."""
     keys = np.floor(xyz / cell).astype(np.int64)
-    keys -= keys.min(axis=0) - 1  # room for the -1 neighbour
-    dims = keys.max(axis=0) + 2
-    code = lambda k: (k[..., 0] * dims[1] + k[..., 1]) * dims[2] + k[..., 2]
-    uniq, inverse, counts = np.unique(code(keys), return_inverse=True, return_counts=True)
-    ucells = np.stack(np.unravel_index(uniq, tuple(int(d) for d in dims)), axis=1)
+    n = len(keys)
+    if not n:
+        return np.zeros(0, np.int64)
+    lo = np.percentile(keys, 0.5, axis=0).astype(np.int64) - 64
+    hi = np.percentile(keys, 99.5, axis=0).astype(np.int64) + 64
+    inside = np.all((keys >= lo) & (keys <= hi), axis=1)
+    out = np.ones(n, np.int64)
+    k = keys[inside] - lo + 1  # room for the -1 neighbour
+    dims = hi - lo + 3
+    code = lambda a: (a[..., 0] * dims[1] + a[..., 1]) * dims[2] + a[..., 2]
+    uniq, inverse, counts = np.unique(code(k), return_inverse=True, return_counts=True)
+    ucells = np.stack([uniq // (dims[1] * dims[2]), (uniq // dims[2]) % dims[1], uniq % dims[2]], axis=1)
     total = np.zeros(len(uniq), np.int64)
     for off in np.stack(np.meshgrid([-1, 0, 1], [-1, 0, 1], [-1, 0, 1], indexing="ij"), -1).reshape(-1, 3):
         nb = code(ucells + off)
         pos = np.clip(np.searchsorted(uniq, nb), 0, len(uniq) - 1)
         total += np.where(uniq[pos] == nb, counts[pos], 0)
-    return total[inverse.reshape(-1)]
+    out[inside] = total[inverse.reshape(-1)]
+    return out
 
 
 def floater_filter(src: Path, dest: Path, *, cell: float = 0.12, min_neighbours: int = 3,
