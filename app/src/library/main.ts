@@ -56,6 +56,15 @@ const DEMOS: { name: string; note: string; walk: string; model?: string }[] = [
   { name: 'Classroom', note: '10.5 × 6.3 m · 194 places · one pipeline version behind the current one', walk: './walk.html?scene=' + encodeURIComponent(`${API}/v1/scenes/hq-classroom-1/scene.json`), model: './model.html?scene=' + encodeURIComponent(`${API}/v1/scenes/hq-classroom-1/scene.json`) + '&module=/ply/models/classroom2.js' },
   { name: 'Chapel', note: 'vaulted interior · older pipeline, quality below today\'s standard', walk: './walk.html?scene=' + encodeURIComponent(`${API}/v1/scenes/hq-chapel-1/scene.json`) },
   { name: 'Office (LiDAR)', note: '6.15 M points · measured shell · under development', walk: './lidar.html' },
+  // Deep Blending's Dr Johnson house (263 photos) through the current pipeline, one twin per preset; numbers in docs/BENCHMARK.md
+  ...([
+    ['low', 'quick preset · 270k splats · 5 MB · 29.0 dB on held-out photos'],
+    ['medium', 'standard preset · 623k splats · 14 MB · 29.6 dB on held-out photos'],
+    ['high', 'high preset · 1.18 M splats · 27 MB · sharpest fine detail'],
+  ] as const).map(([tier, note]) => ({
+    name: `Dr Johnson house · ${tier}`, note,
+    walk: './walk.html?scene=' + encodeURIComponent(`${API}/v1/scenes/drjohnson-${tier}/scene.json`),
+  })),
 ];
 
 $('#demos').innerHTML = DEMOS.map(d => `
