@@ -1,5 +1,5 @@
 # Copyright (c) 2026 Ricco Marcelino. All rights reserved. Proprietary and confidential — see LICENSE.
-"""export: scene.ply -> scene.spz (full) + scene_lite.spz (SH0 only, for phones).
+"""export: scene.ply -> scene.spz (full) + scene_lite.spz (SH2, for phones).
 
 Uses @playcanvas/splat-transform (pinned) through npx. The PLY is already in the scene frame
 (training ran on the aligned model), so no axis change is applied. Gaussians with NaN/Inf are
@@ -9,7 +9,9 @@ cropped, which drops most floaters for free.
 Cleanup (on unless --no-clean): near-invisible Gaussians (opacity < 3 %) and oversized blobs (any axis > 1 m) are
 dropped with value filters, then splat-transform's floater filter removes Gaussians that don't contribute to any solid
 voxel. The floater filter needs WebGPU; without it the stage logs a warning and exports the value-filtered model.
-The phone file is SH0 and, above LITE_MAX Gaussians, decimated (phones crash on multi-million-splat scenes).
+The phone file keeps SH bands up to LITE_SH and, above LITE_MAX Gaussians, is decimated (phones crash on
+multi-million-splat scenes). Both files get their SH back at SH_BITS (see plypipe.spz): splat-transform rounds it to
+4-5 bits, which cost Dr Johnson 1 dB on desktop; dropping SH entirely cost the phone file another 2.6 dB.
 
 If a PLY from elsewhere (trained on the unaligned model) is given via --ply, pass --apply-align
 and the stage applies scene.json's transform with splat-transform's translate/rotate/scale.
@@ -25,10 +27,14 @@ from pathlib import Path
 import numpy as np
 
 from plypipe import clean as clean_mod
+from plypipe import spz as spz_mod
 from plypipe.util import Ctx, need, read_scene, run, splat_transform_cmd, update_scene
 
 SPLAT_TRANSFORM = "@playcanvas/splat-transform@3.10.1"
 LITE_MAX = 800_000
+LITE_SH = 2
+# 6 bits keeps all but ~0.07 dB of the full byte on Dr Johnson, at 29 MB against 38 MB (22 MB as splat-transform writes it)
+SH_BITS = 6
 # splat-transform compares activated values: opacity 0..1, scales in metres
 CLEAN = ["-V", "opacity,gt,0.03", "-V", "scale_0,lt,1", "-V", "scale_1,lt,1", "-V", "scale_2,lt,1"]
 
@@ -245,18 +251,50 @@ def run_stage(ctx: Ctx) -> dict:
                      f"holes {viewer['holes']:.1%} over {viewer['views']} held-out views")
     src = [*st, "-w", "--spz-version", "3", str(cleaned)]
     run(src + [str(full)], ctx, "export")
+    sh = {"full": _restore_sh(ctx, full, cleaned)}
     n = ply_count(cleaned)
     if n > LITE_MAX:  # decimation must end in a .ply: decimate, then convert
         lite_ply = ctx.out / "scene_lite.ply"
-        run([*st, "-w", str(cleaned), "-H", "0", "-d", str(LITE_MAX), str(lite_ply)], ctx, "export")
+        run([*st, "-w", str(cleaned), "-H", str(LITE_SH), "-d", str(LITE_MAX), str(lite_ply)], ctx, "export")
         run([*st, "-w", "--spz-version", "3", str(lite_ply), str(lite)], ctx, "export")
+        sh["lite"] = _restore_sh(ctx, lite, lite_ply)
         lite_ply.unlink(missing_ok=True)
     else:
-        run(src + ["-H", "0", str(lite)], ctx, "export")
+        run(src + ["-H", str(LITE_SH), str(lite)], ctx, "export")
+        sh["lite"] = _restore_sh(ctx, lite, cleaned)
+    shipped = _score_shipped(ctx, st, {"full": full, "lite": lite}, holdout, aa) if viewer else None
     update_scene(ctx, {"splat": {"file": "scene.spz", "lite": "scene_lite.spz", "format": "spz"}})
     return {"spz": full.name, "spzMB": round(full.stat().st_size / 2**20, 2), "lite": lite.name, "liteMB": round(lite.stat().st_size / 2**20, 2),
             "cropBox": box, "cropDropped": drop_crop, "gaussiansIn": total, "gaussiansOut": n, "floaterFilter": floaters, "liteGaussians": min(n, LITE_MAX),
             "keptFraction": round(n / total, 3) if total else None,
             "exportFilters": {"opacity": chosen["opacity"], "scaleCap": chosen["scale"], "why": chosen["why"]},
             "floaterClean": clean_stats, "clippedFraction": clipped, **({"viewerEval": viewer} if viewer else {}),
+            "shRestore": sh, **({"shippedEval": shipped} if shipped else {}),
             **({"cleanupChoice": choice} if choice else {})}
+
+
+def _restore_sh(ctx: Ctx, spz: Path, ply: Path) -> dict:
+    try:
+        return spz_mod.restore_sh(spz, ply, bits=SH_BITS)
+    except Exception as e:  # the file splat-transform wrote is still a valid twin
+        ctx.log.emit("export", "warn", f"SH restore skipped for {spz.name}: {str(e)[-160:]}")
+        return {"restored": False, "why": str(e)[-160:]}
+
+
+def _score_shipped(ctx: Ctx, st: list[str], files: dict[str, Path], holdout: int, aa: bool) -> dict | None:
+    """viewer_eval of the SPZ files themselves (decoded back to PLY): what compression costs, measured."""
+    from plypipe import viewer_eval
+    out = {}
+    for name, spz in files.items():
+        dec = ctx.out / f"_{name}_decoded.ply"
+        try:
+            run([*st, "-w", str(spz), str(dec)], ctx, "export")
+            out[name] = viewer_eval.evaluate(dec, ctx.data_dir, holdout, aa)
+        except Exception as e:
+            ctx.log.emit("export", "warn", f"shipped-file evaluation skipped for {spz.name}: {str(e)[-160:]}")
+        finally:
+            dec.unlink(missing_ok=True)
+    if out.get("full"):
+        ctx.log.emit("export", "progress", f"as shipped: PSNR {out['full']['psnr']:.2f} (scene.spz)"
+                     + (f", {out['lite']['psnr']:.2f} (phone file)" if out.get("lite") else ""))
+    return out or None

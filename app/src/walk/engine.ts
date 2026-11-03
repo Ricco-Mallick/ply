@@ -23,7 +23,7 @@ export class WalkEngine {
   /** Someone else drives the camera (a guided walk, an orbit view): skip the walk controller. */
   manual = false;
   /** adaptive resolution: a 1.4M-splat twin on a laptop GPU drops frames at retina density */
-  dprCap = 1.5; private fpsAcc = 0; private fpsN = 0; private lastDrop = 0;
+  dprCap = 1.5; private mobile = false; private fpsAcc = 0; private fpsN = 0; private lastDrop = 0;
 
   constructor(public canvas: HTMLCanvasElement) {
     this.renderer = new THREE.WebGLRenderer({ canvas, antialias: false, powerPreference: 'high-performance' });
@@ -35,7 +35,7 @@ export class WalkEngine {
     // budget that re-selects splats as the camera settles reads as "blurry, then it sharpens when you stare" — which
     // makes the whole model feel cheap at a glance. The budget only comes down if the frame rate actually suffers
     // (see the fps block below), so a fast machine never trades detail for a rate it already has.
-    const mobile = matchMedia('(pointer: coarse), (max-width: 720px)').matches;
+    const mobile = this.mobile = matchMedia('(pointer: coarse), (max-width: 720px)').matches;
     this.spark = new SparkRenderer({
       renderer: this.renderer,
       lodSplatCount: mobile ? 1_600_000 : 2_500_000,
@@ -62,7 +62,9 @@ export class WalkEngine {
     const url = lodUrl ?? new URL(m.splat, base).href;
     this.splat = lodUrl
       ? new SplatMesh({ url, paged: true, onProgress: (e: ProgressEvent) => { if (e.lengthComputable) { this.state.progress = e.loaded / e.total; this.emit(); } } })
-      : new SplatMesh({ url, lod: true, onProgress: (e: ProgressEvent) => { if (e.lengthComputable) { this.state.progress = e.loaded / e.total; this.emit(); } } });
+      // desktop keeps float32 centres and half-float colour/scale/SH (Spark's 16-byte packing costs ~0.3 dB of the
+      // twin's held-out score); phones keep the packed layout, which halves GPU memory
+      : new SplatMesh({ url, lod: true, extSplats: !this.mobile, onProgress: (e: ProgressEvent) => { if (e.lengthComputable) { this.state.progress = e.loaded / e.total; this.emit(); } } });
     if (m.splatQuaternion) this.splat.quaternion.set(...m.splatQuaternion);
     if (m.splatPosition) this.splat.position.set(...m.splatPosition);
     this.scene.add(this.splat);

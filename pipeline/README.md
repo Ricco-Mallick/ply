@@ -27,7 +27,7 @@ python -m plypipe run captures/lab-2/ --out work/lab-2 --preset standard --heigh
 | `align` | numpy | Gravity from the cameras' up vectors → floor = lowest plane covering ≥ 50 % of the best horizontal area (beats textured table tops) → walls on X/Z (Manhattan histogram sweep) → metric scale from `--height-cam` (1.45 m). Writes gsplat's `data/` already in the scene frame. |
 | `occupancy` | numpy, OpenCV | 10 cm grid: blocked = points 0.2–1.8 m above the floor, free = floor points ∪ the walked path, closed over 30 cm gaps. The walked line is never blocked. |
 | `train` | torch 2.11 cu128, gsplat @ `512d366` | gsplat `simple_trainer`, MCMC strategy, no appearance model by default (`--ppisp` / `--bilateral-grid` opt in; both made the exported twin render ×1.2 too bright), trained **in the scene frame** (`normalize_world_space=False`), so the PLY needs no transform. Every 30th view is held out and the twin is scored on it (PSNR/SSIM/LPIPS, `report.train.eval`; `--holdout 0` disables). |
-| `export` | Node ≥ 20 | splat-transform 3.10.1: NaN filter, opacity filter, crop to the room box (+1 m), floater pass (splats under 12 cm with no neighbours), `scene.spz` (full SH) and `scene_lite.spz` (SH0, for phones). On a GPU each cleanup step is scored as the viewer shows the twin (`plypipe/viewer_eval.py`: held-out photos, no appearance model) and dropped if it costs more than 0.3 dB or opens 1 % more see-through pixels; `report.export.viewerEval` and `cleanupChoice` record it. |
+| `export` | Node ≥ 20 | splat-transform 3.10.1: NaN filter, opacity filter, crop to the room box (+1 m), floater pass (splats under 12 cm with no neighbours), `scene.spz` (full SH) and `scene_lite.spz` (SH2, for phones), with the SH coefficients rewritten at 6 bits (`plypipe/spz.py`; splat-transform rounds them to 4–5). On a GPU each cleanup step is scored as the viewer shows the twin (`plypipe/viewer_eval.py`: held-out photos, no appearance model) and dropped if it costs more than 0.3 dB or opens 1 % more see-through pixels; `report.export.viewerEval` and `cleanupChoice` record it, and `shippedEval` scores the two SPZ files themselves. |
 
 Presets (`--preset`) scale the plan (`plypipe/plan.py`): `quick` ≥ 7k steps, 0.5× the gaussian budget, SH2 · `standard` ≥ 30k steps, 1× budget, SH3 · `high` ≥ 40k steps, 2× budget. Steps grow with views past the floor (50 per view); the budget follows surface area and is capped by the views' pixels (2400 gaussians per view-megapixel × the preset). Measured on Dr Johnson: see `docs/BENCHMARK.md`.
 
@@ -42,7 +42,7 @@ All coordinates are in the **scene frame**: right-handed, **+Y up, floor plane a
 | File | Contents |
 |---|---|
 | `scene.spz` | Gaussian splats, full SH. Positions stored as-is (splat-transform writes SPZ with `CoordinateSystem.UNSPECIFIED`, i.e. no axis conversion). |
-| `scene_lite.spz` | Same splats, SH degree 0 (smaller; use on phones). |
+| `scene_lite.spz` | Same splats up to SH degree 2, decimated to 800k above that (smaller; use on phones). |
 | `scene.json` | Scene metadata, below. |
 | `occupancy.png` | 8-bit grey grid: **255 free, 0 blocked, 127 unknown**. Pixel (row r, col c) = cell r along +Z, c along +X; the top-left pixel is the cell at `origin`. |
 | `occupancy.json` | Grid metadata, below. |
