@@ -67,6 +67,8 @@ def test_export_writes_full_and_lite_spz_and_crops(tmp_path):
         assert raw[:2] == b"\x1f\x8b", f"{name} is not gzip (SPZ v4?)"
         assert struct.unpack("<I", gzip.decompress(raw)[4:8])[0] == 3
     assert (tmp_path / "scene_lite.spz").stat().st_size < (tmp_path / "scene.spz").stat().st_size
+    assert rep["shRestore"]["full"]["restored"] and rep["shRestore"]["full"]["shDegree"] == 3
+    assert rep["shRestore"]["lite"]["restored"] and rep["shRestore"]["lite"]["shDegree"] == export.LITE_SH
     # round-trip the SPZ back to PLY: floaters cropped, positions unchanged (no axis flip)
     subprocess.run(["npx", "-y", export.SPLAT_TRANSFORM, "-w", str(tmp_path / "scene.spz"), str(tmp_path / "back.ply")],
                    check=True, capture_output=True)
