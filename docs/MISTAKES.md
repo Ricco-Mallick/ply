@@ -14,25 +14,28 @@ Read the checklist before any paid GPU run. Add an entry when something costs cr
 - [ ] **GPU fallback.** `gpu=["L4", "L40S"]`, and read `modal app logs` within two minutes: a queue for capacity
       looks exactly like a slow start.
 - [ ] **Estimate from evidence.** Scale the closest earlier run's per-stage times by frame count (SfM grows faster
-      than linearly), state that basis, and report back if spend passes 1.5x the estimate.
+      than linearly), price the GPU *and* the CPU/memory asked for, state that basis, and report back if spend
+      passes 1.5x the estimate.
+- [ ] **Report spend from billing, not arithmetic.** `modal billing report --for today --json` per app.
 - [ ] **Inputs present.** `pipeline/wheels` downloaded from the last green `wheels` run; data on the Volume checked
       with `modal volume ls`, symlinked folders included.
 
 ## Log
 
-### 2026-11-04: chapel test cancelled after 95 minutes (~$3.30, nothing saved)
+### 2026-11-04: chapel test cancelled after 95 minutes ($4.23, nothing saved)
 
 Launched the end-to-end chapel run with plain `modal run`. When the local client disconnected at 06:05, Modal
 cancelled the function in the last step of the camera solve (1,023 of 1,231 frames placed). The harness only saved
 logs, not finished stages, so the relaunch had to start again from frame extraction.
 **Rule:** detached and resumable (checklist), for anything longer than a few minutes.
 
-### 2026-11-04: chapel test estimated at $1-2, heading for ~$6
+### 2026-11-04: chapel test estimated at $1-2, cost $9.46
 
-The estimate assumed the old run's timings, but the new planner keeps 4.5x the frames (1,236 vs 275). Matching
-took 10 min, the global solve 23 min (then rejected), the incremental solve 40+ min, all on an L40S at about twice
-the L4 price because no L4 was free.
-**Rule:** estimate from evidence (checklist).
+The estimate assumed the old run's timings, but the new planner keeps 4.5x the frames (1,236 vs 275). The relaunch
+alone cost $5.22 for 119 min: the camera solve took 103 min, CPU-bound, while an L40S (no L4 was free) plus 8 cores
+and 32 GB billed at about $2.60/h. In chat the first attempt was put at $3.30 and the relaunch at $2.50; billing
+said $4.23 and $5.22.
+**Rule:** estimate from evidence, report spend from billing (checklist). Don't run a CPU-bound stage on a GPU box.
 
 ### 2026-11-04: 11 minutes queued for an L4
 
