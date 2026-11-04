@@ -85,6 +85,8 @@ Lookup for a position `(x, z)`: `col = floor((x - origin[0]) / cellSize)`, `row 
 
 ## Run it
 
+Before any paid GPU run (Modal, RunPod), go through the checklist in [docs/MISTAKES.md](../docs/MISTAKES.md).
+
 ### Locally (CPU: frames → occupancy, and the tests)
 ```bash
 cd pipeline
