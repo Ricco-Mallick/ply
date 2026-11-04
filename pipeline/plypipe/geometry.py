@@ -85,6 +85,25 @@ def camera_centers_and_ups(qvecs: np.ndarray, tvecs: np.ndarray) -> tuple[np.nda
     return np.array(centers), np.array(ups), np.array(fwds)
 
 
+def gravity_guess(ups: np.ndarray, fwds: np.ndarray) -> tuple[np.ndarray, str]:
+    """World up from the cameras: the direction every camera's right axis is perpendicular to.
+
+    A walk keeps the camera level (little roll) but pitches it freely, and pitch correlates with where the room is
+    worth looking: on the chapel most upward shots faced the altar, which tilted the mean of the cameras' up vectors
+    4.8 deg and sloped the floor 0.86 m over 16 m. The right axes stay horizontal whatever the pitch, so the
+    least-spread direction of their scatter is gravity. That needs the camera to have turned (right axes spanning
+    the horizontal plane); otherwise, or if the answer disagrees wildly with the mean up (a sideways video), the mean
+    up vector is returned as before."""
+    mean = ups.mean(axis=0)
+    m = mean / (np.linalg.norm(mean) or 1.0)
+    rights = np.cross(-ups, fwds)  # x_cam = y_cam x z_cam, with y_cam = -up
+    w, v = np.linalg.eigh(rights.T @ rights / max(len(rights), 1))
+    g = v[:, 0] * (1.0 if v[:, 0] @ m >= 0 else -1.0)
+    if w[1] < 0.1 or w[0] > 0.05 or np.degrees(np.arccos(np.clip(g @ m, -1, 1))) > 25.0:
+        return m, "mean-up"
+    return g, "camera-level"
+
+
 def transform_pose(q: np.ndarray, t: np.ndarray, T: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
     """Re-express a cam_from_world pose after the world is mapped by p' = s R p + d.
 

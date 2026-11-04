@@ -91,3 +91,39 @@ def test_spans_marked_for_replacing_are_skipped_and_frames_are_indexed(tmp_path)
     assert rep["excluded"] >= 6 and len(idx) == rep["kept"]
     assert all(not (2.0 <= e["t"] <= 5.0) for e in idx) and all(e["clip"] == "clip-01.mp4" for e in idx)
     assert [e["frame"] for e in idx] == [f"{i:06d}.jpg" for i in range(len(idx))]
+
+
+def test_gpu_decoding_only_where_nvdec_decodes_the_clip(tmp_path, monkeypatch):
+    import subprocess
+    import types
+    from plypipe.stages import frames as fr
+    clip = tmp_path / "a.mp4"
+    clip.write_bytes(b"")
+    monkeypatch.setattr(fr, "_HWDEC", {})
+    monkeypatch.setattr(fr.shutil, "which", lambda name: None)
+    assert fr.decode_args(clip) == []                       # no NVIDIA driver: software, nothing probed
+    calls = []
+    def fake_run(cmd, **kw):
+        calls.append(cmd[0])
+        if cmd[0] == "ffprobe":
+            return types.SimpleNamespace(stdout="hevc\n", returncode=0)
+        return types.SimpleNamespace(returncode=0 if probe_ok else 1)
+    monkeypatch.setattr(fr.shutil, "which", lambda name: "/usr/bin/" + name)
+    monkeypatch.setattr(subprocess, "run", fake_run)
+    probe_ok = True
+    assert fr.decode_args(clip) == ["-hwaccel", "cuda"] and fr.decode_args(clip) == ["-hwaccel", "cuda"]
+    assert calls.count("ffmpeg") == 1                       # probed once per codec
+    monkeypatch.setattr(fr, "_HWDEC", {})
+    probe_ok = False
+    assert fr.decode_args(clip) == []                       # NVDEC refused the codec: software
+    monkeypatch.setenv("PLY_NO_HWDEC", "1")
+    assert fr.decode_args(clip) == []
+
+
+def test_a_clip_soft_throughout_is_reported():
+    """The chapel's 0053: 27% of the sharpest clip's sharpness, nearly every frame kept against its own median."""
+    from plypipe.stages import frames as fr
+    clips = [{"file": "0051.MP4", "sharpnessMedian": 1957.0}, {"file": "0053.MP4", "sharpnessMedian": 526.0},
+             {"file": "0064.MP4", "sharpnessMedian": 1450.0}]
+    assert fr.blurry_clips(clips) == [{"file": "0053.MP4", "ratio": 0.27}]
+    assert fr.blurry_clips([{"file": "a", "sharpnessMedian": 0.0}]) == []

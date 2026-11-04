@@ -17,10 +17,28 @@ Read the checklist before any paid GPU run. Add an entry when something costs cr
       than linearly), price the GPU *and* the CPU/memory asked for, state that basis, and report back if spend
       passes 1.5x the estimate.
 - [ ] **Report spend from billing, not arithmetic.** `modal billing report --for today --json` per app.
+- [ ] **Kill by PID, never by pattern.** Read `/proc/<pid>/cmdline` and match the target binary; a pattern in your
+      own command line matches your own shell.
 - [ ] **Inputs present.** `pipeline/wheels` downloaded from the last green `wheels` run; data on the Volume checked
       with `modal volume ls`, symlinked folders included.
 
 ## Log
+
+### 2026-11-04: a failed copy, then a launch that ran anyway ($0.12)
+
+Seeding the High chapel run from the CPU-solved job, `modal volume cp` failed ("No such file or directory": the
+destination's parent did not exist) and the launch ran anyway, because the two were chained with `;`. The run found
+no saved stages and started extracting frames, heading for a full camera solve on the GPU box. Stopped after 4 min.
+**Rule:** a launch that depends on a copy or a check is chained with `&&` or guarded by an `if`, and the check reads
+what the run will read (here the job's `.done/` list), not the copy's exit text.
+
+### 2026-11-04: `pkill -f`-style match killed its own shell, twice more
+
+Stopping the CPU solves with `for p in $(pgrep -f 'sfm_cpu.py'); do kill $p; done`, and later the dev server with
+`pkill -f "vite --port 5199"`, both matched the shell running that very line: the mistake logged on 2026-11-03,
+made two more times in one evening. The Modal apps were stopped separately, so no credit was lost.
+**Rule (unchanged, now in the checklist):** match on the full command line from `/proc/<pid>/cmdline` and skip
+anything that is not the target binary.
 
 ### 2026-11-04: chapel test cancelled after 95 minutes ($4.23, nothing saved)
 

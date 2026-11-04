@@ -192,27 +192,76 @@ def _best(models: dict):
     return max(models.items(), key=lambda kv: kv[1].num_reg_images())[1] if models else None
 
 
-def trajectory_jumps(rec, ratio: float = 8.0) -> int:
+def clip_index(out: Path) -> dict[str, str] | None:
+    """frame name -> source clip, from the frames stage (None for photo sets and older jobs)."""
+    try:
+        return {d["frame"]: d["clip"] for d in json.loads((out / "frames_index.json").read_text())}
+    except (OSError, ValueError, KeyError, TypeError):
+        return None
+
+
+def _path_steps(rec, clip_of: dict[str, str] | None):
+    """Consecutive posed views (name order) and the step between each pair. A step that crosses from one clip to the
+    next is not a step of one walk, so it is left out: the next clip can start anywhere in the room."""
+    import numpy as np
+    posed = [im for im in sorted(rec.images.values(), key=lambda im: im.name) if im.has_pose]
+    centres = [np.asarray(im.projection_center(), dtype=float) for im in posed]
+    clip = (lambda im: clip_of.get(im.name)) if clip_of else (lambda im: None)
+    steps = [(i, float(np.linalg.norm(centres[i + 1] - centres[i]))) for i in range(len(posed) - 1)
+             if clip(posed[i]) == clip(posed[i + 1])]
+    return posed, centres, steps, clip
+
+
+def trajectory_jumps(rec, ratio: float = 8.0, clip_of: dict[str, str] | None = None) -> int:
     """Video frames are sequential, so consecutive camera centres must move smoothly. A step far
     larger than the median step means the model was stitched from inconsistent pieces, even
     when the reprojection error looks excellent."""
     import numpy as np
+    _, _, steps, _ = _path_steps(rec, clip_of)
+    if len(steps) < 4:
+        return 0
+    d = np.array([v for _, v in steps])
+    med = float(np.median(d)) or 1e-12
+    return int((d > ratio * med).sum())
 
-    ims = sorted(rec.images.values(), key=lambda im: im.name)
-    if len(ims) < 5:
-        return 0
-    centers = []
-    for im in ims:
-        if not im.has_pose:
+
+def drop_spikes(rec, ratio: float = 8.0, clip_of: dict[str, str] | None = None) -> list[str]:
+    """Deregister single views the solve placed far off the walk, out and back between two neighbours that sit
+    together; returns their names.
+
+    On the chapel, three frames looking down rows of identical pews landed 22-66 median steps from both neighbours
+    while those neighbours were one step apart: a pose matched to the wrong pew, which training then bakes in as a
+    ghost. Counted as path jumps they also sent a good solve to the slow fallback."""
+    import numpy as np
+    posed, centres, steps, clip = _path_steps(rec, clip_of)
+    if len(steps) < 4:
+        return []
+    med = float(np.median([v for _, v in steps])) or 1e-12
+    dropped = []
+    for i in range(1, len(posed) - 1):
+        if not (clip(posed[i - 1]) == clip(posed[i]) == clip(posed[i + 1])):
             continue
-        pose = im.cam_from_world() if callable(im.cam_from_world) else im.cam_from_world
-        R = pose.rotation.matrix()
-        centers.append(-R.T @ pose.translation)
-    if len(centers) < 5:
-        return 0
-    steps = np.linalg.norm(np.diff(np.array(centers), axis=0), axis=1)
-    med = float(np.median(steps)) or 1e-12
-    return int((steps > ratio * med).sum())
+        a = float(np.linalg.norm(centres[i] - centres[i - 1]))
+        b = float(np.linalg.norm(centres[i + 1] - centres[i]))
+        if a > ratio * med and b > ratio * med and np.linalg.norm(centres[i + 1] - centres[i - 1]) < 0.25 * min(a, b):
+            dropped.append(posed[i].name)
+    for im in posed:
+        if im.name in dropped:
+            rec.deregister_frame(im.frame_id)
+    return dropped
+
+
+def incremental_options(pycolmap, n_images: int, max_runtime_s: int | None = None):
+    """Incremental mapper settings. On long videos global bundle adjustment dominates (the chapel's 1,236 frames:
+    90 min on 8 cores), so it runs less often and skips 3D points that add no coverage."""
+    opts = pycolmap.IncrementalPipelineOptions()
+    if max_runtime_s:
+        opts.max_runtime_seconds = int(max_runtime_s)
+    if n_images > 400:
+        opts.ba_global_frames_ratio = 1.25
+        opts.ba_global_points_ratio = 1.25
+        opts.mapper.ba_global_ignore_redundant_points3D = True
+    return opts
 
 
 def run_stage(ctx: Ctx) -> dict:
@@ -223,16 +272,43 @@ def run_stage(ctx: Ctx) -> dict:
         raise RuntimeError(f"only {n_images} frames: need at least 10 (check the frames stage)")
     device = pycolmap.Device(ctx.opt("device", "auto"))
     cdir = ctx.colmap_dir
+    db = cdir / "database.db"
+    source = None
+    try:
+        source = json.loads((ctx.out / ".done" / "frames.json").read_text()).get("source")
+    except (OSError, ValueError):
+        pass
+    requested = ctx.opt("features", "aliked")
+    cam_params = focal_prior_params(images, float(ctx.opt("focal_35mm"))) if ctx.opt("focal_35mm") else None
+    if ctx.opt("reuse_matches") and db.exists():
+        # re-solve from the matches already in the database (a crashed or re-tuned mapping): matching the chapel's
+        # 1,236 frames took 10 min of GPU time, mapping is the part being redone
+        for sub in ("sparse_all", "sparse_inc", "sparse"):
+            shutil.rmtree(cdir / sub, ignore_errors=True)
+        prev = {}
+        for f in (cdir / "matching.json", ctx.out / ".done" / "sfm.json"):
+            try:
+                prev = json.loads(f.read_text())
+                break
+            except (OSError, ValueError):
+                continue
+        features, matcher, loops = prev.get("features", "reused"), prev.get("matcher", "reused"), prev.get("loopDetection")
+        ctx.log.emit("sfm", "progress", f"reusing the {features} matches in {db.name}", images=n_images)
+    else:
+        features, matcher, loops = _extract_and_match(ctx, pycolmap, cdir, db, images, n_images, device, requested, source,
+                                                      cam_params)
+    return _map(ctx, pycolmap, cdir, db, images, n_images, source, features, requested, matcher, loops, cam_params)
+
+
+def _extract_and_match(ctx: Ctx, pycolmap, cdir: Path, db: Path, images: Path, n_images: int, device, requested: str,
+                       source: str | None, cam_params: str | None):
     if cdir.exists():
         shutil.rmtree(cdir)
     cdir.mkdir(parents=True)
-    db = cdir / "database.db"
-
-    features = requested = ctx.opt("features", "aliked")
+    features = requested
     if features == "aliked" and not aliked_available(images, ctx.opt("device", "auto")):
         ctx.log.emit("sfm", "warn", "this pycolmap has no ONNX runtime, so ALIKED would abort the process: using SIFT")
         features = "sift"
-    cam_params = focal_prior_params(images, float(ctx.opt("focal_35mm"))) if ctx.opt("focal_35mm") else None
     ctx.log.emit("sfm", "progress", f"extracting {features} features", images=n_images, cameraPrior=cam_params)
     try:
         _extract(pycolmap, db, images, features, device, cam_params, ctx.opt("camera_model", "SIMPLE_RADIAL"))
@@ -248,11 +324,6 @@ def run_stage(ctx: Ctx) -> dict:
     # several clips: frames from different clips sit next to each other in the numbering, so sequential pairing
     # would try to join unrelated views and miss the real overlaps; pair exhaustively while that stays affordable
     exhaustive_max = int(ctx.opt("exhaustive_max", 250))
-    source = None
-    try:
-        source = json.loads((ctx.out / ".done" / "frames.json").read_text()).get("source")
-    except (OSError, ValueError):
-        pass
     if source == "videos":
         exhaustive_max = max(exhaustive_max, 700)
     elif source == "images" and exhaustive_max == 250:  # 250 = the CLI default: an explicit value is respected
@@ -287,23 +358,37 @@ def run_stage(ctx: Ctx) -> dict:
         tree = tree_for(features)
         matcher = _match(pycolmap, db, features, n_images, want, exhaustive_max, device, tree, unordered)
     loops = matcher == "sequential" and tree is not None
+    (cdir / "matching.json").write_text(json.dumps({"features": features, "matcher": matcher, "loopDetection": loops}))
+    return features, matcher, loops
 
+
+def _map(ctx: Ctx, pycolmap, cdir: Path, db: Path, images: Path, n_images: int, source: str | None, features: str,
+         requested: str, matcher: str, loops, cam_params: str | None):
     mapper = ctx.opt("mapper", "global")
     ctx.log.emit("sfm", "progress", f"{mapper} mapping")
     raw_out = cdir / "sparse_all"
     if mapper == "incremental":
-        models = pycolmap.incremental_mapping(db, images, raw_out)
+        models = pycolmap.incremental_mapping(db, images, raw_out, incremental_options(pycolmap, n_images))
     else:
         models = pycolmap.global_mapping(db, images, raw_out, pycolmap.GlobalPipelineOptions())
     if not models:
         raise RuntimeError(f"{mapper} mapping produced no model: capture lacks overlap or texture (see docs/SOP.md)")
     best = _best(models)
-    dropped = drop_unanchored(best)
+    ordered = source in ORDERED_SOURCES
+    clips = clip_index(ctx.out) if ordered else None
+
+    def clean(rec) -> tuple[list[str], list[str], int]:
+        unanchored = drop_unanchored(rec)
+        spikes = drop_spikes(rec, clip_of=clips) if ordered else []
+        return unanchored, spikes, (trajectory_jumps(rec, clip_of=clips) if ordered else 0)
+
+    dropped, spikes, jumps = clean(best)
     if dropped:
         ctx.log.emit("sfm", "warn", f"{len(dropped)} views had no anchor in the solve (too few points, or far from "
                      f"every other camera) and were dropped: {', '.join(dropped[:8])}{' …' if len(dropped) > 8 else ''}")
-    ordered = source in ORDERED_SOURCES
-    jumps = trajectory_jumps(best) if ordered else 0
+    if spikes:
+        ctx.log.emit("sfm", "warn", f"{len(spikes)} views sat far off the camera path between two neighbours "
+                     f"(mismatched poses) and were dropped: {', '.join(spikes[:8])}{' …' if len(spikes) > 8 else ''}")
     # the global mapper can fold a video walk into a model with an excellent reprojection error (glomap#145);
     # a camera path that jumps, or a solve that drops views, is re-solved incrementally and the better model kept
     fallback = None
@@ -311,18 +396,16 @@ def run_stage(ctx: Ctx) -> dict:
     if mapper == "global" and not ctx.opt("no_mapper_fallback") and (jumps or reg_ratio < 0.9):
         why = f"{jumps} path jumps" if jumps else f"{reg_ratio:.0%} registered"
         ctx.log.emit("sfm", "warn", f"global solve looks wrong ({why}): solving again with the incremental mapper")
-        opts = pycolmap.IncrementalPipelineOptions()
-        opts.max_runtime_seconds = int(ctx.opt("incremental_max_s", 5400))
+        opts = incremental_options(pycolmap, n_images, int(ctx.opt("incremental_max_s", 5400)))
         inc = pycolmap.incremental_mapping(db, images, cdir / "sparse_inc", opts)
         alt = _best(inc)
         fallback = {"reason": why, "global": {"registered": best.num_reg_images(), "jumps": jumps}, "used": "global"}
         if alt is not None:
-            alt_dropped = drop_unanchored(alt)
-            alt_jumps = trajectory_jumps(alt) if ordered else 0
+            alt_dropped, alt_spikes, alt_jumps = clean(alt)
             fallback["incremental"] = {"registered": alt.num_reg_images(), "jumps": alt_jumps}
             score = lambda m, j: (j == 0 and m.num_reg_images() >= 0.6 * n_images, m.num_reg_images())
             if score(alt, alt_jumps) > score(best, jumps):
-                best, jumps, models, dropped, fallback["used"] = alt, alt_jumps, inc, alt_dropped, "incremental"
+                best, jumps, models, dropped, spikes, fallback["used"] = alt, alt_jumps, inc, alt_dropped, alt_spikes, "incremental"
         ctx.log.emit("sfm", "progress", f"kept the {fallback['used']} model")
     if jumps:
         ctx.log.emit("sfm", "warn", f"camera path has {jumps} discontinuities between consecutive frames: the model "
@@ -343,7 +426,7 @@ def run_stage(ctx: Ctx) -> dict:
 
     reg = rec.num_reg_images()
     report = {"features": features, "featuresRequested": requested, "matcher": matcher, "loopDetection": loops, "mapper": mapper, "mapperFallback": fallback,
-              "trajectoryJumps": jumps, "droppedViews": len(dropped), "images": n_images, "registered": reg,
+              "trajectoryJumps": jumps, "droppedViews": len(dropped) + len(spikes), "droppedSpikes": spikes, "images": n_images, "registered": reg,
               "registeredRatio": reg / n_images, "models": len(models), "points": rec.num_points3D(),
               "meanReprojErrorPx": float(rec.compute_mean_reprojection_error()),
               "focalPx": float(next(iter(rec.cameras.values())).params[0]), "focalPrior": cam_params}

@@ -27,6 +27,16 @@ const STATUS: Record<string, SceneStatus> = {
     text: 'The LiDAR path: a scanner cloud and a measured shell. Working, but not a shipping feature yet.',
     tone: 'dev',
   },
+  'chapel-high-2': {
+    label: 'Latest pipeline',
+    text: 'The chapel through the current pipeline at the high preset: 1,236 frames, mismatched poses dropped, the floor levelled from the cameras.',
+    tone: 'new',
+  },
+  'chapel-test-quick': {
+    label: 'Test run · quick',
+    text: 'An end-to-end test of the current pipeline at its quickest setting (7k training steps), from before the floor and pose fixes. Not a finished twin.',
+    tone: 'dev',
+  },
   'c09a4c82-ca08-47b3-9850-e8e30a54d064': {
     label: 'Latest pipeline',
     text: 'Current solver, trainer and export: this is what Ply produces today.',

@@ -77,6 +77,8 @@ def build_parser() -> argparse.ArgumentParser:
     g.add_argument("--features", choices=["aliked", "sift"], default="aliked")
     g.add_argument("--matcher", choices=["auto", "sequential", "exhaustive", "vocabtree"], default="auto")
     g.add_argument("--no-loop-detection", action="store_true", help="sequential matching without retrieval loop closure")
+    g.add_argument("--reuse-matches", action="store_true",
+                   help="re-solve from the features and matches already in colmap/database.db (skips extraction and matching)")
     g.add_argument("--no-mapper-fallback", action="store_true",
                    help="keep the global solve even when its camera path jumps or it drops views")
     g.add_argument("--camera-model", choices=["SIMPLE_RADIAL", "RADIAL", "OPENCV", "OPENCV_FISHEYE"], default="SIMPLE_RADIAL",

@@ -38,9 +38,9 @@ def run_stage(ctx: Ctx) -> dict:
     centers, ups, fwds = model.cameras()
     good = (model.track_len >= 3) & (model.error < float(ctx.opt("max_reproj_px", 2.0)))
     pts = model.xyz[good] if good.sum() >= 200 else model.xyz
-    up_guess = ups.mean(axis=0)
-    if np.linalg.norm(up_guess) < 0.3:
+    if np.linalg.norm(ups.mean(axis=0)) < 0.3:
         ctx.log.emit("align", "warn", "camera up vectors disagree (rotated video?); floor guess may be poor")
+    up_guess, gravity_from = geometry.gravity_guess(ups, fwds)
     height_cam = ctx.opt("height_cam", 1.45)
     ar = _ar_transform(ctx, model, centers, pts)
     if ar:
@@ -61,6 +61,7 @@ def run_stage(ctx: Ctx) -> dict:
                                           f"levelled from the cameras' gravity instead")
         T, info = geometry.similarity_to_scene(plane, pts, centers, cam_height_m=float(height_cam) if height_cam else None)
         info["floorPlane"] = "gravity" if float(info.get("floorTiltDeg", 0)) == 0.0 else "ransac"
+        info["gravityFrom"] = gravity_from
 
     aligned = colmap_txt.transformed(model, T)
     try:  # measured shell: wall segments through the mid-height band, drawn as an editable layer in the viewer
@@ -123,7 +124,8 @@ def run_stage(ctx: Ctx) -> dict:
             "floorTiltDeg": info["floorTiltDeg"], "yawDeg": info["yawDeg"], "scale": info["scale"],
             "scaleSource": info["scaleSource"], "cameraHeightModelUnits": info["cameraHeightModel"],
             "floorResidualMedianM": float(np.median(floor_res)) if floor_res.size else None,
-            "bounds": scene["bounds"], **({"ar": info["ar"]} if "ar" in info else {})}
+            "bounds": scene["bounds"], **({"gravityFrom": info["gravityFrom"]} if "gravityFrom" in info else {}),
+            **({"ar": info["ar"]} if "ar" in info else {})}
 
 
 def _ar_transform(ctx: Ctx, model, centers: np.ndarray, pts: np.ndarray):

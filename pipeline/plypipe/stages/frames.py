@@ -10,6 +10,7 @@ does not open a gap of more than `max_gap` windows (gaps break SfM more than blu
 from __future__ import annotations
 
 import json
+import os
 import shutil
 import subprocess
 import tarfile
@@ -164,8 +165,27 @@ def run_stage(ctx: Ctx, src: Path) -> dict:
         kept += st["kept"]
     if len(clips) == 1:
         return {"source": "video", **{k: v for k, v in clips[0].items() if k not in ("file", "firstFrame")}}
+    soft = blurry_clips(clips)
+    if soft:
+        ctx.log.emit("frames", "warn", "much blurrier than the sharpest clip (kept, since dropping them would open gaps in "
+                     "the solve; reshoot slower if those areas look soft): "
+                     + ", ".join(f"{c['file']} ({c['ratio']:.0%})" for c in soft))
     return {"source": "videos", "clips": clips, "kept": kept, "dropped": sum(c["dropped"] for c in clips),
-            "sharpnessMedian": float(np.median([c["sharpnessMedian"] for c in clips]))}
+            "sharpnessMedian": float(np.median([c["sharpnessMedian"] for c in clips])), "blurryClips": soft}
+
+
+def blurry_clips(clips: list[dict], ratio: float = 0.3) -> list[dict]:
+    """Clips whose median sharpness is under `ratio` of the sharpest clip's. Darkness lowers the measure too (the
+    chapel's dim 0064 sat at 37% while looking sharp), so the bar is low enough to name only clips soft throughout.
+
+    Blurry frames are only dropped against their own clip's median, so a clip that is soft throughout keeps nearly
+    every frame: the chapel's 0053 sat at 27% of the sharpest clip and lost 3 of 240. Frames that are the only view of
+    a place still beat a gap, so this reports the clip instead of cutting it."""
+    best = max((c.get("sharpnessMedian") or 0.0 for c in clips), default=0.0)
+    if best <= 0:
+        return []
+    return [{"file": c["file"], "ratio": round(c["sharpnessMedian"] / best, 2)} for c in clips
+            if c.get("sharpnessMedian") is not None and c["sharpnessMedian"] < ratio * best]
 
 
 def _exclusions(ctx: Ctx) -> dict[str, list[tuple[float, float]]]:
@@ -184,6 +204,30 @@ def _note_frames(ctx: Ctx, entries: list[dict]) -> None:
     f.write_text(json.dumps(cur + entries))
 
 
+_HWDEC: dict[str, list[str]] = {}
+
+
+def decode_args(src: Path) -> list[str]:
+    """`-hwaccel cuda` where NVDEC can decode this kind of clip, else nothing (software decoding).
+
+    The frames stage decodes every source frame to keep the sharpest of each window. On the chapel's 4K 10-bit HEVC
+    that was 9 of the run's 119 min on the CPU while the GPU was billed; NVDEC did a 30 s clip in 4.8 s instead of
+    25.7 s, with pixel-identical frames. Probed once per codec on one frame, so a box without NVDEC (Kaggle CPU, a
+    laptop) or an unsupported codec just keeps the old path. PLY_NO_HWDEC=1 turns it off."""
+    if os.environ.get("PLY_NO_HWDEC") == "1" or not shutil.which("nvidia-smi"):
+        return []
+    codec = subprocess.run(["ffprobe", "-v", "error", "-select_streams", "v:0", "-show_entries", "stream=codec_name",
+                            "-of", "csv=p=0", str(src)], capture_output=True, text=True).stdout.strip()
+    if codec not in _HWDEC:
+        try:
+            ok = subprocess.run(["ffmpeg", "-hide_banner", "-loglevel", "error", "-hwaccel", "cuda", "-i", str(src),
+                                 "-frames:v", "1", "-f", "null", "-"], capture_output=True, timeout=120).returncode == 0
+        except (OSError, subprocess.TimeoutExpired):
+            ok = False
+        _HWDEC[codec] = ["-hwaccel", "cuda"] if ok else []
+    return _HWDEC[codec]
+
+
 def _video_frames(ctx: Ctx, src: Path, out: Path, start: int, fps: float, oversample: int, long_side: int,
                   max_frames: float | None) -> dict:
     """Sharpest frame per window of one video, written to out/ numbered from `start`."""
@@ -198,9 +242,20 @@ def _video_frames(ctx: Ctx, src: Path, out: Path, start: int, fps: float, oversa
     if raw.exists():
         shutil.rmtree(raw)
     raw.mkdir(parents=True)
-    run(["ffmpeg", "-hide_banner", "-loglevel", "error", "-y", "-i", str(src),
-         "-vf", f"fps={fps * oversample:.4f},{_scale_filter(long_side)}", "-q:v", "2", str(raw / "%06d.jpg")],
-        ctx, "frames")
+    hw = decode_args(src)
+    extract = lambda pre: run(["ffmpeg", "-hide_banner", "-loglevel", "error", "-y", *pre, "-i", str(src),
+                               "-vf", f"fps={fps * oversample:.4f},{_scale_filter(long_side)}", "-q:v", "2",
+                               str(raw / "%06d.jpg")], ctx, "frames")
+    try:
+        extract(hw)
+    except RuntimeError:
+        if not hw:
+            raise
+        ctx.log.emit("frames", "warn", f"{src.name}: GPU decoding failed part-way; decoding on the CPU instead")
+        shutil.rmtree(raw)
+        raw.mkdir(parents=True)
+        hw = []
+        extract(hw)
     files = sorted(raw.glob("*.jpg"))
     if not files:
         raise RuntimeError("ffmpeg produced no frames (is the input a video?)")
@@ -221,7 +276,7 @@ def _video_frames(ctx: Ctx, src: Path, out: Path, start: int, fps: float, oversa
     shutil.rmtree(raw)
     return {"source": "video", "durationSec": duration, "fps": fps, "oversample": oversample,
             "keptPerSecond": round(len(keep) / duration, 3) if duration else None,
-            "extracted": len(files), "windows": -(-len(files) // oversample), "kept": len(keep),
+            "decoder": "nvdec" if hw else "cpu", "extracted": len(files), "windows": -(-len(files) // oversample), "kept": len(keep),
             "dropped": -(-len(files) // oversample) - len(keep), "excluded": len(excluded),
             "sharpnessMedian": float(np.median([scores[i] for i in keep])) if keep else 0.0}
 
