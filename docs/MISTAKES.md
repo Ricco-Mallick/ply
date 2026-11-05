@@ -24,6 +24,16 @@ Read the checklist before any paid GPU run. Add an entry when something costs cr
 
 ## Log
 
+### 2026-11-05: three hand-off bugs found only by a live job, and `pkill -f` again (~$2.45)
+
+The CPU-solve split's tests used stand-ins for Modal and the pipeline, so a deploy switch that never reached the
+container, a `modal` import that fails in the pipeline subprocess, and a skipped `dense/` folder all passed them.
+Two live chapel attempts found them. During cleanup, `pkill -f` and a `/proc` loop each matched the running shell
+(and its `timeout` wrapper), losing the command.
+**Rule:** an image check runs the same interpreter and subprocess `PYTHONPATH` as the job, and imports every module
+the job imports lazily. To stop a process, anchor the pattern on the binary (`pgrep -f '^\S*python\S* \S*/modal run'`)
+and print the matches before killing them.
+
 ### 2026-11-04: a failed copy, then a launch that ran anyway ($0.12)
 
 Seeding the High chapel run from the CPU-solved job, `modal volume cp` failed ("No such file or directory": the

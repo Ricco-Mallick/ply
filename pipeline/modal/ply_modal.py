@@ -60,6 +60,9 @@ image = (
     .run_commands("python -m uv pip install --system 'kornia>=0.7' && python -m uv pip install --system --no-deps 'lightglue @ git+https://github.com/cvg/LightGlue@5a650c444718caffc2669dc0094cde908f42dd73'",
                   "python -c \"from lightglue import ALIKED, LightGlue; ALIKED(max_num_keypoints=4096); LightGlue(features='aliked')\"",
                   "python -c \"from huggingface_hub import snapshot_download; snapshot_download('facebook/dinov2-small')\"")
+    # the worker runs the pipeline as a subprocess of the image's python, which can't see Modal's injected client:
+    # the CPU-solve hand-off (plypipe.handoff) needs it there to spawn `solve` and commit the Volume
+    .run_commands(f"python -m uv pip install --system modal=={modal.__version__}")
     .env({"PLY_IMAGE_REV": "16"})  # bump to force the code layer to rebuild when Modal reuses a cached image
     .add_local_dir(PIPE / "plypipe", "/root/pipeline/plypipe")
 )
@@ -71,7 +74,7 @@ CPU_SFM = os.environ.get("PLY_CPU_SFM", "0")  # off until a live job has been wa
 CPU_SFM_MIN = os.environ.get("PLY_CPU_SFM_MIN", "400")
 handoff_vol = modal.Volume.from_name("ply-handoff", create_if_missing=True)
 cpu_image = (modal.Image.debian_slim(python_version="3.12")
-             .pip_install("pycolmap==4.2.1", "numpy>=1.26", "opencv-python-headless>=4.9")
+             .pip_install("pycolmap==4.2.1", "numpy>=1.26", "opencv-python-headless>=4.9", f"modal=={modal.__version__}")
              .env({"PLY_IMAGE_REV": "1"})
              .add_local_dir(PIPE / "plypipe", "/root/pipeline/plypipe"))
 HANDOFF_ENV = {"PLY_HANDOFF_DIR": "/handoff", "PLY_HANDOFF_VOLUME": "ply-handoff", "PLY_HANDOFF_APP": "ply"}
@@ -85,7 +88,9 @@ TIMEOUT_S = int(6.0 * 3600)
 
 
 @app.function(gpu=GPU, cpu=8, memory=32768, timeout=TIMEOUT_S, max_containers=1, secrets=[secret, hf],
-              volumes={"/handoff": handoff_vol})  # 8 cores + 32 GB: 2560 px frames and ~800 of them  # L4 + 4 cores + 16 GB = ~$1.12/h
+              volumes={"/handoff": handoff_vol},
+              # the module is re-imported in the container without the deploy shell's variables: bake the switch in
+              env={"PLY_CPU_SFM": CPU_SFM, "PLY_CPU_SFM_MIN": CPU_SFM_MIN})  # 8 cores + 32 GB: 2560 px frames and ~800 of them  # L4 + 4 cores + 16 GB = ~$1.12/h
 def work(worker_name: str = WORKER_NAME):
     """Claim and run jobs until the queue has been empty for 3 minutes. The worker only starts a job it can finish
     before this container's timeout (PLY_DEADLINE); later work waits for the next wake-up (API trigger or cron)."""

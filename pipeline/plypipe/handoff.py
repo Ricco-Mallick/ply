@@ -25,8 +25,9 @@ import threading
 import time
 from pathlib import Path
 
-# what the solver needs, and what the resumed GPU run needs back; bulk the stages re-create is left behind
-SKIP = {"frames_raw", "dense", "train", "evidence"}
+# what the solver needs, and what the resumed GPU run needs back; bulk the stages re-create is left behind.
+# dense/ travels back: the solve writes the undistorted images and the text model `align` reads there
+SKIP = {"frames_raw", "train", "evidence"}
 MARK = "handoff.json"
 
 
