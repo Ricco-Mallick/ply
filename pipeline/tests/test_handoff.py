@@ -27,8 +27,12 @@ for st in ["frames", "sfm", "align", "occupancy", "train", "export"]:
     if st == "sfm":
         if "--reuse-matches" in a:  # the CPU half maps the database the GPU half matched
             assert (out / "colmap" / "database.db").exists(), a
+        (out / "dense" / "sparse_txt").mkdir(parents=True, exist_ok=True)  # undistorted model, as the real stage
+        (out / "dense" / "sparse_txt" / "cameras.txt").write_text("1 PINHOLE")
         (out / ".done" / "sfm.json").write_text(json.dumps({"registered": 9, "images": 10}))
         print(json.dumps({"stage": "sfm", "event": "done", "msg": ""}), flush=True); continue
+    if st == "align":  # the real align reads the undistorted text model
+        assert (out / "dense" / "sparse_txt" / "cameras.txt").exists(), "dense/sparse_txt/cameras.txt missing"
     (out / ".done" / f"{st}.json").write_text("{}")
     print(json.dumps({"stage": st, "event": "done", "msg": ""}), flush=True)
 if not only:

@@ -95,9 +95,25 @@ resume without re-downloading; a failed solve, then a retry on the GPU). Not yet
 `PLY_CPU_SFM=0` in `ply_modal.py`. Turn it on with `PLY_CPU_SFM=1 modal deploy pipeline/modal/ply_modal.py`, then
 watch one long job through. Expected saving per long video: about $1.40 on an L4, $2.50 on an L40S.
 
+**Live test (2026-11-05, chapel at Quick, 1,236 frames, L4).** Two attempts found three defects the stand-ins
+could not:
+
+1. `PLY_CPU_SFM=1 modal deploy` never turned the split on: `ply_modal.py` is imported again inside the container,
+   where the deploy shell's variable is absent. The switch is now passed through the function's `env=`.
+2. The hand-off ran in the pipeline subprocess, whose python cannot import Modal's injected client
+   (`No module named 'modal'` right after matching). Both images now install the deploying client's `modal`.
+3. The solved folder came back without `dense/` (in `handoff.SKIP`), where the solve writes the undistorted images
+   and the text model, so `align` failed on the resumed GPU. `dense/` now travels back; the stand-in `align`
+   checks for it.
+
+With 1 and 2 fixed, the second attempt matched on the GPU (14 min), handed over, and the L4 stopped. The CPU box
+solved 1,223/1,236 frames (global mapper rejected for 21 path jumps after 32 min, then incremental, ~90 min in all),
+re-queued the job and started a GPU worker, which restored the folder and resumed after `sfm`. Then it hit defect 3.
+The last leg (align onwards on the restored folder) has not run live, so the split is deployed off again.
+
 ### Still open
 
-- **The CPU split needs one live job** before it is turned on.
+- **The CPU split needs one more live job** (from `align` onwards after the hand-back) before it is turned on.
 - **The global mapper fails on the chapel** with both feature types and costs ~23 min before the fallback.
 - **About 10% of the chapel's splats are blown out** at the windows: the footage's exposure.
 
