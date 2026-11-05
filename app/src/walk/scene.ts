@@ -1,6 +1,7 @@
 // Copyright (c) 2026 Ricco Marcelino. All rights reserved. Proprietary and confidential — see LICENSE.
 /* Scene manifest: what the pipeline hands the viewer (pipeline/README.md has the producing side).
    Convention: metres, +Y up, floor at floorY (0 for pipeline output), splat already aligned unless splatQuaternion says otherwise. */
+import { deviceProfile } from './perf';
 
 export interface Occupancy { image: string; origin: [number, number]; cell: number; width: number; height: number; }
 export interface SceneManifest {
@@ -84,7 +85,7 @@ export async function loadManifest(): Promise<{ manifest: SceneManifest; base: U
 /** Pipeline output (pipeline/README.md, scene.json v1) -> the viewer's manifest. Hand-written manifests pass through. */
 async function normalise(raw: any, base: URL): Promise<SceneManifest> {
   if (typeof raw.splat === 'string') return raw as SceneManifest;
-  const phone = matchMedia('(max-width: 720px), (pointer: coarse)').matches;
+  const phone = deviceProfile().lite;  // phones and low-tier desktops take the lighter file
   const m: SceneManifest = {
     name: raw.name ?? decodeURIComponent(base.pathname.split('/').filter(Boolean).slice(-2, -1)[0] ?? 'Captured space'),
     splat: phone && raw.splat?.lite ? raw.splat.lite : raw.splat?.file ?? 'scene.spz',
