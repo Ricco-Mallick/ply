@@ -5,12 +5,16 @@ import * as THREE from 'three';
 import { SparkRenderer, SplatMesh } from '@sparkjsdev/spark';
 import { OccupancyGrid, type SceneManifest } from './scene';
 import { glassFrame, setGlassSource } from '../shared/glass';
+import { PROFILES, deviceProfile, loadMode, saveLearned, saveMode, type PerfProfile, type QualityMode } from './perf';
 
 export type Mode = 'walk' | 'fly';
+/** Live renderer numbers for the HUD, refreshed twice a second. */
+export interface PerfStats { fps: number; ms: number; worstMs: number; splats: number; dpr: number; }
 export interface EngineState { progress: number; loaded: boolean; error: string | null; mode: Mode; locked: boolean; moved: boolean; pos: THREE.Vector3; yaw: number; speed: number; }
 
 const RADIUS = .22, WALK = 1.4, RUN = 2.6, FLY = 2.2;
 const RM = matchMedia('(prefers-reduced-motion: reduce)').matches;
+const FW = new THREE.Vector3(), RT = new THREE.Vector3();
 
 export class WalkEngine {
   renderer: THREE.WebGLRenderer; scene = new THREE.Scene(); camera: THREE.PerspectiveCamera; spark: SparkRenderer; splat: SplatMesh | null = null;
@@ -23,31 +27,52 @@ export class WalkEngine {
   /** Someone else drives the camera (a guided walk, an orbit view): skip the walk controller. */
   manual = false;
   /** adaptive resolution: a 1.4M-splat twin on a laptop GPU drops frames at retina density */
-  dprCap = 1.5; private mobile = false; private fpsAcc = 0; private fpsN = 0; private lastDrop = 0;
+  dprCap = 1.5; private fpsAcc = 0; private fpsN = 0; private lastDrop = 0;
+  readonly perf: PerfProfile = deviceProfile(); private born = performance.now();
+  /** fps before the last step down, the budget it was taken at, and how many steps in a row bought nothing */
+  private dropFps = 0; private dropBudget = Infinity; private idleDrops = 0;
+  /** auto adapts; a tier holds that tier's budget and resolution */
+  quality: QualityMode = 'auto';
+  stats: PerfStats = { fps: 0, ms: 0, worstMs: 0, splats: 0, dpr: 1 };
+  private statT = 0; private statN = 0; private statWorst = 0;
 
   constructor(public canvas: HTMLCanvasElement) {
     this.renderer = new THREE.WebGLRenderer({ canvas, antialias: false, powerPreference: 'high-performance' });
-    this.renderer.setPixelRatio(Math.min(devicePixelRatio, 1.5)); this.renderer.setSize(innerWidth, innerHeight, false);
-    this.dprCap = Math.min(devicePixelRatio, 1.5);
+    this.dprCap = Math.min(devicePixelRatio, this.perf.dpr);
+    this.renderer.setPixelRatio(this.dprCap); this.renderer.setSize(innerWidth, innerHeight, false);
     this.scene.background = new THREE.Color('#070B14');
     this.camera = new THREE.PerspectiveCamera(70, innerWidth / innerHeight, .03, 500); this.camera.rotation.order = 'YXZ';
     // No foveation and no fixed budget by default: the twin is drawn at full detail from the first frame, because a
     // budget that re-selects splats as the camera settles reads as "blurry, then it sharpens when you stare" — which
     // makes the whole model feel cheap at a glance. The budget only comes down if the frame rate actually suffers
-    // (see the fps block below), so a fast machine never trades detail for a rate it already has.
-    const mobile = this.mobile = matchMedia('(pointer: coarse), (max-width: 720px)').matches;
+    // (see the fps block below), so a fast machine never trades detail for a rate it already has. Older devices start
+    // lower (perf.ts), because every step down on the way there is seconds of stutter.
     this.spark = new SparkRenderer({
       renderer: this.renderer,
-      lodSplatCount: mobile ? 1_600_000 : 2_500_000,
+      lodSplatCount: this.perf.budget,
       coneFov0: 0, coneFov: 0, coneFoveate: 1, behindFoveate: 1,
     }); this.scene.add(this.spark);
     setGlassSource(canvas);
+    const q = new URLSearchParams(location.search).has('quality') ? 'auto' : loadMode();  // ?quality= already picked the tier
+    if (q !== 'auto') this.setQuality(q, false);
     this.bind(); this.loop();
   }
 
   /** 0.5 = fewer splats, 1 = Spark's platform default, 2 = double */
   setSplatScale(k: number) { (this.spark as unknown as { lodSplatScale?: number }).lodSplatScale = k; this.emit(); }
   get splatScale() { return (this.spark as unknown as { lodSplatScale?: number }).lodSplatScale ?? 1; }
+
+  /** Hold a tier's splat budget and resolution, or hand control back to the adaptive loop. */
+  setQuality(q: QualityMode, remember = true) {
+    this.quality = q; if (remember) saveMode(q);
+    const spark = this.spark as unknown as { lodSplatCount?: number };
+    const t = q === 'auto' ? this.perf : PROFILES[q](this.perf.mobile);
+    spark.lodSplatCount = t.budget;
+    this.dprCap = Math.min(devicePixelRatio, t.dpr); this.renderer.setPixelRatio(this.dprCap);
+    // a fresh start for the adaptive loop, quick to react again
+    this.dropFps = 0; this.dropBudget = Infinity; this.idleDrops = 0; this.born = performance.now(); this.lastDrop = 0;
+    this.emit();
+  }
 
   on(fn: () => void) { this.listeners.add(fn); return () => { this.listeners.delete(fn); }; }
   emit() { this.listeners.forEach(f => f()); }
@@ -63,8 +88,8 @@ export class WalkEngine {
     this.splat = lodUrl
       ? new SplatMesh({ url, paged: true, onProgress: (e: ProgressEvent) => { if (e.lengthComputable) { this.state.progress = e.loaded / e.total; this.emit(); } } })
       // desktop keeps float32 centres and half-float colour/scale/SH (Spark's 16-byte packing costs ~0.3 dB of the
-      // twin's held-out score); phones keep the packed layout, which halves GPU memory
-      : new SplatMesh({ url, lod: true, extSplats: !this.mobile, onProgress: (e: ProgressEvent) => { if (e.lengthComputable) { this.state.progress = e.loaded / e.total; this.emit(); } } });
+      // twin's held-out score); phones and weaker devices keep the packed layout, which halves GPU memory
+      : new SplatMesh({ url, lod: true, extSplats: this.perf.extSplats, onProgress: (e: ProgressEvent) => { if (e.lengthComputable) { this.state.progress = e.loaded / e.total; this.emit(); } } });
     if (m.splatQuaternion) this.splat.quaternion.set(...m.splatQuaternion);
     if (m.splatPosition) this.splat.position.set(...m.splatPosition);
     this.scene.add(this.splat);
@@ -149,7 +174,7 @@ export class WalkEngine {
     const up = s.mode === 'fly' ? (k.has('Space') || k.has('KeyE') ? 1 : 0) - (k.has('KeyC') || k.has('KeyQ') ? 1 : 0) : 0;
     const base = (s.mode === 'walk' ? (run ? RUN : WALK) : FLY * (run ? 2.2 : 1)) * s.speed;
     // move relative to where we look (fly follows pitch; walk stays on the floor)
-    const fw = new THREE.Vector3(-Math.sin(s.yaw), 0, -Math.cos(s.yaw)), rt = new THREE.Vector3(Math.cos(s.yaw), 0, -Math.sin(s.yaw));
+    const fw = FW.set(-Math.sin(s.yaw), 0, -Math.cos(s.yaw)), rt = RT.set(Math.cos(s.yaw), 0, -Math.sin(s.yaw));
     if (s.mode === 'fly') fw.set(-Math.sin(s.yaw) * Math.cos(this.pitch), Math.sin(this.pitch), -Math.cos(s.yaw) * Math.cos(this.pitch));
     const want = fw.multiplyScalar(f).add(rt.multiplyScalar(r)); if (want.lengthSq() > 1) want.normalize(); want.multiplyScalar(base); want.y += up * base;
     if (f || r || up) this.touched();
@@ -167,31 +192,54 @@ export class WalkEngine {
   }
 
   loop = () => {
-    this.raf = requestAnimationFrame(this.loop); const now = performance.now(), dt = Math.min(.05, (now - this.last) / 1000); this.last = now;
-    if (document.hidden) return;
+    this.raf = requestAnimationFrame(this.loop); const now = performance.now(), raw = now - this.last, dt = Math.min(.05, raw / 1000); this.last = now;
+    if (document.hidden) { this.statT = this.statN = this.statWorst = 0; return; }
     if (!this.manual) this.step(dt);
     for (const f of this.frameHooks) f(dt, now / 1000);
     this.renderer.render(this.scene, this.camera); glassFrame(dt);
-    // drop the render resolution (never below 0.75) when the last second averaged under 42 fps
+    // a gap over a second is a hidden tab or a breakpoint, not a frame
+    if (raw < 1000) { this.statT += raw; this.statN++; this.statWorst = Math.max(this.statWorst, raw); }
+    if (this.statT >= 500) {
+      const spark = this.spark as unknown as { lodSplatCount?: number }, n = this.splat?.numSplats || 0;
+      this.stats = { fps: this.statN * 1000 / this.statT, ms: this.statT / this.statN, worstMs: this.statWorst,
+        splats: n ? Math.min(n, spark.lodSplatCount ?? n) : 0, dpr: this.renderer.getPixelRatio() };
+      this.statT = this.statN = this.statWorst = 0; this.emit();
+    }
     this.fpsAcc += dt; this.fpsN++;
     if (this.fpsAcc >= 1) {
       const fps = this.fpsN / this.fpsAcc; this.fpsAcc = 0; this.fpsN = 0;
-      const now = performance.now();
-      const spark = this.spark as unknown as { lodSplatCount?: number };
-      const budget = spark.lodSplatCount ?? 2_500_000;
-      if (now - this.lastDrop > 2500) {
-        if (fps < 38) {
-          this.lastDrop = now;
-          // first give back resolution cheaply, then thin the splats, and only then go below native density
-          if (this.dprCap > 1.0) { this.dprCap = Math.max(1.0, this.dprCap - 0.25); this.renderer.setPixelRatio(Math.min(devicePixelRatio, this.dprCap)); }
-          else if (budget > 700_000) spark.lodSplatCount = Math.max(700_000, Math.round(budget * 0.75));
-          else this.dprCap = Math.max(0.75, this.dprCap - 0.25), this.renderer.setPixelRatio(Math.min(devicePixelRatio, this.dprCap));
-          this.emit();
-        } else if (fps > 55 && budget < 2_500_000) {
-          this.lastDrop = now; spark.lodSplatCount = Math.min(2_500_000, Math.round(budget * 1.15)); this.emit();
-        }
-      }
+      this.adapt(fps, performance.now());
     }
   };
+
+  /** Below 38 fps give back resolution, then splats, then sub-native resolution; above 55 fps restore splats. */
+  private adapt(fps: number, now: number) {
+    if (this.quality !== 'auto') return;
+    const P = this.perf, spark = this.spark as unknown as { lodSplatCount?: number };
+    const budget = spark.lodSplatCount ?? P.budget;
+    // react quickly while the scene opens (that is when an old device stutters), then settle
+    if (now - this.lastDrop < (now - this.born < 10_000 ? 1200 : 2500)) return;
+    if (fps >= 38) this.idleDrops = 0;
+    if (fps < 38) {
+      // two steps in a row that bought nothing: the limit is elsewhere (a 30 Hz low-power cap, the CPU), so stop
+      // throwing away detail for it
+      if (this.dropFps) this.idleDrops = fps < this.dropFps * 1.05 ? this.idleDrops + 1 : 0;
+      if (this.idleDrops >= 2) return;
+      this.lastDrop = now; this.dropFps = fps;
+      const setDpr = (v: number) => { this.dprCap = v; this.renderer.setPixelRatio(Math.min(devicePixelRatio, v)); };
+      if (this.dprCap > 1.0) setDpr(Math.max(1.0, this.dprCap - 0.25));
+      else if (budget > P.floor) { this.dropBudget = budget; spark.lodSplatCount = Math.max(P.floor, Math.round(budget * 0.75)); }
+      else if (this.dprCap > P.dprMin) setDpr(Math.max(P.dprMin, this.dprCap - 0.25));
+      else return;
+    } else if (fps > 55 && budget < P.max) {
+      // stay under the budget that last dropped frames, so it does not oscillate around it
+      const cap = Math.min(P.max, this.dropBudget === Infinity ? P.max : Math.round(this.dropBudget * 0.9));
+      if (budget >= cap) return;
+      this.lastDrop = now; this.dropFps = 0; this.idleDrops = 0;
+      spark.lodSplatCount = Math.min(cap, Math.round(budget * 1.15));
+    } else return;
+    saveLearned(spark.lodSplatCount ?? budget, this.dprCap);
+    this.emit();
+  }
   dispose() { cancelAnimationFrame(this.raf); this.splat?.dispose(); this.renderer.dispose(); }
 }

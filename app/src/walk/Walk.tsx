@@ -7,6 +7,7 @@ import { Tour, autoTour, SHOT_NAMES } from './tour';
 import { PlacesLayer } from './Places';
 import { ArLauncher } from './ArUi';
 import { sceneStatus } from '../shared/scene-status';
+import type { QualityMode } from './perf';
 
 /** The AR walkthrough entry point is hidden until it has been tested on a real phone. */
 const AR_ENABLED = false;
@@ -92,6 +93,7 @@ export function Walk() {
               judges do not review an unfinished feature. Flip AR_ENABLED to bring the button back. */}
           {AR_ENABLED && entered && engine && manifest && base && <ArLauncher places={arData.places.filter(p => p.pinned).map(p => ({ id: p.id, name: p.name, x: p.p[0], z: p.p[2] }))} nav={arData.nav}
             splatUrl={new URL(manifest.splat, base).href} bounds={manifest.bounds ?? null} floorY={engine.floorY} />}
+          {entered && engine && <QualityControl engine={engine} />}
           {entered && <Glass as="button" className="tour-btn pill opt" opts={{ shader: false, press: true }} title="Display exposure: [ dimmer, ] brighter, \\ reset" aria-label={`Exposure ${Math.round(exposure * 100)} percent`} onClick={() => setExposure(e => e >= 1.55 ? .7 : +(e + .1).toFixed(2))}>☀ {Math.round(exposure * 100)}%</Glass>}
           <Glass as="button" className="icon pill opt" opts={{ shader: false, press: true }} aria-label="Controls" aria-pressed={help} onClick={() => setHelp(h => !h)}>?</Glass>
           <Glass as="button" className="icon pill opt" opts={{ shader: false, press: true }} aria-label="Fullscreen" onClick={() => document.fullscreenElement ? document.exitFullscreen() : document.documentElement.requestFullscreen?.()}>⤢</Glass>
@@ -191,4 +193,43 @@ export function Minimap({ engine, manifest, extras }: { engine: WalkEngine; mani
   }, [img, engine]);
   if (!img) return null;
   return <Glass className="map" opts={{ radius: 14, shader: false }} style={{ position: 'fixed', right: 18, bottom: 18, left: 'auto', top: 'auto' }}><canvas ref={cv} style={{ width: 168, height: 168 }} aria-label="Map of the floor with your position" role="img" /><span className="wide map-l">Floor 01</span></Glass>;
+}
+
+const Q_LABEL: Record<QualityMode, string> = { auto: 'Auto', high: 'High', mid: 'Medium', low: 'Low' };
+const Q_NOTE: Record<QualityMode, string> = { auto: 'follows the frame rate', high: 'most splats, sharpest', mid: 'balanced', low: 'for older devices' };
+const fmtSplats = (n: number) => n >= 1e6 ? `${(n / 1e6).toFixed(2)}M` : `${Math.round(n / 1e3)}k`;
+
+/** Quality picker with the live frame rate, frame time and what the renderer is drawing. */
+function QualityControl({ engine }: { engine: WalkEngine }) {
+  const [open, setOpen] = useState(false);
+  const wrap = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!open) return;
+    const close = (e: PointerEvent) => { if (!wrap.current?.contains(e.target as Node)) setOpen(false); };
+    addEventListener('pointerdown', close); return () => removeEventListener('pointerdown', close);
+  }, [open]);
+  const st = engine.stats, q = engine.quality, fps = Math.round(st.fps);
+  const tone = !st.fps ? '' : fps >= 50 ? 'good' : fps >= 30 ? 'ok' : 'bad';
+  return (
+    <div className="q-wrap" ref={wrap}>
+      <Glass as="button" className={`tour-btn pill q-btn ${open ? 'on' : ''}`} opts={{ shader: false, press: true }} aria-expanded={open} aria-haspopup="true"
+        title="Render quality" aria-label={`Quality ${Q_LABEL[q]}, ${fps} frames per second`} onClick={() => { document.exitPointerLock?.(); setOpen(o => !o); }}>
+        <span className={`q-dot ${tone}`} aria-hidden="true" /><span className="q-label">{Q_LABEL[q]}</span>
+        <span className="q-num">{st.fps ? fps : '–'}<i>FPS</i></span><span className="q-num q-ms">{st.fps ? st.ms.toFixed(1) : '–'}<i>MS</i></span>
+      </Glass>
+      {open && <Glass className="views-menu q-menu" opts={{ radius: 14, shader: false }} role="menu" aria-label="Render quality">
+        {(['auto', 'high', 'mid', 'low'] as QualityMode[]).map(m => (
+          <button key={m} role="menuitemradio" aria-checked={q === m} className={q === m ? 'on' : ''} onClick={() => engine.setQuality(m)}>
+            <span className="q-check" aria-hidden="true">{q === m ? '●' : ''}</span>{Q_LABEL[m]}
+            <small>{m === 'auto' ? `${Q_NOTE.auto} · device: ${Q_LABEL[engine.perf.tier]}` : Q_NOTE[m]}</small>
+          </button>))}
+        <dl className="q-stats" aria-live="off">
+          <dt>Frame rate</dt><dd>{st.fps ? `${fps} fps` : '–'}</dd>
+          <dt>Frame time</dt><dd>{st.fps ? `${st.ms.toFixed(1)} ms · worst ${st.worstMs.toFixed(0)}` : '–'}</dd>
+          <dt>Splats</dt><dd>{st.splats ? fmtSplats(st.splats) : '–'}</dd>
+          <dt>Resolution</dt><dd>{st.dpr.toFixed(2)}× · {Math.round(innerWidth * st.dpr)}×{Math.round(innerHeight * st.dpr)}</dd>
+        </dl>
+      </Glass>}
+    </div>
+  );
 }
