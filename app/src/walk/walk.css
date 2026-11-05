@@ -60,7 +60,9 @@ button { font: inherit; color: inherit; cursor: pointer; }
 .views-menu button { display: flex; gap: 10px; align-items: center; padding: 9px 10px; border: 0; border-radius: 10px; background: none; color: var(--body); font: 600 13px/1 var(--font-body); text-align: left; }
 .views-menu button:hover { background: rgba(255, 255, 255, .07); } .views-menu .mono { font-size: 9.5px; color: var(--accent); }
 @media (max-width: 1180px) { .tour-btn { padding: 0 12px; font-size: 9px; letter-spacing: .12em; } }
-@media (max-width: 1020px) { .tour-btn.opt { display: none; } }
+@media (max-width: 1180px) { .tour-btn.opt { display: none; } }
+@media (max-width: 900px) { .icon.opt { display: none; } }
+@media (max-width: 820px) { .scene-name { display: none; } }
 /* phone: brand, search, free/walk, edit and AR are the whole header; everything else steps away */
 @media (max-width: 760px) {
   .top { left: 12px; right: 12px; gap: 8px; }
@@ -122,4 +124,14 @@ button { font: inherit; color: inherit; cursor: pointer; }
 .q-stats { display: grid; grid-template-columns: auto 1fr; gap: 6px 14px; margin: 4px 0 0; padding: 10px 10px 6px; border-top: 1px solid var(--line-2); font: 400 11px/1.2 var(--font-mono); }
 .q-stats dt { color: var(--muted); } .q-stats dd { margin: 0; white-space: nowrap; color: var(--fg); text-align: right; font-variant-numeric: tabular-nums; }
 /* phones: the header is full, so the meter floats just under it on the right */
-@media (max-width: 760px) { .q-ms, .q-label { display: none; } .q-wrap { position: fixed; right: 12px; top: calc(62px + env(safe-area-inset-top, 0px)); z-index: 12; } .q-btn { gap: 6px; padding: 0 10px; height: 30px; } .q-menu { top: 38px; } .scene-status { max-width: calc(100vw - 100px); } }
+@media (max-width: 760px) { .q-ms, .q-label { display: none; } .q-wrap { position: fixed; right: 12px; top: calc(62px + env(safe-area-inset-top, 0px)); z-index: 12; } .q-btn { gap: 6px; padding: 0 10px; height: 30px; } .q-menu { top: 38px; } .scene-status { left: 12px; right: 90px; max-width: none; } }
+
+/* desktop/tablet header: buttons keep their size; the search pill gives way first (down to its icon), then the
+   meter drops its mode label, then the optional buttons step away */
+.top-right > * { flex-shrink: 0; }
+.search-pill { min-width: 40px; max-width: min(340px, 100%); overflow: hidden; }
+.search-pill svg { margin-left: -1px; }
+@media (max-width: 1500px) { .search-pill kbd { display: none; } }
+@media (max-width: 1440px) and (min-width: 761px) { .search-pill { padding: 0 12px; } .search-pill span { display: none; } .scene-name { max-width: 18vw; } }
+@media (max-width: 1280px) and (min-width: 761px) { .q-label { display: none; } .q-btn { padding: 0 12px; } }
+@media (max-width: 380px) { .seg button { padding: 0 9px; } .brand { padding: 0 10px; } .top { gap: 6px; } }
