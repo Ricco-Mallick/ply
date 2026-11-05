@@ -26,6 +26,7 @@ jobs:
         run: |
           node --experimental-strip-types test/sigv4.test.mts
           node --experimental-strip-types test/cdn.test.mts
+          node --experimental-strip-types test/modal.test.mts
       - name: deploy
         working-directory: cloud
         env:
