@@ -93,16 +93,52 @@ def value_filter_flags(opacity: float, scale: float | None) -> list[str]:
     return f
 
 
-def crop_box(scene: dict) -> str | None:
-    """Room box (scene bounds + 1 m sideways, y from -0.5 to top + 0.5) in splat-transform's frame."""
+def room_bounds(scene: dict) -> tuple[np.ndarray, np.ndarray] | None:
+    """Room box in the scene (PLY) frame: scene bounds + 1 m sideways, y from -0.5 to top + 0.5."""
     b = scene.get("bounds")
     if not b:
         return None
     mn, mx = b["min"], b["max"]
-    lo = np.array([mn[0] - 1.0, -0.5, mn[2] - 1.0])
-    hi = np.array([mx[0] + 1.0, max(mx[1], 2.5) + 0.5, mx[2] + 1.0])
+    return (np.array([mn[0] - 1.0, -0.5, mn[2] - 1.0]),
+            np.array([mx[0] + 1.0, max(mx[1], 2.5) + 0.5, mx[2] + 1.0]))
+
+
+def crop_box(scene: dict) -> str | None:
+    """The room box in splat-transform's frame."""
+    rb = room_bounds(scene)
+    if rb is None:
+        return None
+    lo, hi = rb
     e_lo, e_hi = np.minimum(D @ lo, D @ hi), np.maximum(D @ lo, D @ hi)
     return ",".join(f"{v:.3f}" for v in (*e_lo, *e_hi))
+
+
+# a splat outside the room box is only cropped if the training views barely see it: under this many full-resolution
+# pixels of blend weight summed over the sampled views. The box alone cut the chapel's vault (its sparse points sit
+# below the vault's splats), the views through its windows and its floor reflections: 3.4 dB. 91 % of the splats
+# outside the box drew nothing at all; dropping those under 1 px removed 96 % of them at no measurable cost.
+NEEDED_PX = 1.0
+
+
+def needed_crop(src: Path, dest: Path, lo: np.ndarray, hi: np.ndarray, weights: np.ndarray,
+                min_px: float = NEEDED_PX) -> dict:
+    """Write src without the splats that are outside [lo, hi] and that no training view needs."""
+    header, c = clean_mod.read_ply(src)
+    xyz = np.stack([c["x"], c["y"], c["z"]], 1)
+    outside = ((xyz < lo) | (xyz > hi)).any(1)
+    if len(weights) != len(xyz):
+        raise ValueError(f"{len(weights)} weights for {len(xyz)} splats")
+    drop = outside & (weights < min_px)
+    names = list(c.keys())
+    keep = np.stack([c[k] for k in names], 1)[~drop].astype("<f4")
+    lines = [ln for ln in header.splitlines() if ln and not ln.startswith(("element vertex", "end_header"))]
+    at = next(i for i, ln in enumerate(lines) if ln.startswith("property"))
+    out = "\n".join([*lines[:at], f"element vertex {len(keep)}", *lines[at:], "end_header"]) + "\n"
+    with Path(dest).open("wb") as f:
+        f.write(out.encode("latin-1"))
+        f.write(keep.tobytes())
+    return {"method": "needed", "outside": int(outside.sum()), "dropped": int(drop.sum()),
+            "keptOutside": int((outside & ~drop).sum()), "minPx": min_px}
 
 
 def run_stage(ctx: Ctx) -> dict:
@@ -183,11 +219,12 @@ def run_stage(ctx: Ctx) -> dict:
     lite = ctx.out / "scene_lite.spz"
     cleaned = ctx.out / "scene_clean.ply"
     no_box = [b for i, b in enumerate(base) if not (b == "-B" or (i and base[i - 1] == "-B"))]
+    with_box_cmd = base
 
     def build(with_box: bool, with_floaters: bool) -> dict | None:
         """One cleaned PLY. The floater pass is Python, not WebGPU: a container without an adapter used to skip
         it silently, and the blobs shipped with the twin. Returns the floater stats (None when not run)."""
-        run((base if with_box else no_box) + (clean_flags if clean else []) + [str(cleaned)], ctx, "export")
+        run((with_box_cmd if with_box else no_box) + (clean_flags if clean else []) + [str(cleaned)], ctx, "export")
         if not (clean and with_floaters):
             return None
         scanned = cleaned.with_name("scene_filtered.ply")
@@ -212,6 +249,21 @@ def run_stage(ctx: Ctx) -> dict:
     except Exception as e:
         reference = None
         ctx.log.emit("export", "warn", f"viewer evaluation unavailable: {str(e)[-160:]}")
+    # with a GPU the crop keeps whatever the training views draw outside the box (a vault, a window's view, floor
+    # reflections) and drops only what they never see; an aligned-on-export PLY is in another frame, so it keeps the box
+    room_crop = {"method": "box"} if box else None
+    needed_src = ctx.out / "_room_crop.ply"
+    if box and reference and not ctx.opt("apply_align"):
+        try:
+            weights = viewer_eval.training_weights(ply, ctx.data_dir, holdout, antialiased=aa)
+            if weights is not None:
+                room_crop = needed_crop(ply, needed_src, *room_bounds(scene), weights)
+                with_box_cmd = [str(needed_src) if a == str(ply) else a for a in no_box]
+                ctx.log.emit("export", "progress", f"room crop: {room_crop['dropped']} of {room_crop['outside']} splats "
+                             f"outside the room are unseen by the training views; {room_crop['keptOutside']} kept")
+        except Exception as e:
+            room_crop = {"method": "box", "why": f"weights failed: {str(e)[-160:]}"}
+            ctx.log.emit("export", "warn", f"room crop falls back to the plain box: {str(e)[-160:]}")
     clean_stats = None
     if reference:
         tried = []
@@ -263,12 +315,14 @@ def run_stage(ctx: Ctx) -> dict:
         run(src + ["-H", str(LITE_SH), str(lite)], ctx, "export")
         sh["lite"] = _restore_sh(ctx, lite, cleaned)
     shipped = _score_shipped(ctx, st, {"full": full, "lite": lite}, holdout, aa) if viewer else None
+    needed_src.unlink(missing_ok=True)
     update_scene(ctx, {"splat": {"file": "scene.spz", "lite": "scene_lite.spz", "format": "spz"}})
     return {"spz": full.name, "spzMB": round(full.stat().st_size / 2**20, 2), "lite": lite.name, "liteMB": round(lite.stat().st_size / 2**20, 2),
             "cropBox": box, "cropDropped": drop_crop, "gaussiansIn": total, "gaussiansOut": n, "floaterFilter": floaters, "liteGaussians": min(n, LITE_MAX),
             "keptFraction": round(n / total, 3) if total else None,
             "exportFilters": {"opacity": chosen["opacity"], "scaleCap": chosen["scale"], "why": chosen["why"]},
             "floaterClean": clean_stats, "clippedFraction": clipped, **({"viewerEval": viewer} if viewer else {}),
+            **({"roomCrop": room_crop} if room_crop else {}),
             "shRestore": sh, **({"shippedEval": shipped} if shipped else {}),
             **({"cleanupChoice": choice} if choice else {})}
 

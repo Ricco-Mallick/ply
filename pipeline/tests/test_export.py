@@ -88,3 +88,32 @@ def test_align_actions_match_splat_transform_convention(tmp_path):
                     str(tmp_path / "out.ply")], check=True, capture_output=True)
     out = read_gs_ply_xyz(tmp_path / "out.ply")
     assert np.allclose(out, geometry.apply(T, xyz), atol=1e-3)
+
+
+def test_room_crop_keeps_what_the_training_views_draw(tmp_path):
+    """The chapel: the box cut its vault, window views and floor reflections. Outside splats the views draw stay."""
+    from plypipe import clean
+    rng = np.random.default_rng(3)
+    inside = rng.uniform([0, 0, 0], [6, 2.8, 4], (300, 3))
+    vault = rng.uniform([1, 4.0, 1], [5, 4.5, 3], (40, 3))           # above the box top (2.5 + 0.5), seen by every view
+    junk = rng.uniform([20, 5, 20], [30, 9, 30], (60, 3))             # far outside, seen by none
+    write_gs_ply(tmp_path / "scene.ply", np.concatenate([inside, vault, junk]), rng)
+    lo, hi = export.room_bounds({"bounds": {"min": [0, 0, 0], "max": [6, 2.5, 4]}})
+    weights = np.r_[np.full(300, 50.0), np.full(40, 30.0), np.full(60, 0.2)]
+    rep = export.needed_crop(tmp_path / "scene.ply", tmp_path / "crop.ply", lo, hi, weights)
+    assert rep == {"method": "needed", "outside": 100, "dropped": 60, "keptOutside": 40, "minPx": export.NEEDED_PX}
+    header, c = clean.read_ply(tmp_path / "crop.ply")
+    assert len(c["x"]) == 340 and c["y"].max() > 4.0 and c["x"].max() < 7
+    assert np.allclose(c["f_rest_7"], clean.read_ply(tmp_path / "scene.ply")[1]["f_rest_7"][:340])
+    # splat-transform reads the file the crop writes
+    subprocess.run(["npx", "-y", export.SPLAT_TRANSFORM, "-w", str(tmp_path / "crop.ply"), str(tmp_path / "back.ply")],
+                   check=True, capture_output=True)
+    assert read_gs_ply_xyz(tmp_path / "back.ply").shape[0] == 340
+    import pytest
+    with pytest.raises(ValueError):
+        export.needed_crop(tmp_path / "scene.ply", tmp_path / "x.ply", lo, hi, weights[:10])
+
+
+def test_training_weights_need_a_gpu(tmp_path):
+    from plypipe import viewer_eval
+    assert viewer_eval.training_weights(tmp_path / "missing.ply", tmp_path) is None

@@ -103,6 +103,56 @@ def evaluate(ply: Path, data_dir: Path, every: int = 30, antialiased: bool = Tru
             "worstHoles": round(float(np.max(holes)), 4)}
 
 
+def training_weights(ply: Path, data_dir: Path, every: int = 30, step: int = 5, scale: float = 0.5,
+                     antialiased: bool = True) -> np.ndarray | None:
+    """Each splat's blend weight summed over the training views, in full-resolution pixels: how much of the
+    photographs it actually draws. Held-out views (every `every`-th) are never used, so a cleanup step chosen with
+    these weights is still judged fairly on them. Every `step`-th training view at `scale` resolution; the chapel's
+    2M splats over 237 views took 1.3 s on an L4. With colours fixed at 1 the render is the sum of the blend weights,
+    so its gradient with respect to each splat's colour is that splat's weight. None without CUDA and gsplat."""
+    try:
+        import torch
+        from gsplat import rasterization
+    except ImportError:
+        return None
+    if not torch.cuda.is_available():
+        return None
+    from plypipe import clean, colmap_txt
+
+    model = colmap_txt.read_model(data_dir / "sparse" / "0")
+    cams = {}
+    for ln in model.cameras_lines:
+        if ln and not ln.startswith("#"):
+            p = ln.split()
+            if p[1] != "PINHOLE":
+                return None
+            cams[int(p[0])] = (int(p[2]), int(p[3]), *map(float, p[4:8]))
+    ims = sorted(model.images, key=lambda im: im.name)
+    held = set(held_out([im.name for im in ims], every))
+    train = [i for i in range(len(ims)) if i not in held][::max(1, step)]
+    _, c = clean.read_ply(ply)
+    dev = "cuda"
+    t = lambda a: torch.as_tensor(np.ascontiguousarray(a), dtype=torch.float32, device=dev)
+    means = t(np.stack([c["x"], c["y"], c["z"]], 1))
+    quats = t(np.stack([c[f"rot_{i}"] for i in range(4)], 1))
+    scales = torch.exp(t(np.stack([c[f"scale_{i}"] for i in range(3)], 1)))
+    opac = torch.sigmoid(t(c["opacity"]))
+    weights = torch.zeros(len(means), device=dev)
+    for i in train:
+        im = ims[i]
+        w, h, fx, fy, cx, cy = cams[im.camera_id]
+        view = np.eye(4)
+        view[:3, :3], view[:3, 3] = _quat_to_R(im.qvec), im.tvec
+        K = np.array([[fx * scale, 0, cx * scale], [0, fy * scale, cy * scale], [0, 0, 1]])
+        ones = torch.ones(len(means), 3, device=dev, requires_grad=True)
+        rgb, _, _ = rasterization(means, quats, scales, opac, ones, t(view)[None], t(K)[None],
+                                  max(1, int(w * scale)), max(1, int(h * scale)),
+                                  rasterize_mode="antialiased" if antialiased else "classic")
+        rgb[..., 0].sum().backward()
+        weights += ones.grad[:, 0]
+    return (weights / (scale * scale)).cpu().numpy()
+
+
 def _ssim(a: np.ndarray, b: np.ndarray) -> float:
     import cv2
     c1, c2 = 0.01 ** 2, 0.03 ** 2

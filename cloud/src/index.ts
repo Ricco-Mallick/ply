@@ -253,6 +253,9 @@ async function route(req: Request, env: Env, ctx: Ctx): Promise<Response> {
     if (m && req.method === 'POST') {
       const b = await req.json() as any, sets: string[] = ['updated_at=?'], vals: unknown[] = [now];
       if (b.status) { sets.push('status=?'); vals.push(b.status); if (b.status === 'done' || b.status === 'failed') { sets.push('finished_at=?'); vals.push(now); } }
+      // a worker re-queueing its own job is a planned hand-over (the CPU camera solve hands back to a GPU), not a crash:
+      // the next claim must not use up the job's crash retries
+      if (b.status === 'queued') sets.push('attempts=0');
       if (b.stage !== undefined) { sets.push('stage=?'); vals.push(b.stage); }
       if (b.progress !== undefined) { sets.push('progress=?'); vals.push(Math.max(0, Math.min(1, Number(b.progress) || 0))); }
       if (b.message !== undefined) { sets.push('message=?'); vals.push(String(b.message).slice(0, 4000)); }

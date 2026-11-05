@@ -178,3 +178,41 @@ def test_reuse_matches_skips_extraction_and_matching(tmp_path, monkeypatch):
     assert sfm.run_stage(ctx) == {"ok": True}
     assert seen == {"features": "sift", "matcher": "sequential", "loops": True, "n": 12}
     assert (ctx.colmap_dir / "database.db").exists() and not (ctx.colmap_dir / "sparse_all").exists()
+
+
+def test_sfm_part_match_stops_before_mapping(tmp_path, monkeypatch):
+    """The GPU half of a split solve: matches written, nothing mapped, the stage left open for the CPU half."""
+    from plypipe import cli
+    from plypipe.util import Ctx
+    from plypipe.log import Log
+    ctx = Ctx(out=tmp_path, log=Log(tmp_path, quiet=True), opts={})
+    ctx.frames_dir.mkdir(parents=True)
+    for i in range(12):
+        (ctx.frames_dir / f"{i:06d}.jpg").write_bytes(b"x")
+    (tmp_path / ".done").mkdir()
+    (tmp_path / ".done" / "frames.json").write_text('{"source": "videos"}')
+    monkeypatch.setattr(sfm, "_pycolmap", lambda: types.SimpleNamespace(Device=lambda d: d))
+    monkeypatch.setattr(sfm, "_extract_and_match", lambda *a, **k: ("aliked", "lightglue", True))
+    mapped = []
+    monkeypatch.setattr(sfm, "_map", lambda *a, **k: mapped.append(1) or {"registered": 12, "images": 12})
+    run = lambda *extra: cli.main(["run", str(tmp_path / "in"), "--out", str(tmp_path), "--only", "sfm", "--sfm-part", "match", "--quiet", *extra])
+    assert run("--split-min", "10") == 0
+    assert not mapped and not (tmp_path / ".done" / "sfm.json").exists()
+    assert '"paused"' in (tmp_path / "log.jsonl").read_text()
+    assert run() == 0                                   # 12 frames is under the default 400: solved on this box
+    assert mapped and (tmp_path / ".done" / "sfm.json").exists()
+
+
+def test_pairs_cover_clips_by_sequence_and_retrieval():
+    import numpy as np
+    from plypipe.stages import sfm_torch
+    names = [f"{i:06d}.jpg" for i in range(60)]
+    clips = {n: ("a" if i < 30 else "b") for i, n in enumerate(names)}
+    seq = sfm_torch.make_pairs(names, clips, None, overlap=5, retrieve=0)
+    assert (0, 5) in seq and (0, 6) not in seq and (0, 8) in seq and (0, 16) in seq   # next 5, then 2^k ahead
+    assert all(clips[names[i]] == clips[names[j]] for i, j in seq)                      # never across clips
+    desc = np.zeros((60, 4)); desc[:, 0] = 1; desc[5, :] = [0, 1, 0, 0]; desc[45, :] = [0, 1, 0, 0]
+    both = sfm_torch.make_pairs(names, clips, desc, overlap=5, retrieve=1)
+    assert (5, 45) in both                                                               # retrieval links the clips
+    photos = sfm_torch.make_pairs(names[:10], None, None, ordered=False)
+    assert len(photos) == 45                                                             # small photo set: exhaustive

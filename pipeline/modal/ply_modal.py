@@ -54,11 +54,27 @@ image = (
     .env({"HF_HOME": "/opt/hf"})
     .run_commands("python -c \"from huggingface_hub import snapshot_download; snapshot_download('facebook/sam3', allow_patterns=['*.json', '*.txt', 'model.safetensors'])\"",
                   secrets=[modal.Secret.from_name("ply-hf")])
-    .env({"PLY_IMAGE_REV": "15"})  # bump to force the code layer to rebuild when Modal reuses a cached image
+    # ALIKED + LightGlue in PyTorch (the pycolmap wheels have no ONNX runtime for COLMAP's own), with their weights
+    # and DINOv2 (pair retrieval) baked in, so a job never downloads them
+    .env({"TORCH_HOME": "/opt/torch"})
+    .run_commands("python -m uv pip install --system 'kornia>=0.7' && python -m uv pip install --system --no-deps 'lightglue @ git+https://github.com/cvg/LightGlue@5a650c444718caffc2669dc0094cde908f42dd73'",
+                  "python -c \"from lightglue import ALIKED, LightGlue; ALIKED(max_num_keypoints=4096); LightGlue(features='aliked')\"",
+                  "python -c \"from huggingface_hub import snapshot_download; snapshot_download('facebook/dinov2-small')\"")
+    .env({"PLY_IMAGE_REV": "16"})  # bump to force the code layer to rebuild when Modal reuses a cached image
     .add_local_dir(PIPE / "plypipe", "/root/pipeline/plypipe")
 )
 app = modal.App("ply", image=image)
 secret = modal.Secret.from_name("ply-worker")
+# long captures solve their cameras on a CPU box (plypipe.handoff): COLMAP's mapper never uses the GPU, and on the
+# chapel it was 93 of 119 min of a billed L40S. The job folder travels through this Volume between the two.
+CPU_SFM = os.environ.get("PLY_CPU_SFM", "0")  # off until a live job has been watched end to end; deploy with PLY_CPU_SFM=1
+CPU_SFM_MIN = os.environ.get("PLY_CPU_SFM_MIN", "400")
+handoff_vol = modal.Volume.from_name("ply-handoff", create_if_missing=True)
+cpu_image = (modal.Image.debian_slim(python_version="3.12")
+             .pip_install("pycolmap==4.2.1", "numpy>=1.26", "opencv-python-headless>=4.9")
+             .env({"PLY_IMAGE_REV": "1"})
+             .add_local_dir(PIPE / "plypipe", "/root/pipeline/plypipe"))
+HANDOFF_ENV = {"PLY_HANDOFF_DIR": "/handoff", "PLY_HANDOFF_VOLUME": "ply-handoff", "PLY_HANDOFF_APP": "ply"}
 hf = modal.Secret.from_name("ply-hf")  # HF_TOKEN: gated facebook/sam3 weights for the label stage
 
 
@@ -68,15 +84,30 @@ hf = modal.Secret.from_name("ply-hf")  # HF_TOKEN: gated facebook/sam3 weights f
 TIMEOUT_S = int(6.0 * 3600)
 
 
-@app.function(gpu=GPU, cpu=8, memory=32768, timeout=TIMEOUT_S, max_containers=1, secrets=[secret, hf])  # 8 cores + 32 GB: 2560 px frames and ~800 of them  # L4 + 4 cores + 16 GB = ~$1.12/h
+@app.function(gpu=GPU, cpu=8, memory=32768, timeout=TIMEOUT_S, max_containers=1, secrets=[secret, hf],
+              volumes={"/handoff": handoff_vol})  # 8 cores + 32 GB: 2560 px frames and ~800 of them  # L4 + 4 cores + 16 GB = ~$1.12/h
 def work(worker_name: str = WORKER_NAME):
     """Claim and run jobs until the queue has been empty for 3 minutes. The worker only starts a job it can finish
     before this container's timeout (PLY_DEADLINE); later work waits for the next wake-up (API trigger or cron)."""
     import time
     env = dict(os.environ, PYTHONPATH="/root/pipeline", PLY_WORKER_NAME=worker_name, PLY_WORK_DIR="/tmp/work", PLY_HF_REPO=HF_REPO, PLY_MODAL_GPU=GPU, PLY_STAGE_LIMITS="sfm=300,export=60",
-               PLY_IDLE_EXIT_MIN="3", MPLBACKEND="Agg", PLY_DEADLINE=str(time.time() + TIMEOUT_S - 300))
+               PLY_IDLE_EXIT_MIN="3", MPLBACKEND="Agg", PLY_DEADLINE=str(time.time() + TIMEOUT_S - 300),
+               PLY_CPU_SFM=CPU_SFM, PLY_CPU_SFM_MIN=CPU_SFM_MIN, **HANDOFF_ENV)
     subprocess.run(["nvidia-smi", "--query-gpu=name,memory.total", "--format=csv,noheader"], check=False)
     return subprocess.run([sys.executable, "-m", "plypipe.worker"], env=env, check=False).returncode
+
+
+@app.function(image=cpu_image, cpu=8, memory=32768, timeout=3 * 3600, secrets=[secret], volumes={"/handoff": handoff_vol})
+def solve(jid: str):
+    """Map a handed-over job's matches here (8 cores + 32 GB: $0.63/h against $1.43/h for the L4 box), then re-queue
+    the job and start a GPU worker for the rest unless one is already up."""
+    env = dict(os.environ, PYTHONPATH="/root/pipeline", MPLBACKEND="Agg", **HANDOFF_ENV)
+    code = subprocess.run([sys.executable, "-m", "plypipe.handoff", jid], env=env, check=False).returncode
+    if code == 0:
+        stats = modal.Function.from_name("ply", "work").get_current_stats()
+        if not (stats.num_total_runners or stats.backlog):
+            modal.Function.from_name("ply", "work").spawn()
+    return code
 
 
 @app.function(image=modal.Image.debian_slim(python_version="3.12").pip_install("fastapi[standard]"), secrets=[secret])
