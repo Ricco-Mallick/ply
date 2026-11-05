@@ -122,7 +122,11 @@ def trigger(body: dict):
     Two calls at the same instant can both spawn; max_containers=1 queues the second, which then finds the queue empty
     and exits after its 3 idle minutes (~$0.06 worst case)."""
     import hmac
-    if not hmac.compare_digest(str(body.get("token", "")), os.environ["PLY_TRIGGER_TOKEN"]):
+    # the API's worker token is accepted too: it is the credential the two already share for every other call
+    def match(got, env_key):
+        want = os.environ.get(env_key, "")
+        return bool(want) and hmac.compare_digest(str(got or ""), want)
+    if not (match(body.get("token"), "PLY_TRIGGER_TOKEN") or match(body.get("workerToken"), "PLY_WORKER_TOKEN")):
         return {"ok": False, "error": "unauthorised"}
     stats = modal.Function.from_name("ply", "work").get_current_stats()
     if stats.num_total_runners or stats.backlog:

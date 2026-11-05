@@ -23,23 +23,19 @@
 
 import { completeMultipart, createMultipart, presign, signedFetch, type S3Conf } from './s3';
 import { cdnRedirect, isBulk } from './cdn';
+import { kickModal } from './modal';
 
 interface Env { DB: any; APP_KEY: string; WORKER_TOKEN: string; ALLOWED_ORIGINS: string;
   S3_ENDPOINT: string; S3_REGION: string; S3_BUCKET: string; S3_KEY_ID: string; S3_SECRET: string;
-  /** Modal GPU worker (pipeline/modal/ply_modal.py): trigger URL + shared token; unset = Kaggle only */
-  MODAL_TRIGGER?: string; MODAL_TRIGGER_TOKEN?: string;
+  /** Modal GPU worker (pipeline/modal/ply_modal.py, see src/modal.ts): trigger URL (wrangler.toml, else the older
+      secret) + shared token; unset = Kaggle only */
+  MODAL_TRIGGER_URL?: string; MODAL_TRIGGER?: string; MODAL_TRIGGER_TOKEN?: string;
   /** results on Hugging Face (HF_REPO in wrangler.toml, HF_TOKEN a secret); unset = bucket only */
   HF_REPO?: string; HF_TOKEN?: string;
   /** commit and time of this deploy, set by .github/workflows/api.yml (--var); unset for a hand deploy */
   VERSION?: string; DEPLOYED_AT?: string; }
 type Ctx = { waitUntil(p: Promise<unknown>): void };
 
-/** Wake the Modal GPU worker (it starts unless one is already up, and stops itself when the queue is empty). */
-async function kickModal(env: Env, why: string) {
-  if (!env.MODAL_TRIGGER || !env.MODAL_TRIGGER_TOKEN) return null;
-  try { const r = await fetch(env.MODAL_TRIGGER, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ token: env.MODAL_TRIGGER_TOKEN, why }) }); return await r.json(); }
-  catch (e) { console.log('modal trigger failed', (e as Error).message); return null; }
-}
 const s3 = (e: Env): S3Conf => ({ endpoint: e.S3_ENDPOINT, region: e.S3_REGION, bucket: e.S3_BUCKET, keyId: e.S3_KEY_ID, secret: e.S3_SECRET });
 const SIGN_TTL = 6 * 3600;
 
