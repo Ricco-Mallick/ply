@@ -106,3 +106,20 @@ button { font: inherit; color: inherit; cursor: pointer; }
 .scene-status.new { border-color: rgba(142, 240, 182, .4); } .scene-status.new b { color: #8ef0b6; }
 .scene-status.dev { border-color: rgba(150, 190, 255, .4); } .scene-status.dev b { color: #a9c6ff; }
 @media (max-width: 760px) { .scene-status { top: 62px; font-size: 10px; } }
+
+/* quality picker + live frame stats */
+.q-wrap { position: relative; }
+.q-btn { gap: 8px; font-variant-numeric: tabular-nums; }
+.q-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--muted); flex: 0 0 auto; }
+.q-dot.good { background: #3DDC84; } .q-dot.ok { background: #FFB020; } .q-dot.bad { background: #FF4D4D; }
+.q-num { font: 700 11px/1 var(--font-mono); letter-spacing: 0; color: var(--fg); min-width: 2ch; text-align: right; }
+.q-num i { font-style: normal; font-weight: 400; font-size: 8.5px; margin-left: 3px; color: var(--muted); letter-spacing: .08em; }
+.q-menu { min-width: 270px; }
+.q-menu button { flex-wrap: wrap; row-gap: 3px; }
+.q-menu button.on { color: var(--fg); }
+.q-menu .q-check { width: 10px; color: var(--accent); font-size: 9px; }
+.q-menu small { flex-basis: 100%; padding-left: 20px; font: 400 11px/1.2 var(--font-body); color: var(--muted); }
+.q-stats { display: grid; grid-template-columns: auto 1fr; gap: 6px 14px; margin: 4px 0 0; padding: 10px 10px 6px; border-top: 1px solid var(--line-2); font: 400 11px/1.2 var(--font-mono); }
+.q-stats dt { color: var(--muted); } .q-stats dd { margin: 0; white-space: nowrap; color: var(--fg); text-align: right; font-variant-numeric: tabular-nums; }
+/* phones: the header is full, so the meter floats just under it on the right */
+@media (max-width: 760px) { .q-ms, .q-label { display: none; } .q-wrap { position: fixed; right: 12px; top: calc(62px + env(safe-area-inset-top, 0px)); z-index: 12; } .q-btn { gap: 6px; padding: 0 10px; height: 30px; } .q-menu { top: 38px; } .scene-status { max-width: calc(100vw - 100px); } }

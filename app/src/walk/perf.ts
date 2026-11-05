@@ -21,7 +21,7 @@ const KEY = 'ply.perf.v1';
 // and software rasterisers
 const WEAK_GPU = /Mali-(T|G[357]\d\b|G5[12])|Adreno \(TM\) ([1-5]\d\d|6[0-3]\d)\b|PowerVR|Intel\(R\) (HD|UHD) Graphics|Mesa Intel\(R\) (HD|UHD)|SwiftShader|llvmpipe|softpipe/i;
 
-const PROFILES: Record<Tier, (mobile: boolean) => Omit<PerfProfile, 'tier' | 'mobile'>> = {
+export const PROFILES: Record<Tier, (mobile: boolean) => Omit<PerfProfile, 'tier' | 'mobile'>> = {
   low: () => ({ budget: 600_000, floor: 300_000, max: 1_000_000, dpr: 1.0, dprMin: 0.6, extSplats: false, lite: true }),
   mid: m => ({ budget: m ? 1_000_000 : 1_500_000, floor: 500_000, max: m ? 1_600_000 : 2_000_000, dpr: 1.25, dprMin: 0.75, extSplats: false, lite: m }),
   high: m => ({ budget: m ? 1_600_000 : 2_500_000, floor: 700_000, max: 2_500_000, dpr: 1.5, dprMin: 0.75, extSplats: !m, lite: m }),
@@ -73,6 +73,14 @@ function loadLearned(): { budget: number; dpr: number } | null {
     return v && Number.isFinite(v.budget) && Number.isFinite(v.dpr) ? v : null;
   } catch { return null; }
 }
+/** Quality picked in the viewer: auto adapts to the frame rate, a tier is held fixed. */
+export type QualityMode = 'auto' | Tier;
+const MODE_KEY = 'ply.quality.v1';
+export function loadMode(): QualityMode {
+  try { const v = localStorage.getItem(MODE_KEY); return v === 'low' || v === 'mid' || v === 'high' ? v : 'auto'; } catch { return 'auto'; }
+}
+export function saveMode(m: QualityMode) { try { localStorage.setItem(MODE_KEY, m); } catch { /* private mode */ } }
+
 export function saveLearned(budget: number, dpr: number) {
   try { localStorage.setItem(KEY, JSON.stringify({ budget: Math.round(budget), dpr })); } catch { /* private mode */ }
 }

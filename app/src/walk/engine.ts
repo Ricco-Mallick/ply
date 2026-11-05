@@ -5,9 +5,11 @@ import * as THREE from 'three';
 import { SparkRenderer, SplatMesh } from '@sparkjsdev/spark';
 import { OccupancyGrid, type SceneManifest } from './scene';
 import { glassFrame, setGlassSource } from '../shared/glass';
-import { deviceProfile, saveLearned, type PerfProfile } from './perf';
+import { PROFILES, deviceProfile, loadMode, saveLearned, saveMode, type PerfProfile, type QualityMode } from './perf';
 
 export type Mode = 'walk' | 'fly';
+/** Live renderer numbers for the HUD, refreshed twice a second. */
+export interface PerfStats { fps: number; ms: number; worstMs: number; splats: number; dpr: number; }
 export interface EngineState { progress: number; loaded: boolean; error: string | null; mode: Mode; locked: boolean; moved: boolean; pos: THREE.Vector3; yaw: number; speed: number; }
 
 const RADIUS = .22, WALK = 1.4, RUN = 2.6, FLY = 2.2;
@@ -29,6 +31,10 @@ export class WalkEngine {
   readonly perf: PerfProfile = deviceProfile(); private born = performance.now();
   /** fps before the last step down, the budget it was taken at, and how many steps in a row bought nothing */
   private dropFps = 0; private dropBudget = Infinity; private idleDrops = 0;
+  /** auto adapts; a tier holds that tier's budget and resolution */
+  quality: QualityMode = 'auto';
+  stats: PerfStats = { fps: 0, ms: 0, worstMs: 0, splats: 0, dpr: 1 };
+  private statT = 0; private statN = 0; private statWorst = 0;
 
   constructor(public canvas: HTMLCanvasElement) {
     this.renderer = new THREE.WebGLRenderer({ canvas, antialias: false, powerPreference: 'high-performance' });
@@ -47,12 +53,26 @@ export class WalkEngine {
       coneFov0: 0, coneFov: 0, coneFoveate: 1, behindFoveate: 1,
     }); this.scene.add(this.spark);
     setGlassSource(canvas);
+    const q = new URLSearchParams(location.search).has('quality') ? 'auto' : loadMode();  // ?quality= already picked the tier
+    if (q !== 'auto') this.setQuality(q, false);
     this.bind(); this.loop();
   }
 
   /** 0.5 = fewer splats, 1 = Spark's platform default, 2 = double */
   setSplatScale(k: number) { (this.spark as unknown as { lodSplatScale?: number }).lodSplatScale = k; this.emit(); }
   get splatScale() { return (this.spark as unknown as { lodSplatScale?: number }).lodSplatScale ?? 1; }
+
+  /** Hold a tier's splat budget and resolution, or hand control back to the adaptive loop. */
+  setQuality(q: QualityMode, remember = true) {
+    this.quality = q; if (remember) saveMode(q);
+    const spark = this.spark as unknown as { lodSplatCount?: number };
+    const t = q === 'auto' ? this.perf : PROFILES[q](this.perf.mobile);
+    spark.lodSplatCount = t.budget;
+    this.dprCap = Math.min(devicePixelRatio, t.dpr); this.renderer.setPixelRatio(this.dprCap);
+    // a fresh start for the adaptive loop, quick to react again
+    this.dropFps = 0; this.dropBudget = Infinity; this.idleDrops = 0; this.born = performance.now(); this.lastDrop = 0;
+    this.emit();
+  }
 
   on(fn: () => void) { this.listeners.add(fn); return () => { this.listeners.delete(fn); }; }
   emit() { this.listeners.forEach(f => f()); }
@@ -172,11 +192,19 @@ export class WalkEngine {
   }
 
   loop = () => {
-    this.raf = requestAnimationFrame(this.loop); const now = performance.now(), dt = Math.min(.05, (now - this.last) / 1000); this.last = now;
-    if (document.hidden) return;
+    this.raf = requestAnimationFrame(this.loop); const now = performance.now(), raw = now - this.last, dt = Math.min(.05, raw / 1000); this.last = now;
+    if (document.hidden) { this.statT = this.statN = this.statWorst = 0; return; }
     if (!this.manual) this.step(dt);
     for (const f of this.frameHooks) f(dt, now / 1000);
     this.renderer.render(this.scene, this.camera); glassFrame(dt);
+    // a gap over a second is a hidden tab or a breakpoint, not a frame
+    if (raw < 1000) { this.statT += raw; this.statN++; this.statWorst = Math.max(this.statWorst, raw); }
+    if (this.statT >= 500) {
+      const spark = this.spark as unknown as { lodSplatCount?: number }, n = this.splat?.numSplats || 0;
+      this.stats = { fps: this.statN * 1000 / this.statT, ms: this.statT / this.statN, worstMs: this.statWorst,
+        splats: n ? Math.min(n, spark.lodSplatCount ?? n) : 0, dpr: this.renderer.getPixelRatio() };
+      this.statT = this.statN = this.statWorst = 0; this.emit();
+    }
     this.fpsAcc += dt; this.fpsN++;
     if (this.fpsAcc >= 1) {
       const fps = this.fpsN / this.fpsAcc; this.fpsAcc = 0; this.fpsN = 0;
@@ -186,6 +214,7 @@ export class WalkEngine {
 
   /** Below 38 fps give back resolution, then splats, then sub-native resolution; above 55 fps restore splats. */
   private adapt(fps: number, now: number) {
+    if (this.quality !== 'auto') return;
     const P = this.perf, spark = this.spark as unknown as { lodSplatCount?: number };
     const budget = spark.lodSplatCount ?? P.budget;
     // react quickly while the scene opens (that is when an old device stutters), then settle
