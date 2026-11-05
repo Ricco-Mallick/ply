@@ -104,3 +104,77 @@ def test_views_without_an_anchor_are_dropped():
     rec = FakeRec(ims)
     assert sorted(sfm.drop_unanchored(rec)) == ["000030.jpg", "000031.jpg", "000032.jpg"]
     assert sum(im.has_pose for im in rec.images.values()) == 30
+
+
+def _walk(n=60, clip="a.mp4", start=0, offset=(0.0, 0.0, 0.0)):
+    import numpy as np
+    return [FakeImage(f"{start + i:06d}.jpg", np.array([0.1 * i, 0.0, 0.0]) + offset, 400, start + i) for i in range(n)]
+
+
+def test_a_pose_out_and_back_between_neighbours_is_dropped():
+    """The chapel's pew frames: one view 50 median steps off the walk, its two neighbours one step apart."""
+    import numpy as np
+    ims = _walk()
+    ims[30]._c = np.array([3.0, 5.0, 0.0])
+    rec = FakeRec(ims)
+    assert sfm.trajectory_jumps(rec) == 2
+    assert sfm.drop_spikes(rec) == ["000030.jpg"]
+    assert not rec.images[30].has_pose and sfm.trajectory_jumps(rec) == 0
+
+
+def test_a_real_jump_in_the_walk_is_not_a_spike():
+    """A path that breaks and carries on elsewhere (a folded model) is a jump to report, not one frame to drop."""
+    import numpy as np
+    ims = _walk()
+    for im in ims[30:]:
+        im._c = im._c + np.array([0.0, 6.0, 0.0])
+    rec = FakeRec(ims)
+    assert sfm.drop_spikes(rec) == [] and sfm.trajectory_jumps(rec) == 1
+
+
+def test_steps_between_clips_are_not_jumps():
+    """The classroom's global solve reported 2 jumps that were clip boundaries; any jump sends it to the slow mapper."""
+    ims = _walk(40, "a.mp4") + _walk(40, "b.mp4", start=40, offset=(-20.0, 3.0, 0.0))
+    clips = {im.name: ("a.mp4" if int(im.name[:6]) < 40 else "b.mp4") for im in ims}
+    rec = FakeRec(ims)
+    assert sfm.trajectory_jumps(rec) == 1
+    assert sfm.trajectory_jumps(rec, clip_of=clips) == 0
+    assert sfm.drop_spikes(rec, clip_of=clips) == []
+
+
+def test_clip_index_reads_the_frames_stage(tmp_path):
+    import json
+    (tmp_path / "frames_index.json").write_text(json.dumps([{"frame": "000000.jpg", "clip": "a.mp4", "t": 0.1}]))
+    assert sfm.clip_index(tmp_path) == {"000000.jpg": "a.mp4"}
+    assert sfm.clip_index(tmp_path / "missing") is None
+
+
+def test_long_captures_get_the_lighter_incremental_schedule():
+    import pytest
+    pycolmap = pytest.importorskip("pycolmap")
+    small, big = sfm.incremental_options(pycolmap, 300), sfm.incremental_options(pycolmap, 1236, 5400)
+    assert small.ba_global_frames_ratio == pytest.approx(1.1) and not small.mapper.ba_global_ignore_redundant_points3D
+    assert big.ba_global_frames_ratio == pytest.approx(1.25) and big.ba_global_points_ratio == pytest.approx(1.25)
+    assert big.mapper.ba_global_ignore_redundant_points3D and big.max_runtime_seconds == 5400
+
+
+def test_reuse_matches_skips_extraction_and_matching(tmp_path, monkeypatch):
+    import json
+    from plypipe.log import Log
+    from plypipe.util import Ctx
+    ctx = Ctx(out=tmp_path, log=Log(tmp_path, quiet=True), opts={"reuse_matches": True})
+    ctx.frames_dir.mkdir(parents=True)
+    for i in range(12):
+        (ctx.frames_dir / f"{i:06d}.jpg").write_bytes(b"x")
+    ctx.colmap_dir.mkdir(parents=True)
+    (ctx.colmap_dir / "database.db").write_bytes(b"db")
+    (ctx.colmap_dir / "sparse_all").mkdir()
+    (ctx.colmap_dir / "matching.json").write_text(json.dumps({"features": "sift", "matcher": "sequential", "loopDetection": True}))
+    seen = {}
+    monkeypatch.setattr(sfm, "_pycolmap", lambda: types.SimpleNamespace(Device=lambda d: d))
+    monkeypatch.setattr(sfm, "_extract_and_match", lambda *a, **k: (_ for _ in ()).throw(AssertionError("re-matched")))
+    monkeypatch.setattr(sfm, "_map", lambda ctx, pc, cdir, db, images, n, source, features, requested, matcher, loops, cam:
+                        seen.update(features=features, matcher=matcher, loops=loops, n=n) or {"ok": True})
+    assert sfm.run_stage(ctx) == {"ok": True}
+    assert seen == {"features": "sift", "matcher": "sequential", "loops": True, "n": 12}
+    assert (ctx.colmap_dir / "database.db").exists() and not (ctx.colmap_dir / "sparse_all").exists()

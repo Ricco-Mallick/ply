@@ -57,3 +57,33 @@ def test_dominant_yaw_recovers_room_axes():
         # Manhattan ambiguity: equal modulo 90 deg
         diff = (np.degrees(yaw) - deg + 45) % 90 - 45
         assert abs(diff) < 3, (deg, np.degrees(yaw))
+
+
+def _cams(yaws_deg, pitches_deg, roll_deg=0.0):
+    """Camera up and forward vectors in a +y-up world, for the given yaw / pitch (deg) and a fixed roll."""
+    ups, fwds = [], []
+    for yaw, pitch in zip(np.radians(yaws_deg), np.radians(pitches_deg)):
+        f = np.array([np.sin(yaw) * np.cos(pitch), np.sin(pitch), np.cos(yaw) * np.cos(pitch)])
+        r = np.cross(f, [0.0, 1.0, 0.0]); r /= np.linalg.norm(r)
+        u = np.cross(r, f)
+        c, s = np.cos(np.radians(roll_deg)), np.sin(np.radians(roll_deg))
+        ups.append(c * u + s * r); fwds.append(f)
+    return np.array(ups), np.array(fwds)
+
+
+def test_gravity_from_level_cameras_ignores_pitch():
+    """Facing one end and looking up at the vault tilts the mean up vector; the cameras' right axes stay level."""
+    rng = np.random.default_rng(0)
+    yaws = rng.uniform(-70, 70, 400)
+    pitches = np.where(rng.random(400) < 0.4, rng.uniform(30, 60, 400), rng.uniform(-15, 10, 400))
+    ups, fwds = _cams(yaws, pitches, roll_deg=2.0)
+    mean = ups.mean(0) / np.linalg.norm(ups.mean(0))
+    g, how = geometry.gravity_guess(ups, fwds)
+    deg = lambda a: np.degrees(np.arccos(np.clip(a @ [0, 1.0, 0], -1, 1)))
+    assert how == "camera-level" and deg(g) < 2.5 and deg(mean) > 8
+
+
+def test_gravity_falls_back_to_mean_up_when_the_camera_never_turned():
+    ups, fwds = _cams(np.zeros(50), np.linspace(-20, 40, 50))
+    g, how = geometry.gravity_guess(ups, fwds)
+    assert how == "mean-up" and np.allclose(g, ups.mean(0) / np.linalg.norm(ups.mean(0)))
