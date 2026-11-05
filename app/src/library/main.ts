@@ -54,7 +54,7 @@ app.innerHTML = `
 
 const DEMOS: { name: string; note: string; walk: string; model?: string }[] = [
   { name: 'Classroom', note: '10.5 × 6.3 m · 194 places · one pipeline version behind the current one', walk: './walk.html?scene=' + encodeURIComponent(`${API}/v1/scenes/hq-classroom-1/scene.json`), model: './model.html?scene=' + encodeURIComponent(`${API}/v1/scenes/hq-classroom-1/scene.json`) + '&module=/ply/models/classroom2.js' },
-  { name: 'Chapel', note: 'vaulted interior · older pipeline, quality below today\'s standard', walk: './walk.html?scene=' + encodeURIComponent(`${API}/v1/scenes/hq-chapel-1/scene.json`) },
+  { name: 'Chapel', note: 'vaulted interior · current pipeline, high preset', walk: './walk.html?scene=' + encodeURIComponent(`${API}/v1/scenes/chapel-high-2/scene.json`) },
   { name: 'Office (LiDAR)', note: '6.15 M points · measured shell · under development', walk: './lidar.html' },
   // Deep Blending's Dr Johnson house (263 photos) through the current pipeline, one twin per preset; numbers in docs/BENCHMARK.md
   ...([

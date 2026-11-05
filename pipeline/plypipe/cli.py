@@ -74,9 +74,16 @@ def build_parser() -> argparse.ArgumentParser:
     g.add_argument("--label-frames", type=int, default=120, help="frames SAM 3 looks at (spread over the capture)")
     g.add_argument("--label-threshold", type=float, default=0.5)
     g = r.add_argument_group("sfm")
-    g.add_argument("--features", choices=["aliked", "sift"], default="aliked")
+    g.add_argument("--features", choices=["aliked", "aliked-lg", "sift"], default="aliked",
+                   help="aliked: COLMAP's own (needs a pycolmap with ONNX; SIFT otherwise). aliked-lg: ALIKED + LightGlue "
+                        "in PyTorch (GPU). sift: classic")
     g.add_argument("--matcher", choices=["auto", "sequential", "exhaustive", "vocabtree"], default="auto")
     g.add_argument("--no-loop-detection", action="store_true", help="sequential matching without retrieval loop closure")
+    g.add_argument("--sfm-part", choices=["all", "match"], default="all",
+                   help="match: stop the sfm stage after features and matching (the GPU half of a split solve); "
+                        "map the database later with --reuse-matches")
+    g.add_argument("--split-min", type=int, default=400,
+                   help="--sfm-part match only splits captures with at least this many frames (smaller ones solve here)")
     g.add_argument("--reuse-matches", action="store_true",
                    help="re-solve from the features and matches already in colmap/database.db (skips extraction and matching)")
     g.add_argument("--no-mapper-fallback", action="store_true",
@@ -155,6 +162,9 @@ def main(argv: list[str] | None = None) -> int:
             log.emit(name, "error", str(e), trace=traceback.format_exc()[-2000:])
             return 1
         report["seconds"] = round(time.time() - t0, 1)
+        if report.get("partial"):  # a split stage paused part-way: not done, and nothing after it can run yet
+            log.emit(name, "paused", report["partial"], **report)
+            return 0
         mark_done(ctx, name, report)
         log.emit(name, "done", **report)
     # the same gate the worker applies: say what is wrong with this run, in words that name the cause

@@ -3,6 +3,104 @@
 What changed in the pipeline, why, and how it was measured. The newest work is first. Each entry names the defect,
 the evidence for it, the change, and what the change was checked against. Costs are from `modal billing report`.
 
+## 2026-11-05: the room crop, ALIKED, the CPU camera solve
+
+Follow-ups from the chapel test. Costs from `modal billing report`: $1.32 in total on ricco-marcelino ($1.06 of it the
+ALIKED test).
+
+| Item | Result |
+|---|---|
+| Room crop cost the chapel 3.4 dB | Fixed: the crop keeps what the training views draw. Chapel −0.01 dB (was −3.44), Dr Johnson 0.00 dB; the gate now keeps the crop on both |
+| ALIKED features never ran | Runs now, in PyTorch (`--features aliked-lg`). Measured on the chapel: not better than SIFT, so it is opt-in |
+| Camera solve on the GPU box | Split written and tested (`plypipe/handoff.py`): the GPU matches, a CPU box maps. Off by default until one live job is watched |
+| Evidence frames never uploaded | Fixed: `worker.py` used `np` without importing numpy, so every capture over 48 frames failed that step silently |
+| Library's Chapel card | Opens `chapel-high-2` (the current pipeline) instead of `hq-chapel-1` |
+
+### The room crop: keep what the views need (`export.needed_crop`)
+
+**Evidence.** Rendering the high chapel's held-out views with parts of the crop applied (`ply-crop-diag`):
+
+| Crop | Viewer PSNR | See-through |
+|---|---|---|
+| none | 26.13 dB | 0.01% |
+| the whole box (before) | 22.70 dB | 9.7% (worst view 39%) |
+| below the floor only | 24.82 dB | 1.6% |
+| above the ceiling only | 24.47 dB | 5.6% (worst view 38%) |
+| the sides only | 25.55 dB | 2.5% |
+
+![Held-out chapel views: photo, full model, cropped by the box, and where the crop changed the render](report-assets/chapel-crop-diag.jpg)
+
+Every face of the box removed something real. The box's top is the 98th percentile of the sparse points + 0.5 m, and
+a smooth vault yields few sparse points, so the vault's splats sat above it (the dark patches above). The sides cut
+the view through the windows, which is genuinely outside the room, and the floor cut the reflections of the polished
+floor, which training places 2.6 m below it.
+
+**Change.** A box cannot tell those from floaters, but the training photographs can. `viewer_eval.training_weights`
+sums each splat's blend weight over every 5th training view, at half resolution, with the held-out views left out so
+the gate still judges fairly. With colours fixed at 1 the render is the sum of the blend weights, so its gradient with
+respect to each colour is that splat's weight. On the chapel's 2M splats over 237 views that took 1.3 s. The crop now
+drops a splat only if it is outside the box *and* draws under 1 pixel's worth of weight (`NEEDED_PX`).
+`report.export.roomCrop` records what it did. Without a GPU, the box is used as before.
+
+**Measured.** 91% of the splats outside the chapel's box draw nothing at all (MCMC leaves many at near-zero opacity).
+The threshold barely matters between 0.25 and 64 px (all the same 26.12–26.13 dB):
+
+| Scene (high) | Outside the box | Dropped | Kept | Viewer PSNR with the crop | Without |
+|---|---|---|---|---|---|
+| Chapel | 167,163 | 160,688 | 6,475 | 26.11 dB | 26.13 dB |
+| Dr Johnson | 60,546 | 57,184 | 3,362 | 31.02 dB | 31.02 dB |
+
+### ALIKED + LightGlue in PyTorch (`stages/sfm_torch.py`)
+
+**Evidence.** Neither pycolmap 4.2.1 wheel (CPU or CUDA 12) is built with ONNX Runtime; asking either for ALIKED
+aborts the process (checked locally on a chapel frame).
+
+**Change.** The same networks ship as PyTorch modules in cvg/LightGlue. `--features aliked-lg` extracts ALIKED
+keypoints (4,096 per frame), pairs frames by sequence within each clip plus the 20 most similar frames by a DINOv2
+descriptor (loop closure and clip-to-clip links), matches them with LightGlue, writes keypoints and matches into
+COLMAP's database and lets COLMAP verify and map as usual. LightGlue (pinned), its weights and DINOv2-small are baked
+into the worker image.
+
+**Measured on the chapel** (the same 1,236 frames as the SIFT solve):
+
+| | SIFT (default) | ALIKED + LightGlue |
+|---|---|---|
+| Extract + match (L40S) | 10 min | 9.6 min (71 s extract, 31,259 pairs in 7 min, 49 s verify) |
+| Global mapper | rejected, 27 path jumps | rejected, 83 path jumps |
+| Incremental mapper (CPU box) | 1,223 frames, 0.58 px, 58.8 min | 1,090 frames placed, then one bundle adjustment ran 52 min without finishing; stopped |
+
+16 million matches make every bundle adjustment heavier, and the global solve is worse, not better. On this capture
+it is not an improvement, so SIFT stays the default. What could change that, untested: fewer keypoints (2,048), or
+LightGlue's match scores to keep only confident matches.
+
+### The camera solve on a CPU box (`plypipe/handoff.py`)
+
+**Evidence.** The chapel's mapping was 93 of 119 minutes, all on the CPU, with the GPU idle and billed. The same
+solve on a CPU-only box took 58.8 min for $0.68 (2026-11-04, `modal/sfm_cpu.py`).
+
+**Change.** Long captures (400 frames or more, `PLY_CPU_SFM_MIN`) are split across machines:
+
+1. The GPU worker runs frames and matching (`--sfm-part match`), copies the job folder to the `ply-handoff` Volume,
+   starts `solve` (a CPU function in the same Modal app), and goes on to the next job or stops billing.
+2. `solve` maps the matches (`--only sfm --reuse-matches`) with heartbeats to the API, parks the solved folder, and
+   re-queues the job (the API now resets the attempt count on a worker's re-queue, so this planned hand-back does not
+   use up the job's crash retry). It starts a GPU worker unless one is running.
+3. The GPU worker claims the job again, restores the solved folder, and runs the rest without downloading the clips.
+
+If the CPU solve fails, the job fails with the solver's log. A retry solves on the GPU box instead of handing over
+again, and so does a job whose solver died mid-way. Coverage checks (`--until`) and short captures are never split.
+
+**State.** Covered by tests with stand-ins for the pipeline and the API (`tests/test_handoff.py`: hand over, solve,
+resume without re-downloading; a failed solve, then a retry on the GPU). Not yet run on a live job, so it ships off:
+`PLY_CPU_SFM=0` in `ply_modal.py`. Turn it on with `PLY_CPU_SFM=1 modal deploy pipeline/modal/ply_modal.py`, then
+watch one long job through. Expected saving per long video: about $1.40 on an L4, $2.50 on an L40S.
+
+### Still open
+
+- **The CPU split needs one live job** before it is turned on.
+- **The global mapper fails on the chapel** with both feature types and costs ~23 min before the fallback.
+- **About 10% of the chapel's splats are blown out** at the windows: the footage's exposure.
+
 ## 2026-11-04: the chapel end-to-end test and its fixes
 
 The chapel's 8 DJI clips (9.7 min of 4K 10-bit HEVC) went through the whole pipeline from scratch, at the quick
@@ -124,17 +222,11 @@ keeps nearly every frame: the chapel's 0053 sat at 27% of the sharpest clip and 
 They are not cut: frames that are the only view of a place still beat a gap in the solve. The threshold is 30%, not
 40%, because darkness lowers the measure too (the chapel's dim but sharp 0064 sat at 37%).
 
-### Still open
+### Still open (as of 2026-11-04)
 
-- **The room crop still costs detail.** On the high chapel, cropping would cost 3.4 dB and 9.8% see-through pixels,
-  so the export gate leaves it off (and keeps the floater pass). A wider crop box (0.5–99.5th percentile instead of
-  2–98th) only brought that to 2.8 dB and 7.3%, so it was not kept. The cause is not found yet.
-- **ALIKED + LightGlue never run.** The pycolmap-cuda12 4.2.1 wheel has no ONNX runtime, so every job uses SIFT.
-  Adding it means building COLMAP with ONNX or matching in PyTorch and importing the matches. SIFT registered
-  99% of the chapel, so the gain is unproven.
+- The room crop and ALIKED: both addressed on 2026-11-05, above.
 - **The global mapper fails on the chapel**, even with clip-aware jump counting (27 genuine jumps), and costs
-  ~23 min before the fallback. Skipping it for long videos was not done: one capture is not enough evidence, and it
-  succeeds on the classroom.
+  ~23 min before the fallback.
 - **About 10% of the chapel's splats are blown out** at the windows. That is the footage's exposure, not the pipeline.
 
 ### Tests and tools

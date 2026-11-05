@@ -31,7 +31,8 @@ vol = modal.Volume.from_name("ply-bench")
 @app.function(cpu=8, memory=32768, timeout=3 * 3600, volumes={"/vol": vol})
 def solve(src: str, tag: str, args: list[str]) -> dict:
     s, job = Path("/vol") / src, Path("/tmp/job")
-    for rel in ("frames", "frames_index.json", ".done/frames.json", "colmap/database.db", "plan.json", "scene.json"):
+    for rel in ("frames", "frames_index.json", ".done/frames.json", "colmap/database.db", "colmap/matching.json", "plan.json",
+                "scene.json"):
         if (s / rel).is_dir():
             shutil.copytree(s / rel, job / rel)
         elif (s / rel).exists():

@@ -30,6 +30,8 @@ import urllib.parse
 import urllib.request
 from pathlib import Path
 
+import numpy as np
+
 from plypipe.live import Live
 from plypipe import hf
 from plypipe.progress import SfmProgress
@@ -366,11 +368,27 @@ def run_job(api: Api, job: dict, work: Path, extra: list[str]) -> None:
 
     t = threading.Thread(target=beat, daemon=True)
     t.start()
+    hd = None
     try:
         # inputs are cached per storage key for the whole session: retries and requeues don't download the clips
         # again (B2's free tier caps downloads at 1 GB/day)
         cache = work / "_inputs"
-        resumed = load_checkpoint(api, jid, out, root, job["args"])
+        # a long capture's camera solve runs on a CPU box (plypipe.handoff): a job it handed back resumes from there
+        from plypipe import handoff
+        hd = handoff.root()
+        split = []
+        if hd is not None and os.environ.get("PLY_CPU_SFM", "0") == "1":
+            back = handoff.take_back(jid, out, hd)
+            if back:
+                resumed = "sfm"
+                post(message="resuming after the CPU camera solve")
+                print(f"[worker] {jid}: cameras were solved on a CPU box, resuming", flush=True)
+            elif handoff.state(jid, hd) is None and "--until" not in job["args"]:  # long full runs only
+                split = ["--sfm-part", "match", "--split-min", os.environ.get("PLY_CPU_SFM_MIN", "400")]
+            # matched but not solved (the solver died) or failed there: solve on this box rather than loop
+        else:
+            back = False
+        resumed = "sfm" if back else load_checkpoint(api, jid, out, root, job["args"])
         if resumed:
             post(message=f"resuming after {resumed} (checkpoint)")
             print(f"[worker] resuming {jid} after {resumed}", flush=True)
@@ -394,7 +412,7 @@ def run_job(api: Api, job: dict, work: Path, extra: list[str]) -> None:
         runner = os.environ.get("PLY_PIPELINE_CMD", f"{sys.executable} -m plypipe").split()
         def pipeline(args: list[str]):
             """Run the pipeline once; returns (exit code, last error event, last lines of non-JSON output)."""
-            cmd = [*runner, "run", str(inp), "--out", str(out), *args, *extra]
+            cmd = [*runner, "run", str(inp), "--out", str(out), *args, *split, *extra]
             print("[worker] " + " ".join(cmd), flush=True)
             p = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1)
             last_err, tail = "", collections.deque(maxlen=40)
@@ -501,6 +519,15 @@ def run_job(api: Api, job: dict, work: Path, extra: list[str]) -> None:
         for attempt in range(1, (orchestrate.MAX_ATTEMPTS if judged else 1) + 1):
             state["msg"] = f"attempt {attempt}: starting pipeline"
             code, last_err, tail = pipeline(args)
+            if code == 0 and split and handoff.paused(out):
+                # matched: the mapping goes to a CPU box, and this GPU is free for the next job (or to stop billing)
+                handoff.hand_over(jid, job, out, hd)
+                handoff.spawn("solve", jid)
+                state["alive"] = False
+                post(stage="sfm", progress=overall("sfm", 0.3), message="matched on the GPU; solving the cameras on a CPU box")
+                print(f"[worker] {jid}: matched, camera solve handed to a CPU box", flush=True)
+                return
+            split = []  # a retry or a later attempt solves on this box
             # a native crash in camera solving (abort/segfault: negative exit code) is usually the learned features
             # or the global mapper on an unusual capture; retry from sfm with classic SIFT + incremental mapping
             if code < 0 and state["stage"] == "sfm" and "incremental" not in args and not state["timeout"]:
@@ -627,9 +654,16 @@ def run_job(api: Api, job: dict, work: Path, extra: list[str]) -> None:
              message=("quality gate failed: " + opinion["recommend"]) if not quality["ok"] else "ready for review",
              result={"base": f"/v1/scenes/{jid}/", "files": files, "report": report,
                      "quality": quality, "review": opinion, "attempts": attempts})
+        if hd is not None:
+            handoff.discard(jid, hd)
     except Exception as e:
         state["alive"] = False
         post(status="failed", message=str(e)[-3800:])  # keep the end: that is where the real error line is
+        try:
+            if hd is not None:
+                handoff.discard(jid, hd)
+        except Exception:
+            pass
         print(f"[worker] job {jid} failed: {e}", file=sys.stderr, flush=True)
     finally:
         state["alive"] = False

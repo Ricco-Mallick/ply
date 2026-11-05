@@ -297,6 +297,11 @@ def run_stage(ctx: Ctx) -> dict:
     else:
         features, matcher, loops = _extract_and_match(ctx, pycolmap, cdir, db, images, n_images, device, requested, source,
                                                       cam_params)
+        if ctx.opt("sfm_part") == "match" and n_images >= int(ctx.opt("split_min", 400) or 0):
+            # the GPU half of a split solve: features and matches are in the database; a CPU box maps them later
+            # (`--reuse-matches`). The stage is not marked done, so the next run resumes here.
+            return {"partial": "matched", "features": features, "matcher": matcher, "loopDetection": loops,
+                    "images": n_images}
     return _map(ctx, pycolmap, cdir, db, images, n_images, source, features, requested, matcher, loops, cam_params)
 
 
@@ -306,6 +311,25 @@ def _extract_and_match(ctx: Ctx, pycolmap, cdir: Path, db: Path, images: Path, n
         shutil.rmtree(cdir)
     cdir.mkdir(parents=True)
     features = requested
+    if features == "aliked-lg":
+        # opt-in, not the default: on the chapel its 16M matches made the incremental mapper's bundle adjustment run
+        # 50+ min without finishing, and the global mapper broke in 83 places against SIFT's 27 (docs/IMPROVEMENT.md)
+        from plypipe.stages import sfm_torch
+        if sfm_torch.available():
+            ctx.log.emit("sfm", "progress", "ALIKED + LightGlue in PyTorch (this pycolmap has no ONNX runtime)", images=n_images)
+            reader = pycolmap.ImageReaderOptions()
+            reader.camera_model = ctx.opt("camera_model", "SIMPLE_RADIAL")
+            if cam_params and reader.camera_model == "SIMPLE_RADIAL":
+                reader.camera_params = cam_params
+            stats = sfm_torch.extract_and_match(
+                pycolmap, db, images, _camera_mode(pycolmap, images), reader,
+                clip_index(ctx.out) if source in ORDERED_SOURCES else None, ordered=source in ORDERED_SOURCES,
+                log=lambda msg, **kw: ctx.log.emit("sfm", "progress", msg, **kw))
+            (cdir / "matching.json").write_text(json.dumps({"features": "aliked", "matcher": "lightglue", "loopDetection": stats["retrieval"], "torch": stats}))
+            ctx.log.emit("sfm", "progress", "matched", **stats)
+            return "aliked", "lightglue", stats["retrieval"]
+        ctx.log.emit("sfm", "warn", "aliked-lg needs a CUDA GPU and the lightglue package: using SIFT")
+        features = "sift"
     if features == "aliked" and not aliked_available(images, ctx.opt("device", "auto")):
         ctx.log.emit("sfm", "warn", "this pycolmap has no ONNX runtime, so ALIKED would abort the process: using SIFT")
         features = "sift"
