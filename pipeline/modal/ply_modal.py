@@ -70,7 +70,7 @@ app = modal.App("ply", image=image)
 secret = modal.Secret.from_name("ply-worker")
 # long captures solve their cameras on a CPU box (plypipe.handoff): COLMAP's mapper never uses the GPU, and on the
 # chapel it was 93 of 119 min of a billed L40S. The job folder travels through this Volume between the two.
-CPU_SFM = os.environ.get("PLY_CPU_SFM", "0")  # off until a live job has been watched end to end; deploy with PLY_CPU_SFM=1
+CPU_SFM = os.environ.get("PLY_CPU_SFM", "1")  # on since the 2026-11-05 live chapel job; deploy with PLY_CPU_SFM=0 to solve on the GPU box
 CPU_SFM_MIN = os.environ.get("PLY_CPU_SFM_MIN", "400")
 handoff_vol = modal.Volume.from_name("ply-handoff", create_if_missing=True)
 cpu_image = (modal.Image.debian_slim(python_version="3.12")
