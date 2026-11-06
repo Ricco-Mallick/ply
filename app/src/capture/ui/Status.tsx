@@ -46,7 +46,7 @@ export function Status({ jobId, onHome }: { jobId: string; onHome: () => void })
   const head = !job ? 'Checking…' : job.status === 'queued' ? 'Waiting for a GPU' : job.status === 'running' ? 'Building your twin' : job.status === 'review' ? 'Ready for your call' : job.status === 'done' ? 'Your twin is ready' : 'Processing failed';
 
   return (
-    <main className={`status ${job?.status === 'running' || job?.status === 'done' ? 'wide-status' : ''}`}>
+    <main className={`status ${job?.status === 'running' || job?.status === 'review' || job?.status === 'done' ? 'wide-status' : ''}`}>
       <header className="cap-top"><button className="back mono" onClick={onHome}>← Captures</button><span className="mono dim">Job {jobId.slice(0, 8)}</span></header>
       <div className="wide eyebrow">{job?.name ?? 'Processing'}</div>
       <h1>{head}</h1>
@@ -62,6 +62,7 @@ export function Status({ jobId, onHome }: { jobId: string; onHome: () => void })
           {!!job.result.review.good.length && <ul className="review-good">{job.result.review.good.map(g => <li key={g}>{g}</li>)}</ul>}
           {!!job.result.review.risk.length && <ul className="review-risk">{job.result.review.risk.map(x => <li key={x}>{x}</li>)}</ul>}
           <div className="review-actions">
+            <a className="btn ghost" href={walk}>Walk it before deciding</a>
             <button className="btn big" onClick={() => decide('approve').catch(e => setErr(e.message))}>Publish this twin</button>
             <button className="btn ghost" onClick={() => decide('reject').catch(e => setErr(e.message))}>Send it back to the queue</button>
           </div>
@@ -75,11 +76,11 @@ export function Status({ jobId, onHome }: { jobId: string; onHome: () => void })
       )}
       {job?.status === 'done' && <p className="lead">Finished in {job.started_at && job.finished_at ? ago(Date.now() - (job.finished_at - job.started_at)) : '—'}. Walk it in the browser, share the link, or open it on the big screen.</p>}
 
-      {job && (job.status === 'running' || job.status === 'done') && <LiveTheatre jobId={jobId} job={job} />}
+      {job && (job.status === 'running' || job.status === 'review' || job.status === 'done') && <LiveTheatre jobId={jobId} job={job} />}
 
       <Glass className="stages" opts={{ radius: 20, shader: false }}>
         <ol>{STAGES.map(([k, label], i) => {
-          const state = job?.status === 'done' ? 'done' : i < si ? 'done' : i === si ? (job?.status === 'failed' ? 'fail' : 'now') : 'todo';
+          const state = job?.status === 'done' || job?.status === 'review' ? 'done' : i < si ? 'done' : i === si ? (job?.status === 'failed' ? 'fail' : 'now') : 'todo';
           return <li key={k} className={state}><span className="st-dot" aria-hidden="true" /><span className="st-l">{label}</span>{state === 'now' && job && <span className="mono st-p">{stagePct(job)}%</span>}{state === 'done' && <span className="mono st-p">✓</span>}</li>;
         })}</ol>
         {job?.status === 'running' && <div className="bar"><i style={{ transform: `scaleX(${job.progress})` }} /></div>}
@@ -88,7 +89,7 @@ export function Status({ jobId, onHome }: { jobId: string; onHome: () => void })
 
       <div className="actions">
         <button className="btn ghost" onClick={() => navigator.clipboard?.writeText(link).then(() => { setCopied(true); setTimeout(() => setCopied(false), 1500); })}>{copied ? 'Link copied' : 'Copy status link'}</button>
-        {job?.status === 'done' && <a className="btn big" href={walk}>Open walkthrough</a>}
+        {(job?.status === 'done' || job?.status === 'review') && <a className="btn big" href={walk}>Open walkthrough</a>}
       </div>
     </main>
   );
