@@ -28,7 +28,8 @@ export function LiveTheatre({ jobId, job }: { jobId: string; job: Job }) {
     poll(); return () => { ac.abort(); clearTimeout(t); };
   }, [jobId, job.status]);
   // follow the newest artifact unless the viewer picked a tab themselves
-  const done = job.status === 'done' && !!job.result && !(job.result as any).preview;
+  // a run waiting in review has published its finished twin too: the reviewer needs to see it to decide
+  const done = (job.status === 'done' || job.status === 'review') && !!job.result && !(job.result as any).preview;
   const latest: Tab | null = done || idx?.snapshots.length ? 'twin' : idx?.sparse ? 'cameras' : idx?.frames ? 'frames' : null;
   useEffect(() => { if (!pinned && latest) setTab(latest); }, [latest, pinned]);
   if (!idx && !done) return null;
