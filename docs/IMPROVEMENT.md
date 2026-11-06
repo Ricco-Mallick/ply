@@ -12,7 +12,7 @@ ALIKED test).
 |---|---|
 | Room crop cost the chapel 3.4 dB | Fixed: the crop keeps what the training views draw. Chapel −0.01 dB (was −3.44), Dr Johnson 0.00 dB; the gate now keeps the crop on both |
 | ALIKED features never ran | Runs now, in PyTorch (`--features aliked-lg`). Measured on the chapel: not better than SIFT, so it is opt-in |
-| Camera solve on the GPU box | Split written and tested (`plypipe/handoff.py`): the GPU matches, a CPU box maps. Off by default until one live job is watched |
+| Camera solve on the GPU box | Split (`plypipe/handoff.py`): the GPU matches, a CPU box maps. On by default since a live chapel job passed end to end |
 | Evidence frames never uploaded | Fixed: `worker.py` used `np` without importing numpy, so every capture over 48 frames failed that step silently |
 | Library's Chapel card | Opens `chapel-high-2` (the current pipeline) instead of `hq-chapel-1` |
 
@@ -91,9 +91,8 @@ If the CPU solve fails, the job fails with the solver's log. A retry solves on t
 again, and so does a job whose solver died mid-way. Coverage checks (`--until`) and short captures are never split.
 
 **State.** Covered by tests with stand-ins for the pipeline and the API (`tests/test_handoff.py`: hand over, solve,
-resume without re-downloading; a failed solve, then a retry on the GPU). Not yet run on a live job, so it ships off:
-`PLY_CPU_SFM=0` in `ply_modal.py`. Turn it on with `PLY_CPU_SFM=1 modal deploy pipeline/modal/ply_modal.py`, then
-watch one long job through. Expected saving per long video: about $1.40 on an L4, $2.50 on an L40S.
+resume without re-downloading; a failed solve, then a retry on the GPU). On by default since the live job below;
+`PLY_CPU_SFM=0 modal deploy pipeline/modal/ply_modal.py` turns it off. Expected saving per long video: about $1.40 on an L4, $2.50 on an L40S.
 
 **Live test (2026-11-05, chapel at Quick, 1,236 frames, L4).** Two attempts found three defects the stand-ins
 could not:
@@ -111,9 +110,16 @@ solved 1,223/1,236 frames (global mapper rejected for 21 path jumps after 32 min
 re-queued the job and started a GPU worker, which restored the folder and resumed after `sfm`. Then it hit defect 3.
 The last leg (align onwards on the restored folder) has not run live, so the split is deployed off again.
 
+**Live test 3 (2026-11-05/06, with all three fixes): passed.** GPU matching 15 min, then the L4 stopped. The CPU box
+solved 1,222/1,236 frames in 101.7 min (global mapper rejected for 29 path jumps, then incremental). A GPU worker
+resumed after `sfm` without the clips, and align, occupancy, labels, a 7k-step train and export all ran: held-out
+PSNR 24.39 dB / SSIM 0.842 on 41 views, 17.9 MB SPZ, quality check ok. Billed about $3.07 for the `ply` app
+for the whole job, submission to review (23:00–02:10 UTC). That includes an extra L4 start the trigger queued while the
+first worker ran (it found nothing to do and idled out). Publishing took ~18 min, mostly uploading evidence frames
+to Hugging Face one file at a time.
+
 ### Still open
 
-- **The CPU split needs one more live job** (from `align` onwards after the hand-back) before it is turned on.
 - **The global mapper fails on the chapel** with both feature types and costs ~23 min before the fallback.
 - **About 10% of the chapel's splats are blown out** at the windows: the footage's exposure.
 
