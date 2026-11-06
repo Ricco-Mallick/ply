@@ -4,8 +4,8 @@ Written 2026-11-06. This plan says what to build next, how each idea is tested a
 result lets it ship. Nothing ships on a paper's claim alone: each change is measured on our own captures and on one
 public dataset with a laser-scanned ground truth, and must not make another metric worse.
 
-Budget: the dev phase uses whatever credit is left now. The final day has about $60 ($30 on riccomarcelino, $30 on
-ricco-mallick), so hardware is not the constraint that day. Follow the checklist in `MISTAKES.md` before every paid run.
+Budget: about $8 until the final day ($6.29 on riccomarcelino, $1.71 on ricco-mallick, 2026-11-06). The final day
+(IIT Bombay) has about $60 ($30 on each account), so hardware is not the constraint that day. Follow the checklist in `MISTAKES.md` before every paid run.
 
 Prices used below are Modal list prices per hour (2026-11): H100 $3.95, A100 80 GB $2.50, L40S $1.95, L4 $0.80,
 CPU $0.047 per core plus $0.008 per GiB. Times come from the chapel runs in `IMPROVEMENT.md`.
@@ -230,13 +230,22 @@ file and desktops the full one. Tested with the existing build and a Playwright 
 
 ## Schedule and spend
 
-| Phase | Work | Spend |
-|---|---|---|
-| 0 | harness, MuSHRoom download and baselines, regions file | ~$3 |
-| 1 | W1 solve variants (CPU, saved matches); W2 priors; W3b mesh from chapel-high-2; W4 and W5 on that mesh | ~$6 |
-| 2 | W3c/3d and W6 train-only variants at 15k steps | ~$12 |
-| 3 | combine the winners into a `best` preset; one Quick end-to-end run per scenario to catch breakage | ~$5 |
-| Final day | 2–3 full `best` runs on H100 (chapel plus one new capture), each ~$6–10 with the bigger cap and resolution; a second worker deployed on ricco-mallick so two jobs run at once; $10 held back for a failed run | ~$50 of $60 |
+Until the final day there is about $8, so everything that can run on a CPU in CI or the sandbox does, the paid runs
+reuse what is already on the `ply-bench` Volume (the chapel's frames, matches and the High twin), and anything that
+needs fresh training waits for the final day.
+
+| Phase | Work | Where | Spend |
+|---|---|---|---|
+| 0 | Harness (`eval/`, `ply_eval.py`, `eval_table.py`) with synthetic-room tests; MuSHRoom download plus its laser-mesh metrics, on one room | sandbox / CI | $0 |
+| 1 | Code with CPU tests and no GPU: W1a (skip the global mapper on long video), W2 scale solver, W3b TSDF fusion, W4 SpatialLM parser plus snapping and door checks, W5 mesh-slice grid and navmesh build, W7 viewer loading | sandbox / CI | $0 |
+| 2 | On the saved chapel High twin: W3b mesh, W2 MoGe-2 on 150 frames, W4 SpatialLM on the mesh, W5 navmesh; scored for wall flatness, camera-path walkability and plausible scale | riccomarcelino | ~$1.50 |
+| 3 | W1a/W1b solve variants from the saved chapel matches (CPU box) | riccomarcelino | ~$1.50 |
+| 4 | One MuSHRoom room, end to end at Quick on an L4: the only test with a laser ground truth before the final day | riccomarcelino | ~$1.50 |
+| Reserve | a failed run, or a re-run after a fix | both | ~$3.50 |
+| **Final day, morning** | tape measurements (chapel or classroom: length, width, two doors, altar step); W6 sweep at 15k steps from one saved solve: T2 resolution, T3 cap, T4 depth/normal, T5 pose refinement, T6 3DGUT, T7 exposure, on L40S across both accounts | both | ~$12 |
+| **Final day, afternoon** | 2–3 full runs with the winning settings on H100, a worker on each account so two jobs run at once; $10 held back | both | ~$40 |
+
+W3c/3d (geometry training) also moves to the final-day sweep: it needs a fresh train.
 
 The order matters: W2 feeds W3, W3 feeds W4 and W5, and W1/W6 are independent. Results go into `docs/EXPERIMENTS.md`
 as they come in, and every shipped change gets an entry in `IMPROVEMENT.md` with its numbers.
@@ -249,7 +258,6 @@ is sold, the shipping path must use only the Apache/MIT/BSD options: 2DGS in gsp
 
 ## Open questions for the team
 
-1. Can someone revisit the chapel or the classroom with a tape measure (room length and width, two door widths, altar
-   step height)? Five numbers make the scale and layout scores real on our own captures.
-2. Is there a phone video of the LiDAR office? With it, S6 becomes our best geometry test.
-3. How much credit is left on each account now, for phases 0–3?
+1. Tape measurements: on the final day (IIT Bombay), before the paid runs. Until then, scale and layout are scored
+   against MuSHRoom only.
+2. Phone video of the LiDAR office: none for now; S6 stays optional.
