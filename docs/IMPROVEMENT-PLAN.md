@@ -4,8 +4,9 @@ Written 2026-11-06. This plan says what to build next, how each idea is tested a
 result lets it ship. Nothing ships on a paper's claim alone: each change is measured on our own captures and on one
 public dataset with a laser-scanned ground truth, and must not make another metric worse.
 
-Budget: about $8 until the final day ($6.29 on riccomarcelino, $1.71 on ricco-mallick, 2026-11-06). The final day
-(IIT Bombay) has about $60 ($30 on each account), so hardware is not the constraint that day. Follow the checklist in `MISTAKES.md` before every paid run.
+Budget: about $38 until the final day: $6.29 on riccomarcelino, $1.71 on ricco-mallick (2026-11-06), and about $30 of
+free credit on a third account (2026-11-08). The final day (IIT Bombay) has about $60 ($30 on each of the first two
+accounts), so hardware is not the constraint that day. Follow the checklist in `MISTAKES.md` before every paid run.
 
 Prices used below are Modal list prices per hour (2026-11): H100 $3.95, A100 80 GB $2.50, L40S $1.95, L4 $0.80,
 CPU $0.047 per core plus $0.008 per GiB. Times come from the chapel runs in `IMPROVEMENT.md`.
@@ -230,22 +231,25 @@ file and desktops the full one. Tested with the existing build and a Playwright 
 
 ## Schedule and spend
 
-Until the final day there is about $8, so everything that can run on a CPU in CI or the sandbox does, the paid runs
-reuse what is already on the `ply-bench` Volume (the chapel's frames, matches and the High twin), and anything that
-needs fresh training waits for the final day.
+Until the final day there is about $38. Everything that can run on a CPU in CI or the sandbox does. The paid runs
+reuse what is already saved on the `ply-bench` Volume where they can (the chapel's frames, matches and High twin).
+The third account's $30 pays for the experiments, so the final day only runs the winners.
 
 | Phase | Work | Where | Spend |
 |---|---|---|---|
-| 0 | Harness (`eval/`, `ply_eval.py`, `eval_table.py`) with synthetic-room tests; MuSHRoom download plus its laser-mesh metrics, on one room | sandbox / CI | $0 |
+| 0 | Harness (`eval/`, `ply_eval.py`, `eval_table.py`) with synthetic-room tests; MuSHRoom download plus its laser-mesh metrics | sandbox / CI | $0 |
 | 1 | Code with CPU tests and no GPU: W1a (skip the global mapper on long video), W2 scale solver, W3b TSDF fusion, W4 SpatialLM parser plus snapping and door checks, W5 mesh-slice grid and navmesh build, W7 viewer loading | sandbox / CI | $0 |
 | 2 | On the saved chapel High twin: W3b mesh, W2 MoGe-2 on 150 frames, W4 SpatialLM on the mesh, W5 navmesh; scored for wall flatness, camera-path walkability and plausible scale | riccomarcelino | ~$1.50 |
 | 3 | W1a/W1b solve variants from the saved chapel matches (CPU box) | riccomarcelino | ~$1.50 |
-| 4 | One MuSHRoom room, end to end at Quick on an L4: the only test with a laser ground truth before the final day | riccomarcelino | ~$1.50 |
-| Reserve | a failed run, or a re-run after a fix | both | ~$3.50 |
-| **Final day, morning** | tape measurements (chapel or classroom: length, width, two doors, altar step); W6 sweep at 15k steps from one saved solve: T2 resolution, T3 cap, T4 depth/normal, T5 pose refinement, T6 3DGUT, T7 exposure, on L40S across both accounts | both | ~$12 |
-| **Final day, afternoon** | 2–3 full runs with the winning settings on H100, a worker on each account so two jobs run at once; $10 held back | both | ~$40 |
+| 4 | Two MuSHRoom rooms end to end at Quick: baseline vs W2/W3b/W4/W5, against the laser ground truth | third account | ~$4 |
+| 5 | W6 splat-quality sweep at 15k steps from one saved chapel solve (T2 resolution, T3 cap, T4 depth/normal, T5 pose refinement, T6 3DGUT, T7 exposure) and W3c/3d geometry training, on L40S | third account | ~$14 |
+| 6 | The winners combined into a `best` preset; one Quick end-to-end run to catch breakage | third account | ~$5 |
+| Reserve | a failed run, or a re-run after a fix | all | ~$7 |
+| **Final day, morning** | tape measurements (chapel or classroom: length, width, two doors, altar step), scored against the phase 2 outputs | — | $0 |
+| **Final day** | 3–4 full runs of the `best` preset on H100, a worker on each account so two jobs run at once; $10 held back | first two accounts | ~$50 |
 
-W3c/3d (geometry training) also moves to the final-day sweep: it needs a fresh train.
+The third account needs its own Modal secrets (`ply-hf` for the gated SAM 3 weights) and its own copy of the inputs
+(the chapel clips come straight from Drive; the saved solve is copied from riccomarcelino's `ply-bench` Volume).
 
 The order matters: W2 feeds W3, W3 feeds W4 and W5, and W1/W6 are independent. Results go into `docs/EXPERIMENTS.md`
 as they come in, and every shipped change gets an entry in `IMPROVEMENT.md` with its numbers.
