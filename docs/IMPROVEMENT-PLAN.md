@@ -35,7 +35,7 @@ CPU $0.047 per core plus $0.008 per GiB. Times come from the chapel runs in `IMP
 | S3 | **MuSHRoom**, 2 rooms (iPhone video + Faro laser scan) | Zenodo, open ([records](https://zenodo.org/communities/mushroom/records)) | laser mesh, aligned poses | scale, mesh, floor plan, walking |
 | S4 | **Classroom** (phone walk, box room) | our earlier capture, if the clips are still stored | tape, if revisitable | everyday case; regression check |
 | S5 | **Synthetic room** (`tests/synth.py`, extended with a door and depth renders) | generated | exact | CPU unit tests in CI |
-| S6 | **LiDAR office** (`lidar-office-1`) | E57 on HF | scanner cloud | only if there is a phone video of the same office (question below) |
+| S6 | **LiDAR office** (`lidar-office-1`) | E57 on HF | scanner cloud | as a phone-walk test only with a phone video of the same office (question below); W8 uses the scan alone |
 
 S3 is the key addition: our captures have no geometric ground truth, so a mesh or floor plan can only be judged by
 eye. MuSHRoom is the dataset AGS-Mesh and DN-Splatter report on, which also lets us check our numbers against theirs.
@@ -229,6 +229,38 @@ Load `mesh.glb` / `collision.glb` / `navmesh.bin` from `scene.json` (new optiona
 walls, doors and windows from the layout in the measured layer. Above 2M splats, use LOD chunks, so phones get the lite
 file and desktops the full one. Tested with the existing build and a Playwright walk test.
 
+## Workstream 8: an existing LiDAR scan as a splat
+
+Goal: a customer who already has a scan (E57) gets the same twin as a phone walk: `scene.spz` and `scene_lite.spz`
+in the viewer, with the measured layer, occupancy and walking taken from the scan. `lidar-office-1` (184.6 M points)
+is the test; today `scripts/lidar/ingest_e57.py` reads only scan 0 into a 6 M-point coloured PLY, and
+`office_shell.py` measures the shell from it. Nothing turns it into Gaussians yet.
+
+**Step 0, inspect the E57 (free):** number of scans, each scanner pose, and whether `images2D` holds the scanner's
+photos (spherical or pinhole) with their poses. This decides whether 8b is possible.
+
+| ID | Route | Needs | Expected |
+|---|---|---|---|
+| 8a | **Direct conversion, no training.** Voxel-downsample to ~1 cm (cap at the High splat count), one Gaussian per point: SH0 colour from the point, rotation from the local normal, a flat disk sized to the k-nearest-neighbour spacing, high opacity. Write a 3DGS PLY and hand it to the existing `export` stage | points only | exact geometry and scale; looks like a dense coloured cloud: no view-dependent colour, holes in the scanner's shadows |
+| 8b | **Train on the scanner's photos.** Cut each panorama into six 90° pinhole faces, poses fixed from the E57 (no SfM), initialise from 8a, depth loss from the scan projected into each face, densification only where the scan has holes | E57 images | real texture and highlights; weak between scanner stations, since that is all the camera saw |
+| 8c | **Phone video plus scan.** Our SfM on the video, Sim3 to the scan (from `align`) then ICP of the SfM points to the scan; train with 8a as initialisation and scan depth as supervision | a phone video of the same space (S6) | best of both: phone-walk texture on laser geometry |
+
+Training only on renders of the coloured cloud is not on the list: it can only reproduce 8a.
+
+Integration: a new job input kind `e57` that runs `ingest → lidar_splat (8a/8b) → export`, writing `shell.json` and
+`occupancy.json` from the full-density scan (no unknown cells, so it also feeds W5) and uploading the same `RESULTS`
+as a phone job. CPU tests use a synthetic coloured box room from `tests/synth.py`.
+
+**Measure:** file size and load time of the lite file on a mid-range phone; viewer fps; Chamfer and F-score at 1 cm
+from the splat centres to the full-resolution scan; for 8b, cc-PSNR and LPIPS on a held-out scanner face (one face
+per station); wall-crossing rate on the resulting occupancy.
+
+**Ship:** 8a when the lite file loads on the phone, F-score at 1 cm ≥95% (conversion does not move geometry), and
+wall crossings <0.5%. 8b replaces 8a only if held-out LPIPS improves by ≥0.02 and F-score at 1 cm stays ≥90%.
+
+Cost: step 0 and 8a on the CPU box, about $0.20 (reading 184 M points is the slow part). 8b about $1.50 per 15k-step
+L40S train. 8c only if a video appears.
+
 ## Schedule and spend
 
 Until the final day there is about $38. Everything that can run on a CPU in CI or the sandbox does. The paid runs
@@ -238,11 +270,12 @@ The third account's $30 pays for the experiments, so the final day only runs the
 | Phase | Work | Where | Spend |
 |---|---|---|---|
 | 0 | Harness (`eval/`, `ply_eval.py`, `eval_table.py`) with synthetic-room tests; MuSHRoom download plus its laser-mesh metrics | sandbox / CI | $0 |
-| 1 | Code with CPU tests and no GPU: W1a (skip the global mapper on long video), W2 scale solver, W3b TSDF fusion, W4 SpatialLM parser plus snapping and door checks, W5 mesh-slice grid and navmesh build, W7 viewer loading | sandbox / CI | $0 |
+| 1 | Code with CPU tests and no GPU: W1a (skip the global mapper on long video), W2 scale solver, W3b TSDF fusion, W4 SpatialLM parser plus snapping and door checks, W5 mesh-slice grid and navmesh build, W7 viewer loading, W8a point-to-Gaussian converter | sandbox / CI | $0 |
 | 2 | On the saved chapel High twin: W3b mesh, W2 MoGe-2 on 150 frames, W4 SpatialLM on the mesh, W5 navmesh; scored for wall flatness, camera-path walkability and plausible scale | riccomarcelino | ~$1.50 |
 | 3 | W1a/W1b solve variants from the saved chapel matches (CPU box) | riccomarcelino | ~$1.50 |
 | 4 | Two MuSHRoom rooms end to end at Quick: baseline vs W2/W3b/W4/W5, against the laser ground truth | third account | ~$4 |
 | 5 | W6 splat-quality sweep at 15k steps from one saved chapel solve (T2 resolution, T3 cap, T4 depth/normal, T5 pose refinement, T6 3DGUT, T7 exposure) and W3c/3d geometry training, on L40S | third account | ~$14 |
+| 5b | W8 step 0 and 8a on `lidar-office-1` (CPU box); 8b on L40S if the E57 has photos | third account | ~$2 |
 | 6 | The winners combined into a `best` preset; one Quick end-to-end run to catch breakage | third account | ~$5 |
 | Reserve | a failed run, or a re-run after a fix | all | ~$7 |
 | **Final day, morning** | tape measurements (chapel or classroom: length, width, two doors, altar step), scored against the phase 2 outputs | — | $0 |
@@ -264,4 +297,4 @@ is sold, the shipping path must use only the Apache/MIT/BSD options: 2DGS in gsp
 
 1. Tape measurements: on the final day (IIT Bombay), before the paid runs. Until then, scale and layout are scored
    against MuSHRoom only.
-2. Phone video of the LiDAR office: none for now; S6 stays optional.
+2. Phone video of the LiDAR office: none for now; S6 and W8c stay optional. W8a/8b need only the scan.
