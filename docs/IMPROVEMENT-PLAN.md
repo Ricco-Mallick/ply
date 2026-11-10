@@ -1,255 +1,352 @@
 # Improvement plan: faster solve, better twins, real layout and walking
 
-Written 2026-11-06. This plan says what to build next, how each idea is tested against the alternatives, and what
-result lets it ship. Nothing ships on a paper's claim alone: each change is measured on our own captures and on one
+Rewritten 2026-11-10 after a review of the whole project (`PROJECT-REVIEW.md`). The first version (2026-11-06) set
+eight workstreams and about thirty variants side by side. This version keeps the workstreams and their tests, puts
+them in one order with a gate after each phase, corrects what the first version got wrong, and cuts what cannot ship
+before the final. Nothing ships on a paper's claim alone: each change is measured on our own captures and on one
 public dataset with a laser-scanned ground truth, and must not make another metric worse.
 
-Budget: the dev phase uses whatever credit is left now. The final day has about $60 ($30 on riccomarcelino, $30 on
-ricco-mallick), so hardware is not the constraint that day. Follow the checklist in `MISTAKES.md` before every paid run.
+Budget: about $38 until the final day ($6.29 on riccomarcelino and $1.71 on ricco-mallick as of 2026-11-06, about $30
+of free credit on a third account as of 2026-11-08), then about $60 on the final day (IIT Bombay, $30 on each of the
+first two accounts). Prices are Modal list prices per hour (2026-11): H100 $3.95, A100 80 GB $2.50, L40S $1.95,
+L4 $0.80, CPU $0.047 per core plus $0.008 per GiB. Follow the checklist in `MISTAKES.md` before every paid run.
 
-Prices used below are Modal list prices per hour (2026-11): H100 $3.95, A100 80 GB $2.50, L40S $1.95, L4 $0.80,
-CPU $0.047 per core plus $0.008 per GiB. Times come from the chapel runs in `IMPROVEMENT.md`.
+## 1. Where a job's time goes today
 
-## Where we are (chapel, 1,236 frames)
+The chapel at Quick (1,236 frames, job of 2026-11-05/06): 190 minutes from submission to review, $3.07.
 
-| Stage | Time | What it does now | Weakness |
+| Part | Minutes | Billed on | Note |
 |---|---|---|---|
-| frames | 4 min | sharpest frame per window, 1728 px from 3840 px source | throws away resolution |
-| sfm | 15 min match (GPU) + 102 min solve (CPU) | SIFT, global mapper, then incremental fallback | global mapper fails on every chapel run: 32 min wasted |
-| align | 30 s | floor plane by RANSAC; scale from an assumed 1.45 m camera height | scale is a guess (`scaleSource: camera-height-prior`) |
-| occupancy | 4 s | 10 cm grid from **sparse** SfM points | 37% of cells unknown; plain walls have no points, so the walker goes through them |
-| label | 3–5 min | SAM 3 boxes lifted on SfM points | fine |
-| shell | inside align/label | RANSAC wall lines on sparse points | misses walls, no reliable doors/windows |
-| train | 14 min (Quick) / 29 min (High, L40S) | gsplat MCMC, 2M cap, SH3, no depth or normal supervision | soft detail (altar), 10–12% glare at windows |
-| mesh | optional | COLMAP MVS + Poisson | fragile, slow, not used for walking |
+| Matching | 15 | GPU (L4) | |
+| Camera solve | 102 | CPU box, $1.12 | about 32 min is a global mapper run that is rejected; it has been rejected on all five chapel solves |
+| Training (7k steps) | 14 | GPU | 29 min at High on an L40S |
+| Publishing | 18 | GPU | 48 evidence frames, one upload per file |
+| Everything else | about 40 | mostly GPU | cold starts, clip download, frames (4 min), align, occupancy, labels, export |
 
-## Phase 0: the evaluation harness (build first, everything else depends on it)
+Training is 7% of the job, so a bigger GPU shortens very little of it. More cores are unlikely to shorten the solve
+much either, because the incremental mapper registers frames one after another (measured in phase 3, not assumed).
+The cheapest minutes are the 32 spent on a mapper that always fails and the 18 spent uploading with a GPU attached:
+50 of 190 minutes, for two small code changes (0.8 and 0.9 below).
 
-### Scenarios (test data)
+## 2. What the review changes
+
+| First version | What the code or the record says | Consequence |
+|---|---|---|
+| 37% of occupancy cells are unknown, so the walker crosses walls | The viewer blocks unknown cells. Walls are crossed because the viewer opens in Free mode (no collision), because free space is closed over plain interior walls, and because fast movement skips one-cell walls (`PROJECT-REVIEW.md`, W1–W3) | Fix the viewer and the grid first (phase 2). A navmesh is needed only for spaces with more than one floor level |
+| Raise the splat cap from 2M to 4M and 6M | The High chapel run kept 1.06M of its 2M splats, and two 3M runs went unstable | Find out why half the budget is deleted (free), then test the opacity regulariser; raise the cap only if the splats survive |
+| Ship a training change at +0.2 dB or −0.005 LPIPS | No run has been repeated, so the noise is unknown; an earlier A/B differed by 0.08 dB. Held-out views sit between training frames | Train the baseline twice, hold out a block of consecutive frames too, and read every threshold as the stated value or twice the measured spread, whichever is larger |
+| Compare L40S, A100 and H100 on full runs; compare 8, 16 and 32 cores | Training is 7% of the job, and the solve's waste is a mapper choice | Pick hardware from a two-minute timing probe per GPU. Test cores only with a mapper that can use them (1g) |
+| Layout from SpatialLM on mesh points | Its weights are non-commercial and it was trained on box rooms. We already hold three strong signals: dense wall points, the camera path (a wall line the camera crossed is a door) and SAM 3's door and window detections | The deterministic layout (4b) is the main line; SpatialLM is one comparison run |
+| not covered | The phone file is 2.15 dB worse than the desktop file | Variant Q6: fine-tune a model at the phone size instead of decimating |
+| not covered | The wheels expire on 2026-11-12, spend is unbounded, new twins carry a "bad capture" badge, nothing is checked on a pull request | Phase 0 |
+
+## 3. Order of work
+
+| Phase | What | Spend | Gate before the next phase |
+|---|---|---|---|
+| 0 | Protect the demo: wheels, secrets, spend limits, judge-facing bugs, CI, smoke test, cheaper solve and publish | ~$1 | CI green on a pull request; the smoke capture passes on every account |
+| 1 | Measure: harness, baselines, noise floor | ~$5 | Baseline table for the chapel, Dr Johnson and two MuSHRoom rooms; noise floor known |
+| 2 | Walking, mesh and layout | ~$2 | Wall crossings under 0.5%, camera path at least 99% walkable, every door passable |
+| 3 | Camera solve | ~$2.50 | At least 30% faster at equal quality, or the variant is dropped |
+| 4 | Splat quality | ~$11.50 | Each kept variant beats the baseline by more than the noise |
+| 5 | Scale | ~$0.60 | Scale error at most 3% on both MuSHRoom rooms, or the reference measurement is the shipped path |
+| 6 | LiDAR scan to splat | ~$2 | The phone file loads on a phone; geometry unchanged |
+| 7 | Combine, rehearse, freeze | ~$3.50 | One end-to-end run of the `best` preset passes every gate |
+| Reserve | a failed run, or a re-run after a fix | ~$8 | |
+| **Final day** | tape measurements, then the `best` preset on the chapel and one new capture | ~$50 of $60 | |
+
+That is about $36 of the $38. Phases 2, 3 and 4 do not depend on each other once phase 1 is done. Phase 5 feeds
+variant Q4b, and phases 2 and 5 feed phase 6. If time runs short, cut in this order: phase 6, then phase 3 (0.8 stays),
+then Q3 to Q5 of phase 4. Phases 0 to 2 and variants Q1, Q2 and Q6 are the minimum worth taking to the final.
+
+## 4. Phase 0: protect the demo
+
+| # | Task | Where | Check | Cost |
+|---|---|---|---|---|
+| 0.1 | **Keep the wheels.** Store the four wheels and a checksum file somewhere durable (the `ply-data` dataset or a release), add `scripts/fetch_wheels.py`, set the `wheels` workflow defaults to Python 3.12 and upload from the workflow | `.github/workflows/wheels.yml`, `pipeline/modal/ply_modal.py` | a fresh checkout deploys with one command | $0. **Before 2026-11-12** |
+| 0.2 | **Rotate** both Modal token pairs, the invite key and the invite codes. Secrets go in project variables, never in chat | owner | the old tokens are rejected | $0 |
+| 0.3 | **Spend limits.** Per invite: one active job and a daily count. Settings are mapped to trainer flags on the server; raw flags stay for the team key. One wall-clock cap per job. Stage limits that add up to less than the container timeout. A size cap on downloads. An idempotency key on job creation | `cloud/src/index.ts`, `pipeline/plypipe/worker.py:49`, `pipeline/modal/ply_modal.py:87,98`, `app/src/capture/lib/backend.ts` | new cases in `cloud/test/` and `tests/test_worker.py` | $0 |
+| 0.4 | **Judge-facing bugs.** No "bad capture" badge on new twins. Room modules from our own origin only. Place names as text. Results served only for published and in-review jobs. An owner per job | `app/src/shared/scene-status.ts`, `app/src/model/main.ts`, `app/src/lab/overlay.ts`, `cloud/src/index.ts:134-139` | unit tests, and a Playwright check of a new job's walkthrough | $0 |
+| 0.5 | **Checks on pull requests**: API tests, app typecheck and build, pipeline fast tests (205 s on a CPU). Required by branch protection | `.github/workflows/ci.yml` | the workflow | $0 |
+| 0.6 | **Smoke capture.** A 30-second clip (60 to 90 frames) kept on every account. `plyctl smoke` submits it through the real API with the CPU split forced on and 2k training steps, then checks every stage, the hand-off, the uploaded files and `verify` | `scripts/plyctl.py`, `PLY_CPU_SFM_MIN` | after every deploy and before every long run | ~$0.15 a run |
+| 0.7 | **One operations tool.** `plyctl status / logs / stop / cost / smoke` replaces the thirteen watch scripts and stops processes by PID | `scripts/` | — | $0 |
+| 0.8 | **Skip the mapper that always fails (1a).** Ordered video of 400 frames or more goes straight to the incremental mapper | `pipeline/plypipe/stages/sfm.py:391-433` | `test_sfm_plan.py`: mapper choice by source and frame count | saves ~32 min and ~$0.35 a run |
+| 0.9 | **Publish without the GPU waiting.** Evidence frames go up in one commit | `pipeline/plypipe/worker.py:618`, `pipeline/plypipe/hf.py` | `test_worker.py`: one upload call for the folder | saves ~15 GPU-min a run |
+| 0.10 | **`docs/STATUS.md`**: what is deployed, what is running, what is next. Updated at the end of every session | `docs/` | — | $0 |
+| 0.11 | **Record each clip's colour transfer** (`color_transfer` from ffprobe) in the frames report, and read it for the chapel clips. If they are HLG or D-Log, convert properly before JPEG | `pipeline/plypipe/stages/frames.py:104,247` | `test_frames.py` | $0 |
+
+## 5. Phase 1: measure
+
+### Scenarios
 
 | ID | Scenario | Source | Ground truth | Tests |
 |---|---|---|---|---|
-| S1 | **Chapel**: 8 DJI 4K clips, vaulted, glare, some blur, 1,236 frames | `ply-bench:chapel/in` (riccomarcelino) | held-out photos; tape measurements if you can revisit | solve speed, splat quality, layout on a non-box room |
+| S1 | **Chapel**: 8 DJI 4K clips, vaulted, glare, some blur, 1,236 frames | `ply-bench:chapel/in` (riccomarcelino) | held-out photos; tape measurements on the final day | solve speed, splat quality, layout on a room that is not a box |
 | S2 | **Dr Johnson** (Deep Blending photo set) | `ply-bench:drjohnson/prep` (ricco-mallick) | held-out photos; published scores | splat quality against public numbers |
 | S3 | **MuSHRoom**, 2 rooms (iPhone video + Faro laser scan) | Zenodo, open ([records](https://zenodo.org/communities/mushroom/records)) | laser mesh, aligned poses | scale, mesh, floor plan, walking |
 | S4 | **Classroom** (phone walk, box room) | our earlier capture, if the clips are still stored | tape, if revisitable | everyday case; regression check |
-| S5 | **Synthetic room** (`tests/synth.py`, extended with a door and depth renders) | generated | exact | CPU unit tests in CI |
-| S6 | **LiDAR office** (`lidar-office-1`) | E57 on HF | scanner cloud | only if there is a phone video of the same office (question below) |
+| S5 | **Synthetic rooms** (`tests/synth.py`): the box room, plus two rooms joined by a door through a plain partition wall, with depth renders | generated | exact | CPU unit tests in CI |
+| S6 | **LiDAR office** (`lidar-office-1`) | E57 on HF | scanner cloud | phase 6; a phone-walk test only if a video of the same office appears |
 
-S3 is the key addition: our captures have no geometric ground truth, so a mesh or floor plan can only be judged by
-eye. MuSHRoom is the dataset AGS-Mesh and DN-Splatter report on, which also lets us check our numbers against theirs.
+S3 is the only geometric ground truth we have. If the download or its pose format takes more than two hours to get
+working, stop and score geometry on S5 and on the chapel's hand-drawn plan only.
 
 ### Metrics
 
 | Area | Metric | How |
 |---|---|---|
-| Image | cc-PSNR, SSIM, LPIPS on the held-out views (every 30th frame, already in `report.json`) | existing |
-| Image | **hard-region LPIPS**: the held-out views that show the altar and the windows, masked to that region | new: pick view ids once, store in `eval/regions.json` |
-| Image | viewer PSNR and brightness (`viewer_eval.py`) | existing: catches "trainer looks better, viewer looks worse" |
-| Poses | registered frames, reprojection error, path jumps; ATE/rotation error against a reference solve after a Sim3 fit | new `eval/poses.py` |
+| Image | cc-PSNR, SSIM, LPIPS on every 30th frame | existing (`report.json`) |
+| Image | the same on a **held-out block**: 20 consecutive frames from the middle of one clip, poses from the solve | new: a split option in `train_launcher.py` |
+| Image | **hard-region LPIPS**: the held-out views that show the altar and the windows, masked to that region | new: view ids picked once, stored in `eval/regions.json` |
+| Image | viewer PSNR, brightness and see-through pixels, for the desktop file and the phone file | existing (`viewer_eval.py`, `shippedEval`) |
+| Poses | registered frames, reprojection error, path jumps; ATE and rotation error against a reference solve after a Sim3 fit | new `eval/poses.py` |
 | Scale | relative error of known distances (MuSHRoom: laser; chapel: tape) | new `eval/scale.py` |
-| Mesh | Chamfer distance, F-score at 5 and 10 cm, normal consistency against the laser mesh | new `eval/geometry.py` (scipy cKDTree, no new deps) |
-| Mesh | wall flatness: RMS distance to the fitted plane, per detected wall | new |
-| Layout | wall endpoint error (cm), room polygon IoU, door/window precision and recall | new `eval/layout.py`; ground truth drawn by hand from the laser mesh (about 1 h per room) |
-| Walking | free-space IoU against the laser floor plan | new `eval/nav.py` |
-| Walking | wall-crossing rate: 10,000 random agent steps; % that cross a ground-truth wall | new |
-| Walking | camera-path walkability: % of capture positions the agent can stand on (target 100%: someone walked there) | new |
-| Walking | door passability: every doorway ≥ 0.7 m wide is passable | new |
+| Mesh | Chamfer distance, F-score at 5 and 10 cm, normal consistency against the laser mesh; wall flatness (RMS distance to the fitted plane, per wall) | new `eval/geometry.py` (scipy cKDTree) |
+| Layout | wall endpoint error, room polygon IoU, door and window precision and recall | new `eval/layout.py`; ground truth drawn by hand from the laser mesh (about 1 h per room) |
+| Walking | wall-crossing rate over 10,000 random agent steps, with the viewer's own movement code at normal and maximum speed | new `eval/nav.py`, plus one Playwright walk |
+| Walking | free-space IoU against the laser floor plan; camera-path walkability; every doorway of 0.7 m or more passable | new |
 | Cost | minutes and $ per stage, from `report.json` and `modal billing report` | existing |
 
 ### Tooling
 
-- `pipeline/plypipe/eval/` with the modules above, each taking a job folder (and a ground-truth folder) and writing
-  `metrics.json`. Pure numpy/scipy, so it runs on the CPU and in CI.
-- `pipeline/modal/ply_eval.py`: runs a list of variants against one scenario. Like `ply_bench.py`, it saves to the
-  `ply-bench` Volume after every stage and resumes. **Every variant starts from the same saved stage**
-  (`--from train`, `--from align`, `--reuse-matches`), so a training experiment never pays for a new camera solve,
-  and differences come from the change, not from a different solve.
-- `scripts/eval_table.py`: collects every `metrics.json` into `docs/EXPERIMENTS.md`, one table per workstream, with
-  the cost of each run.
+- `pipeline/plypipe/eval/`: the modules above. Each takes a job folder and a ground-truth folder and writes
+  `metrics.json`. Pure numpy and scipy, so it runs in CI.
+- `pipeline/modal/ply_eval.py`: runs a list of variants against one scenario, saves to the `ply-bench` Volume after
+  every stage and resumes. **Every variant starts from the same saved stage**, so a training experiment never pays
+  for a new camera solve.
+- `scripts/eval_table.py`: collects every `metrics.json` into `docs/EXPERIMENTS.md`, one table per phase, with the
+  cost of each run.
 
-**Done when:** the harness scores the current pipeline on S1, S2 and S3 (the baseline row of every table), and its
-unit tests pass on synthetic data with known answers.
+### Runs
 
-Cost: about $3 (MuSHRoom: SfM on CPU, plus one Quick train per room to get a baseline mesh and floor plan).
+| Run | What it answers | Cost |
+|---|---|---|
+| Free readings from saved runs | Which export filter removed 47% of the High chapel's splats; its opacity histogram; step time from its training log; the chapel clips' colour transfer; wall crossings on the current chapel grid | $0 |
+| Baseline twice (chapel, saved solve, 15k steps, High settings) | The noise floor of every image metric | ~$2 |
+| Two MuSHRoom rooms end to end at Quick | Baseline scale, mesh, layout and walking against the laser scan | ~$3 |
 
-## Workstream 1: camera solve, faster at equal quality
+**Done when** `docs/EXPERIMENTS.md` holds the baseline row for S1, S2 and S3 and the noise floor, and the harness's
+unit tests pass on S5.
+
+## 6. Phase 2: walking, mesh and layout
+
+One pass over the trained splat feeds all three, so none of them needs a new model or a second training run.
+
+**2.1 Viewer (free).** Open in Walk when the scene has a grid. Sub-step movement so no step exceeds half a cell, and
+cap wheel speed in Walk. A failed `unstick()` returns to the spawn point. Put the grid behind one collider interface
+(the engine calls it directly in four places today), so a mesh collider or a navmesh can replace it later. Files:
+`app/src/walk/engine.ts:22,136-144,163,183-187`, `app/src/walk/scene.ts`. Test (Playwright): holding W into a wall
+for five seconds at maximum wheel speed keeps the camera inside the room.
+
+**2.2 Dense geometry pass** (`plypipe/dense.py`, run in `export`, where the splat is already on the GPU). Render
+expected depth at every 5th training view at half resolution. Keep a pixel only if its 3D point lands within 2% of
+the depth seen by at least two neighbouring views. Save the surviving points with normals. The crop already renders
+those views in 1.3 s for 2M splats, so this adds seconds. Tests on S5: wall points within 2 cm; injected floaters
+are removed by the consistency check.
+
+**2.3 Occupancy from depth** (`stages/occupancy.py`). Each view's depth between 0.2 and 1.8 m above the floor is a
+2D range scan: cells between the camera and the hit were seen free, the hit cell is blocked, and a cell needs three
+views to decide. The camera path still wins. Unknown stays blocked. Free space is never closed across a cell that any
+view saw blocked. Cells of 5 cm, written in the same `occupancy.png` and `occupancy.json`, so the viewer needs no
+change. Without a GPU the sparse grid is used as today.
+
+**2.4 Mesh** (`stages/mesh.py`). TSDF fusion of the same filtered depth, 2 to 4 cm voxels. Outputs `mesh.glb` (about
+300k triangles, vertex colours) and `collision.glb` (about 20k triangles).
+
+**2.5 Layout** (`shell.py`). Walls are lines fitted to the dense points of the wall band, snapped to the main axes
+when within 5°. A door is a gap in a wall line that the camera path crosses, or a gap at least 0.7 m wide and 1.9 m
+high that a SAM 3 "door" detection confirms. Windows are SAM 3 "window" detections lifted onto the nearest wall plane
+and seen in at least three views. The shell is validated before it is written (walls inside the bounds, a ceiling
+the cameras could have seen, no opening under 0.5 m); the viewer hides the measured layer when validation fails and
+draws the openings when it passes.
+
+| Variant | Idea | Retrain? | Licence |
+|---|---|---|---|
+| 5a | current grid from sparse points | no | ours |
+| 5b | grid from depth rays (2.3) | no | ours |
+| 5c | Recast navmesh from `collision.glb` (recast-navigation-js), the grid kept as a fallback | no | MIT |
+| 3a | COLMAP MVS + Poisson (current `mesh` stage) | no | BSD |
+| 3b | TSDF from the splat's own depth (2.4) | no | ours |
+| 3c | train with depth and normal losses from the phase 5 priors, then 3b | yes | Apache 2.0 method |
+| 3d | gsplat's 2DGS trainer as a separate geometry model, then 3b | yes, second train | Apache 2.0 |
+| 4a | current `shell.py` on sparse points | no | ours |
+| 4b | 2.5 on dense points, with the camera path and SAM 3 detections | no | ours |
+| 4c | SpatialLM 1.1 on the dense points, one comparison run | no | weights **CC-BY-NC** |
+
+3c and 3d run only if 3b fails wall flatness: depth from an unregularised splat is weakest exactly on plain walls. 5c
+runs only if 5b fails its gate, or for a space with more than one floor level.
+
+**Measure** on S3 and S1: the walking, mesh and layout metrics above; minutes; phone frame rate.
+
+**Ships if:** wall crossings under 0.5% at maximum speed, camera path at least 99% walkable, every door passable,
+frame rate unchanged. Mesh: F-score at 5 cm beats 3a by at least 10 points on both rooms. Layout: median wall
+endpoint error at most 10 cm, every real door found, at most one false door per room.
+
+**Unit tests:** `test_dense.py`, `test_nav.py` (on the two-room scene the plain partition is blocked along its whole
+length, the door is free, every camera position is free), `test_mesh_fusion.py` (walls within 2 cm, floor at y = 0),
+`test_layout.py` (snapping never moves a wall more than 20 cm; a door drawn on a solid wall is rejected).
+
+Cost: about $2 (the dense pass on the saved chapel twin and the two MuSHRoom twins, one SpatialLM run).
+
+## 7. Phase 3: camera solve
+
+All variants start from the chapel's saved matches on a CPU box. 1a ships in phase 0.
 
 | Variant | Idea | Cost to test |
 |---|---|---|
-| 1a | Skip the global mapper on long ordered video (it failed on every chapel run); go straight to incremental | $0.80: CPU box from saved matches |
-| 1b | Solve ~400 keyframes, then register the rest with COLMAP's image registrator and one final bundle adjustment | $0.60 |
-| 1c | Core count: 8 vs 16 vs 32 cores on the CPU box (incremental mapping is partly serial; measure, don't assume) | 3 × $0.60 |
-| 1d | InstantSfM (GPU global SfM, claims up to 40× COLMAP) on an A100 | $1.50; experimental |
-| 1e | VGGT-Long or MapAnything poses as initialisation, refined by COLMAP BA | $1.50; experimental |
+| 1a | Ordered video of 400 frames or more skips the global mapper | done in 0.8 |
+| 1g | **Hierarchical mapping**: `pycolmap.hierarchical_mapping` solves clusters of up to 500 frames in parallel and merges them; then one global bundle adjustment. On 8 and 16 cores | ~$1 |
+| 1b | **Keyframes first**: solve about 400 keyframes (every third frame plus every clip boundary), then register the rest with `image_names` and `fix_existing_frames`, and one final bundle adjustment | ~$0.60 |
+| 1f | **GPU bundle adjustment**: on the GPU image, check whether `ba_use_gpu` or the `CASPAR` backend runs at all on a 60-frame model. Only if it does, time it on the chapel | ~$0.30 for the check |
+| 1c | Core count (8, 16, 32) for the winner only | ~$0.60 |
 
-**Measure:** solve minutes and $, registered frames, ATE against the chapel-high-2 poses, then a fixed 7k-step train on
-each solve to check that held-out PSNR doesn't drop.
+**Measure:** solve minutes and $, registered frames, ATE against the chapel-high-2 poses, then a fixed 7k-step train
+on the winning solve only.
 
-**Ships if:** ≥ 30% faster, registered frames within 0.5%, ATE < 2 cm, held-out PSNR within 0.1 dB.
+**Ships if:** at least 30% faster than 1a, registered frames within 0.5%, ATE under 2 cm, held-out PSNR within the
+noise floor.
 
 **Unit tests** (`test_sfm_plan.py`): mapper choice by frame count and ordering; keyframe selection keeps every clip
 boundary and caps the gaps; registering the remaining frames leaves none unposed on the synthetic model.
 
-## Workstream 2: real-world scale and gravity from MoGe-2
+## 8. Phase 4: splat quality
 
-New stage `priors` after `sfm`: run MoGe-2 (ViT-L, NeurIPS 2025) on about 150 evenly spread frames. Each frame gives
-metric depth and normals.
-- **Scale:** per frame, the median ratio of MoGe depth to SfM depth at the frame's track points; across frames, a robust
-  median. `align` uses it as `scaleSource: "moge"` when the frames agree (spread under 5%). Otherwise it falls back to the
-  camera-height prior and says so in the report.
-- **Gravity:** the floor-normal vote from MoGe normals cross-checks the RANSAC floor.
-- **For W3/W6:** depth and normal maps are saved at half resolution.
-
-| Variant | Source |
-|---|---|
-| 2a | camera-height prior (baseline) |
-| 2b | MoGe-2 ViT-L |
-| 2c | MoGe-2 ViT-B (faster) |
-| 2d | MapAnything (Apache 2.0) |
-
-**Measure:** scale error on S3, using laser distances; camera height implied on S1/S4 (must land between 1.2 and 1.8 m);
-minutes on an L4.
-
-**Ships if:** scale error ≤ 3% on both MuSHRoom rooms and better than the baseline. Never worse than the baseline on
-S1/S4 plausibility.
-
-**Unit tests** (`test_priors.py`): the scale solver recovers a known scale within 1% with 30% outlier frames; it reports
-"inconsistent" and falls back when frames disagree; the y-up conversion of normals is right.
-
-Cost: about $0.20 per capture on an L4.
-
-## Workstream 3: a real surface (mesh)
-
-| Variant | Idea | Retrain? | Licence |
-|---|---|---|---|
-| 3a | COLMAP MVS + Poisson (current `mesh` stage) | no | BSD |
-| 3b | **Render depth from the trained splat** at every training view (median depth), fuse with TSDF, extract the mesh | no: runs on any finished twin, chapel-high-2 included | ours |
-| 3c | Train with **depth and normal losses** from the W2 priors (the DN-Splatter / AGS-Mesh method, added to our gsplat trainer), then 3b | yes | Apache 2.0 method |
-| 3d | gsplat's **2DGS** trainer as a separate geometry model, then 3b; the 3DGS twin stays for looks | yes, second train | Apache 2.0 |
-| 3e | PGSR or MILo as an upper bound, separate environment | yes | **non-commercial** |
-
-**Measure:** Chamfer, F-score at 5/10 cm and normal consistency on S3; wall flatness and hole ratio on S1; minutes. For
-3c, also held-out PSNR/LPIPS, because the losses must not cost image quality.
-
-**Ships if:** F-score at 5 cm beats 3a by ≥ 10 points on both rooms. 3c also needs held-out PSNR within −0.2 dB and LPIPS
-within +0.005 of the same run without the losses. Otherwise it is only used for the geometry model (as 3d).
-
-**Outputs:** `mesh.glb` (decimated, about 300k triangles, vertex colours) and `collision.glb` (about 20k triangles,
-walls/floor/furniture only, for W5).
-
-**Unit tests** (`test_mesh_fusion.py`): TSDF fusion of synthetic depth renders recovers the walls within 2 cm and the
-floor at y = 0; the depth loss is zero at the true depth and its gradient points the right way; `build_config` adds the
-losses only when asked.
-
-Cost: 3b about $0.30 (render + fuse). 3c/3d about $1 per Quick-length train. 3e about $3.
-
-## Workstream 4: layout (walls, doors, windows, floor plan)
-
-The input is a uniform point sample of the W3 mesh, not the sparse SfM points.
-
-| Variant | Idea | Licence |
-|---|---|---|
-| 4a | current `shell.py` (RANSAC on sparse points) | ours |
-| 4b | `shell.py` on dense mesh points, with Manhattan snapping where walls are within 5° of the main axes | ours |
-| 4c | **SpatialLM 1.1** (NeurIPS 2025): point cloud in, walls/doors/windows/object boxes out. Qwen-0.5B and Llama-1B | weights **CC-BY-NC** |
-| 4d | RoomFormer on a top-down density map (floor-plan polygons only) | MIT |
-| 4e | 4c snapped to 4b's planes; a door kept only where the mesh has a real gap; objects merged with SAM 3 places | mixed |
-
-Expected trouble: SpatialLM was trained on box-like homes and offices. The chapel (vaulted, apse) is the stress test,
-and 4e exists for that case.
-
-**Measure:** wall endpoint error, room IoU, door/window precision and recall on S3 (hand-drawn ground truth) and S1
-(drawn from the High twin's top view).
-
-**Ships if:** median wall endpoint error ≤ 10 cm, every real door found on the test rooms, and at most one false door per
-room.
-
-**Unit tests** (`test_layout.py`): y-up/z-up round trip; SpatialLM's text output parses into the `shell.json` schema
-(walls, openings, objects); snapping moves a wall onto the nearest plane but never by more than 20 cm; door validation
-keeps the synthetic room's real door and rejects a fake one drawn on a solid wall.
-
-Cost: under $0.50 per run (inference on an L4).
-
-## Workstream 5: walking (collision and navmesh)
-
-| Variant | Idea |
-|---|---|
-| 5a | current sparse-point grid (10 cm) |
-| 5b | grid from **mesh slices**: blocked = surface between 0.2 and 1.8 m; free = floor surface; 5 cm cells. No viewer change |
-| 5c | **Recast navmesh** built from `collision.glb` in the pipeline (recast-navigation-js in Node, already in the image for splat-transform); viewer moves along it with `@recast-navigation/three`; grid kept as a fallback |
-| 5d | 5c plus W4 walls as hard edges and doors carved open |
-
-**Measure** on S3 and S1: free-space IoU, wall-crossing rate, camera-path walkability, door passability. Phone frame rate
-must not drop.
-
-**Ships if:** wall-crossing rate under 0.5%, camera-path walkability ≥ 99%, every door passable, frame rate unchanged.
-
-**Unit tests:** in Python (`test_nav.py`), a synthetic room with a table and a door: the agent can't cross a wall or the
-table, can pass the door, and can stand on every camera position. A viewer test (Playwright, like the review-page
-check): holding W into a wall keeps the camera inside the room, and walking through the doorway works.
-
-Cost: CPU only.
-
-## Workstream 6: splat quality ("much better", no trade-offs)
-
-Train-only runs from one saved chapel solve, one factor at a time against the baseline, at Quick-plus length (15k
-steps). The winners are then combined at full length on the final day.
+Train-only runs from one saved chapel solve, one factor at a time against the baseline, at 15k steps on an L40S.
 
 | Variant | Change | Why |
 |---|---|---|
-| T0 | baseline: chapel-high-2 settings (60k steps, 2M cap, SH3) | reference |
-| T1 | same config on L40S / A100 80 GB / H100 | speed per $ only; output identical |
-| T2 | **higher resolution**: re-extract the same frames at 2560 and 3840 px, scale the intrinsics, keep the poses | source is 4K; we train at 1728. No new solve needed |
-| T3 | splat cap 2M → 4M → 6M (A100/H100 memory) | altar detail |
-| T4 | depth and normal losses (W3 variant 3c) | flatter walls, fewer floaters |
-| T5 | pose refinement in training (`--pose-opt`) | small solve errors blur detail |
-| T6 | rolling-shutter-aware rendering (gsplat 3DGUT, `with_ut`) | DJI footage; fast pans |
-| T7 | exposure model (`--bilateral-grid` / `--ppisp`) with a viewer brightness fix | 10–12% glare at the windows. Off today because the viewer showed ×1.2 brightness |
-| T8 | steps 60k → 100k at the larger cap | more splats need more steps |
+| Q0 | baseline, twice | noise floor (phase 1) |
+| Q1 | **Exposure correction, folded back.** Train with the bilateral grid, then fine-tune 2k steps with the grid replaced by its mean and fold that mean into the colours at export | 10–12% of the chapel is glare at the windows; correction is off today only because the viewer showed ×1.2 brightness |
+| Q2 | pose refinement (`--pose-opt`, exists) | small solve errors blur detail |
+| Q3 | **higher resolution**: re-extract the same frames at 2560 px, scale the intrinsics, keep the poses | the source is 4K and we train at 1728 px |
+| Q4a | sparse depth loss (`--depth-loss`, exists) | free to try; fewer floaters |
+| Q4b | dense depth and normal losses from the phase 5 priors (the DN-Splatter / AGS-Mesh method) | flatter walls; also variant 3c |
+| Q5 | opacity regulariser 0.01 → 0.005 and 0.002 at the 2M cap. A 3M cap only if at least 85% of the splats then survive export | half of the High budget is deleted today |
+| Q6 | **phone file fine-tuned, not decimated**: continue 3k steps with the cap at the phone size | the phone file is 2.15 dB below the desktop file |
 
-**Measure:** held-out cc-PSNR, SSIM, LPIPS; hard-region LPIPS (altar, windows); viewer PSNR and brightness; file sizes
-(full and phone); train minutes and $.
+Then one run with the winners combined, and one at full length (phase 7).
 
-**Ships if:** LPIPS improves by ≥ 0.005 or PSNR by ≥ 0.2 dB, no other image metric is worse by more than 0.1 dB /
-0.003, viewer brightness is within ±5%, and the phone file still loads on a mid-range phone.
+**Measure:** held-out cc-PSNR, SSIM and LPIPS on both hold-outs; hard-region LPIPS; viewer PSNR, brightness and
+see-through for both files; file sizes; share of trained splats kept; train minutes and $.
 
-The pinned gsplat (`512d366`) already has the 2DGS trainer (W3d) and 3DGUT (`with_ut`, T6), so neither needs a
-dependency change.
+**Ships if:** LPIPS improves by at least 0.005 or PSNR by at least 0.2 dB (or twice the noise floor, whichever is
+larger), no other image metric is worse by more than the noise floor, viewer brightness is within ±5%, and the phone
+file still loads on a mid-range phone. Q6 ships if the phone file comes within 0.7 dB of the desktop file at the same
+size.
 
-**Unit tests:** `test_train_config.py` gains a case for each new flag. A new `test_upres.py` checks that re-extracted
-frames keep their pose and that the intrinsics scale exactly.
+**Unit tests:** `test_train_config.py` gains a case for each new flag; `test_upres.py` checks that re-extracted frames
+keep their pose and that the intrinsics scale exactly; a test that folding the mean correction leaves the rendered
+brightness unchanged.
 
-Cost: about $1 per variant on an L40S (15k steps), about $10 for the set.
+Cost: ten runs at about $1, plus the combined run: about $11.50.
 
-## Workstream 7: viewer and delivery
+## 9. Phase 5: scale
 
-Load `mesh.glb` / `collision.glb` / `navmesh.bin` from `scene.json` (new optional keys, old scenes keep working). Draw
-walls, doors and windows from the layout in the measured layer. Above 2M splats, use LOD chunks, so phones get the lite
-file and desktops the full one. Tested with the existing build and a Playwright walk test.
+Scale sources, most trusted first. `scene.json` records which one was used and its spread across frames, and the
+viewer shows measurements with that uncertainty.
 
-## Schedule and spend
-
-| Phase | Work | Spend |
+| ID | Source | Notes |
 |---|---|---|
-| 0 | harness, MuSHRoom download and baselines, regions file | ~$3 |
-| 1 | W1 solve variants (CPU, saved matches); W2 priors; W3b mesh from chapel-high-2; W4 and W5 on that mesh | ~$6 |
-| 2 | W3c/3d and W6 train-only variants at 15k steps | ~$12 |
-| 3 | combine the winners into a `best` preset; one Quick end-to-end run per scenario to catch breakage | ~$5 |
-| Final day | 2–3 full `best` runs on H100 (chapel plus one new capture), each ~$6–10 with the bigger cap and resolution; a second worker deployed on ricco-mallick so two jobs run at once; $10 held back for a failed run | ~$50 of $60 |
+| 2r | **A reference measurement**: the user enters one known length (a door width, a tape measurement) and taps its two ends in the viewer | exact; makes the final-day tape measurements usable in the product. `plypipe rescale` applies it to the splat, grid, shell and places without retraining |
+| 2e | AR poses, when the capture has them | already in `align` |
+| 2b | MoGe-2 ViT-L on about 150 frames: the median ratio of its metric depth to SfM depth at the track points | new `priors` stage; also saves depth and normals at half resolution for Q4b and 3c |
+| 2c / 2d | MoGe-2 ViT-B; MapAnything (Apache 2.0) | comparisons |
+| 2f | door height from SAM 3 door detections | a sanity check only |
+| 2a | camera height assumed at 1.45 m | today's fallback |
 
-The order matters: W2 feeds W3, W3 feeds W4 and W5, and W1/W6 are independent. Results go into `docs/EXPERIMENTS.md`
-as they come in, and every shipped change gets an entry in `IMPROVEMENT.md` with its numbers.
+A monocular model's metric scale carries a systematic error of a few percent, so 3% on every room is not assured.
+That is why 2r is built whatever 2b scores.
 
-## Licences
+**Measure:** scale error on S3 against laser distances; implied camera height on S1 and S4 (must fall between 1.2
+and 1.8 m); minutes on an L4.
 
-MILo, PGSR and SpatialLM's weights are non-commercial. That is fine for a demo and for measuring an upper bound. If Ply
-is sold, the shipping path must use only the Apache/MIT/BSD options: 2DGS in gsplat, DN-Splatter-style losses, MoGe-2
-(MIT code; check the weights), MapAnything, RoomFormer, recast.
+**Ships if:** 2b's scale error is at most 3% on both MuSHRoom rooms and better than 2a. It falls back to 2a, and says
+so, when frames disagree by more than 5%.
 
-## Open questions for the team
+**Unit tests** (`test_priors.py`, `test_rescale.py`): the scale solver recovers a known scale within 1% with 30%
+outlier frames; it reports "inconsistent" and falls back when frames disagree; a rescale by 1.1 moves a known wall by
+exactly 10% and leaves the rendered image unchanged.
 
-1. Can someone revisit the chapel or the classroom with a tape measure (room length and width, two door widths, altar
-   step height)? Five numbers make the scale and layout scores real on our own captures.
-2. Is there a phone video of the LiDAR office? With it, S6 becomes our best geometry test.
-3. How much credit is left on each account now, for phases 0–3?
+Cost: about $0.20 per capture on an L4.
+
+## 10. Phase 6: an existing LiDAR scan as a splat
+
+Goal: a customer who already has a scan (E57) gets the same twin as a phone walk: `scene.spz` and `scene_lite.spz`
+in the viewer, with the measured layer, occupancy and walking taken from the scan. `lidar-office-1` (184.6 M points)
+is the test. Today `scripts/lidar/ingest_e57.py` reads only scan 0 into a 6 M-point coloured PLY, and
+`office_shell.py` measures the shell from it. Nothing turns it into Gaussians yet.
+
+**Step 0, inspect the E57 (free):** the number of scans, each scanner pose, and whether `images2D` holds the
+scanner's photos with their poses. This decides whether 8b is possible.
+
+| ID | Route | Needs | Expected |
+|---|---|---|---|
+| 8a | **Direct conversion, no training.** Voxel-downsample to about 1 cm (capped at the High splat count), one Gaussian per point: SH0 colour from the point, rotation from the local normal, a flat disk sized to the neighbour spacing, high opacity. Write a 3DGS PLY and hand it to the existing `export` stage | points only | exact geometry and scale; looks like a dense coloured cloud: no view-dependent colour, holes in the scanner's shadows |
+| 8b | **Train on the scanner's photos.** Cut each panorama into six 90° pinhole faces, poses fixed from the E57 (no SfM), initialise from 8a, depth loss from the scan, densification only where the scan has holes | E57 images | real texture and highlights; weak between scanner stations |
+| 8c | **Phone video plus scan.** Our SfM on the video, aligned to the scan, trained with 8a as initialisation and scan depth as supervision | a phone video of the same space | phone-walk texture on laser geometry |
+
+Integration: a job input kind `e57` that runs `ingest → lidar_splat → export`, writing `shell.json` and
+`occupancy.json` from the full-density scan through the phase 2 code.
+
+**Ships:** 8a when the phone file loads on a phone, F-score at 1 cm from splat centres to the scan is at least 95%,
+and wall crossings are under 0.5%. 8b replaces 8a only if held-out LPIPS improves by at least 0.02 and F-score at 1 cm
+stays at or above 90%.
+
+Cost: step 0 and 8a on a CPU box, about $0.20. 8b about $1.50 per 15k-step train. 8c only if a video appears.
+
+## 11. Phase 7: combine, rehearse, freeze
+
+1. The winners of phases 2 to 5 become the `best` preset. One full-length training run of it from the saved chapel
+   solve, then one end-to-end run at Quick length, both scored by the harness (~$3.50).
+2. A two-minute timing probe of the `best` preset on each GPU type that may be used on the final day. The records
+   only show the stored wheels running on L4 and L40S, so this also proves they load on an H100.
+3. The worker is deployed and smoke-tested on every account that will be used, each with its own secrets and its own
+   copy of the inputs.
+4. A real clip from the final day's camera goes through the phone upload path once (`PROJECT-REVIEW.md`, C1).
+5. No code changes after this point, except fixes for a failed gate. `chapel-high-2` stays published as the
+   fallback.
+
+## 12. Final day
+
+| When | What | Stop rule |
+|---|---|---|
+| Morning | Tape measurements: room length and width, two door widths, the altar step. Enter one as the reference measurement (2r); score the others | — |
+| Morning | Capture the new space with the SOP: exposure and white balance locked, HDR off | re-shoot a clip the capture check flags |
+| Then | Smoke capture on both accounts | no long run until both pass |
+| Then | Job 1: the chapel at `best` on one account. Job 2: the new capture at `best` on the other. In parallel | each job has a $12 cap, enforced as the function timeout |
+| During | Read the gates as they arrive: frames kept, registered frames at least 90% and no path jumps, the loss curve at 5k steps, `verify` at the end | a failed gate stops the job; one re-run from the saved stage |
+| End | Publish the twins that pass. A job that fails twice is not retried; the fallback stays | $10 held back |
+
+## 13. Rules for every paid run
+
+The `MISTAKES.md` checklist, plus four rules from the review:
+
+1. The run is named in this plan, or approved in writing first.
+2. The smoke capture passed on that account since the last deploy.
+3. The stop-loss is the function's timeout, sized to 1.5 times the estimate, not a note in a checklist.
+4. One variable per run, and its row goes into `docs/EXPERIMENTS.md` with the cost from billing, whether it won or not.
+
+## 14. Cut from the first version
+
+| Item | Why |
+|---|---|
+| InstantSfM (1d), VGGT-Long or MapAnything poses as initialisation (1e) | Each needs a new image and has no record on 1,200 4K frames; 1g, 1b and 1f use what is already installed |
+| PGSR or MILo as an upper bound (3e) | $3 for a number that cannot ship (non-commercial) |
+| RoomFormer (4d) | 4b covers floor-plan polygons with signals we already have |
+| Full-run hardware comparison (T1) | Replaced by a timing probe |
+| Rolling-shutter rendering with 3DGUT (T6) | It needs each frame's motion during readout, which we do not record. Revisit only if Q2 shows pose error is the limit |
+| 100k steps (T8), LOD chunks | Only relevant above 2M shipped splats, which Q5 has to earn first |
+
+## 15. Licences
+
+MILo, PGSR and SpatialLM's weights are non-commercial. That is fine for a demo and for a comparison. If Ply is sold,
+the shipping path must use only the Apache/MIT/BSD options: 2DGS in gsplat, DN-Splatter-style losses, MoGe-2 (MIT
+code; check the weights), MapAnything, recast.
+
+## 16. Decisions for the owner
+
+1. Rotate the credentials posted in chat (0.2).
+2. Where the wheels should live: the `ply-data` dataset or a GitHub release (0.1), before 2026-11-12.
+3. Public or private repository (`PROJECT-REVIEW.md`, U8).
+4. Whether the walkthrough should open in Walk mode (2.1).
+5. The date of the final, so the phases can be given dates and the cut order applied.
