@@ -32,7 +32,7 @@ The cheapest minutes are the 32 spent on a mapper that always fails and the 18 s
 
 | First version | What the code or the record says | Consequence |
 |---|---|---|
-| 37% of occupancy cells are unknown, so the walker crosses walls | The viewer blocks unknown cells. Walls are crossed because the viewer opens in Free mode (no collision), because free space is closed over plain interior walls, and because fast movement skips one-cell walls (`PROJECT-REVIEW.md`, W1–W3) | Fix the viewer and the grid first (phase 2). A navmesh is needed only for spaces with more than one floor level |
+| 37% of occupancy cells are unknown, so the walker crosses walls | The viewer blocks unknown cells, so they are why Walk mode gets stuck, not why walls are crossed. Free space is known only on textured floor and within 0.3 m of the camera path, which leaves a corridor about 0.7 m wide for a walker 0.44 m wide, and two stray points close it. Walk was the intended mode; the viewer opens in Free, where there is no collision, because Walk is not usable yet (`PROJECT-REVIEW.md`, W0–W3) | Fix the grid first (phase 2), then make Walk the default again. A navmesh is needed only for spaces with more than one floor level |
 | Raise the splat cap from 2M to 4M and 6M | The High chapel run kept 1.06M of its 2M splats, and two 3M runs went unstable | Find out why half the budget is deleted (free), then test the opacity regulariser; raise the cap only if the splats survive |
 | Ship a training change at +0.2 dB or −0.005 LPIPS | No run has been repeated, so the noise is unknown; an earlier A/B differed by 0.08 dB. Held-out views sit between training frames | Train the baseline twice, hold out a block of consecutive frames too, and read every threshold as the stated value or twice the measured spread, whichever is larger |
 | Compare L40S, A100 and H100 on full runs; compare 8, 16 and 32 cores | Training is 7% of the job, and the solve's waste is a mapper choice | Pick hardware from a two-minute timing probe per GPU. Test cores only with a mapper that can use them (1g) |
@@ -63,8 +63,8 @@ then Q3 to Q5 of phase 4. Phases 0 to 2 and variants Q1, Q2 and Q6 are the minim
 
 | # | Task | Where | Check | Cost |
 |---|---|---|---|---|
-| 0.1 | **Keep the wheels.** Store the four wheels and a checksum file somewhere durable (the `ply-data` dataset or a release), add `scripts/fetch_wheels.py`, set the `wheels` workflow defaults to Python 3.12 and upload from the workflow | `.github/workflows/wheels.yml`, `pipeline/modal/ply_modal.py` | a fresh checkout deploys with one command | $0. **Before 2026-11-12** |
-| 0.2 | **Rotate** both Modal token pairs, the invite key and the invite codes. Secrets go in project variables, never in chat | owner | the old tokens are rejected | $0 |
+| 0.1 | **Keep the wheels.** Done 2026-11-10: the four wheels are in the `ply-data` dataset under `wheels/cp312-cu128-sm89`, pinned with checksums by `pipeline/wheels.lock.json`. `modal run scripts/wheels.py::fetch` restores them and `::publish` stores a rebuild. Open: they are built for sm_89 only (L4, L40S); see phase 7 | `scripts/wheels.py`, `pipeline/wheels.lock.json` | fetched into an empty folder; checksums equal to the originals | $0 |
+| 0.2 | **Credentials.** Owner's decision, 2026-11-10: the tokens and invite codes posted in chat stay as they are. New secrets go in project variables, never in chat. That leaves 0.3 as the protection against a leaked code | owner | — | $0 |
 | 0.3 | **Spend limits.** Per invite: one active job and a daily count. Settings are mapped to trainer flags on the server; raw flags stay for the team key. One wall-clock cap per job. Stage limits that add up to less than the container timeout. A size cap on downloads. An idempotency key on job creation | `cloud/src/index.ts`, `pipeline/plypipe/worker.py:49`, `pipeline/modal/ply_modal.py:87,98`, `app/src/capture/lib/backend.ts` | new cases in `cloud/test/` and `tests/test_worker.py` | $0 |
 | 0.4 | **Judge-facing bugs.** No "bad capture" badge on new twins. Room modules from our own origin only. Place names as text. Results served only for published and in-review jobs. An owner per job | `app/src/shared/scene-status.ts`, `app/src/model/main.ts`, `app/src/lab/overlay.ts`, `cloud/src/index.ts:134-139` | unit tests, and a Playwright check of a new job's walkthrough | $0 |
 | 0.5 | **Checks on pull requests**: API tests, app typecheck and build, pipeline fast tests (205 s on a CPU). Required by branch protection | `.github/workflows/ci.yml` | the workflow | $0 |
@@ -104,7 +104,7 @@ working, stop and score geometry on S5 and on the chapel's hand-drawn plan only.
 | Mesh | Chamfer distance, F-score at 5 and 10 cm, normal consistency against the laser mesh; wall flatness (RMS distance to the fitted plane, per wall) | new `eval/geometry.py` (scipy cKDTree) |
 | Layout | wall endpoint error, room polygon IoU, door and window precision and recall | new `eval/layout.py`; ground truth drawn by hand from the laser mesh (about 1 h per room) |
 | Walking | wall-crossing rate over 10,000 random agent steps, with the viewer's own movement code at normal and maximum speed | new `eval/nav.py`, plus one Playwright walk |
-| Walking | free-space IoU against the laser floor plan; camera-path walkability; every doorway of 0.7 m or more passable | new |
+| Walking | free-space IoU against the laser floor plan; camera-path walkability; every doorway of 0.7 m or more passable; route success (the share of pairs of labelled places joined by a walkable route) | new |
 | Cost | minutes and $ per stage, from `report.json` and `modal billing report` | existing |
 
 ### Tooling
@@ -132,11 +132,26 @@ unit tests pass on S5.
 
 One pass over the trained splat feeds all three, so none of them needs a new model or a second training run.
 
-**2.1 Viewer (free).** Open in Walk when the scene has a grid. Sub-step movement so no step exceeds half a cell, and
-cap wheel speed in Walk. A failed `unstick()` returns to the spawn point. Put the grid behind one collider interface
-(the engine calls it directly in four places today), so a mesh collider or a navmesh can replace it later. Files:
-`app/src/walk/engine.ts:22,136-144,163,183-187`, `app/src/walk/scene.ts`. Test (Playwright): holding W into a wall
-for five seconds at maximum wheel speed keeps the camera inside the room.
+**What is wrong with Walk today.** Walk was the intended mode. The owner's report (2026-11-10) is that the walker gets
+stuck and cannot get from place to place, which is why the viewer opens in Free. The code explains it. A cell is
+free only where the solve has floor points or within 0.3 m of the camera path; everything else is unknown, and the
+viewer blocks unknown. On a plain floor that leaves a corridor about 0.7 m wide along the walked path, for a walker
+0.44 m wide. Two sparse points in a cell block it, and only the one-cell path line overrides them, so a stray point
+closes the corridor (`stages/occupancy.py`; `app/src/walk/scene.ts:35-38,70`; `app/src/walk/engine.ts:15`).
+
+**2.0 Stopgap for existing twins (free, CPU only).** Rebuild the grid from the saved solve, with no retraining. The
+walked corridor is free at the walker's width, not one cell. Free space is carved along the rays from each camera to
+the sparse points it saw, which the solve already stores. Blocked cells still win, and plain low furniture can be
+carved open, so this is judged by the same walking gate and replaced by 2.3 wherever a GPU pass exists. Test
+(`test_align_occupancy.py`): in the two-room scene every camera position can be reached from every other.
+
+**2.1 Viewer (free).** Free stays the default until Walk works. The pipeline writes the result of its own
+walkability check into `scene.json`, and the viewer opens in Walk only for a scene that passed. Sub-step movement so
+no step exceeds half a cell, and cap wheel speed in Walk. A failed `unstick()` returns to the spawn point. Put the
+grid behind one collider interface (the engine calls it directly in four places today), so a mesh collider or a
+navmesh can replace it later. Files: `app/src/walk/engine.ts:22,136-144,163,183-187`, `app/src/walk/scene.ts`. Tests
+(Playwright): holding W into a wall for five seconds at maximum wheel speed keeps the camera inside the room, and a
+guided route between two places finishes without getting stuck.
 
 **2.2 Dense geometry pass** (`plypipe/dense.py`, run in `export`, where the splat is already on the GPU). Render
 expected depth at every 5th training view at half resolution. Keep a pixel only if its 3D point lands within 2% of
@@ -179,7 +194,8 @@ runs only if 5b fails its gate, or for a space with more than one floor level.
 **Measure** on S3 and S1: the walking, mesh and layout metrics above; minutes; phone frame rate.
 
 **Ships if:** wall crossings under 0.5% at maximum speed, camera path at least 99% walkable, every door passable,
-frame rate unchanged. Mesh: F-score at 5 cm beats 3a by at least 10 points on both rooms. Layout: median wall
+a walkable route between every pair of labelled places in the same room, frame rate unchanged. Mesh: F-score at
+5 cm beats 3a by at least 10 points on both rooms. Layout: median wall
 endpoint error at most 10 cm, every real door found, at most one false door per room.
 
 **Unit tests:** `test_dense.py`, `test_nav.py` (on the two-room scene the plain partition is blocked along its whole
@@ -298,8 +314,10 @@ Cost: step 0 and 8a on a CPU box, about $0.20. 8b about $1.50 per 15k-step train
 
 1. The winners of phases 2 to 5 become the `best` preset. One full-length training run of it from the saved chapel
    solve, then one end-to-end run at Quick length, both scored by the harness (~$3.50).
-2. A two-minute timing probe of the `best` preset on each GPU type that may be used on the final day. The records
-   only show the stored wheels running on L4 and L40S, so this also proves they load on an H100.
+2. A two-minute timing probe of the `best` preset on each GPU type that may be used on the final day. The stored
+   wheels are built for sm_89 only (`TORCH_CUDA_ARCH_LIST: 8.9` in the build log), which covers L4 and L40S. An H100
+   (sm_90) or an A100 (sm_80) most likely cannot load them. If the final-day runs should use either, rebuild first
+   with `arch: 8.0;8.9;9.0` in the `wheels` workflow, then `modal run scripts/wheels.py::publish --tag <build>`.
 3. The worker is deployed and smoke-tested on every account that will be used, each with its own secrets and its own
    copy of the inputs.
 4. A real clip from the final day's camera goes through the phone upload path once (`PROJECT-REVIEW.md`, C1).
@@ -343,10 +361,13 @@ MILo, PGSR and SpatialLM's weights are non-commercial. That is fine for a demo a
 the shipping path must use only the Apache/MIT/BSD options: 2DGS in gsplat, DN-Splatter-style losses, MoGe-2 (MIT
 code; check the weights), MapAnything, recast.
 
-## 16. Decisions for the owner
+## 16. Decisions
 
-1. Rotate the credentials posted in chat (0.2).
-2. Where the wheels should live: the `ply-data` dataset or a GitHub release (0.1), before 2026-11-12.
-3. Public or private repository (`PROJECT-REVIEW.md`, U8).
-4. Whether the walkthrough should open in Walk mode (2.1).
-5. The date of the final, so the phases can be given dates and the cut order applied.
+Made by the owner on 2026-11-10:
+
+1. The wheels live in the `ply-data` dataset on Hugging Face (0.1, done).
+2. The credentials posted in chat are not rotated. New secrets go in project variables.
+3. The repository stays public for now, at the competition organiser's request.
+4. Walk is the intended mode of the walkthrough. Free stays the default until Walk works (phase 2).
+
+Open: the date of the final, so the phases can be given dates and the cut order applied.
