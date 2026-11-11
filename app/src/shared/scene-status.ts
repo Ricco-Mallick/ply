@@ -11,7 +11,17 @@ export interface SceneStatus {
   tone: 'old' | 'mid' | 'new' | 'dev';
 }
 
+/** Early runs the app still links or ships: say so plainly. Ids not listed in STATUS get no badge. */
+const EARLY: SceneStatus = {
+  label: 'Bad capture · very old pipeline',
+  text: 'Bad capture output, produced by a very old development pipeline. Kept as a record of the work, not as a demo of what Ply produces now.',
+  tone: 'old',
+};
+
 const STATUS: Record<string, SceneStatus> = {
+  // the first real capture (the design lab's "My capture") and the pipeline contract-test fixture in public/scenes
+  '0ffc07fb-4d8d-49eb-9a40-22b9c6fddd76': EARLY,
+  'synth-test': EARLY,
   'hq-chapel-1': {
     label: 'Older pipeline',
     text: 'Captured before the current solver and trainer. Detail and alignment are below what the pipeline produces now.',
@@ -44,18 +54,11 @@ const STATUS: Record<string, SceneStatus> = {
   },
 };
 
-/** Anything not named above is a demo-run or an early experiment: say so plainly. */
-const DEFAULT: SceneStatus = {
-  label: 'Bad capture · very old pipeline',
-  text: 'Bad capture output, produced by a very old development pipeline. Kept as a record of the work, not as a demo of what Ply produces now.',
-  tone: 'old',
-};
-
-export function sceneStatus(sceneUrl: string | null | undefined): SceneStatus | null {
+export function sceneStatus(sceneUrl: string | null | undefined, base: string | undefined = typeof location === 'undefined' ? undefined : location.href): SceneStatus | null {
   if (!sceneUrl) return null;
   try {
-    const id = new URL(sceneUrl, location.href).pathname.match(/\/scenes\/([\w-]+)\//)?.[1];
-    return id ? STATUS[id] ?? DEFAULT : null;
+    const id = new URL(sceneUrl, base).pathname.match(/\/scenes\/([\w-]+)\//)?.[1];
+    return id && Object.hasOwn(STATUS, id) ? STATUS[id] : null;
   } catch {
     return null;
   }

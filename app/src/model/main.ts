@@ -7,11 +7,12 @@ import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { GLTFExporter } from 'three/examples/jsm/exporters/GLTFExporter.js';
 import { PLYLoader } from 'three/examples/jsm/loaders/PLYLoader.js';
 import { buildObjects, buildRoom, drawable } from './build';
+import { sameOriginModuleUrl } from './module-url';
 import type { Obj, Shell } from './types';
 
 const BASE = '/ply/';
 const params = new URLSearchParams(location.search);
-const sceneBase = params.get('scene') ?? `${BASE}scenes/demo/`;
+const sceneBase = new URL(params.get('scene') ?? `${BASE}scenes/demo/`, location.href).href;
 const lidarUrl = params.get('lidar');   // a coloured point cloud (PLY) to look at on its own
 
 type View = 'walk' | 'doll' | 'plan';
@@ -19,6 +20,7 @@ const el = <T extends HTMLElement>(sel: string) => document.querySelector(sel) a
 const canvas = el<HTMLCanvasElement>('#stage');
 const show = (text: string) => { el('#status').textContent = text; };
 const fmt = (n: number) => `${n.toFixed(2)} m`;
+const cell = (tag: string, text: string) => { const e = document.createElement(tag); e.textContent = text; return e; };   // object names come from shell.json: text, never HTML
 
 const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
 renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
@@ -74,11 +76,13 @@ async function load() {
   show('loading measured shell…');
   const tryFetch = async (name: string) => {
     const res = await fetch(new URL(name, sceneBase));
-    return res.ok ? res.json() : null;
+    return res.ok ? res.json().catch(() => null) : null;
   };
   const s: Shell = await tryFetch('shell.json');
-  const moduleUrl = params.get('module');   // an authored room module (see .agents/skills/ply-room-model)
-  if (!s) { show('no shell.json next to this scene — run a capture, then open the model view'); return; }
+  const requested = params.get('module');   // an authored room module (see .agents/skills/ply-room-model)
+  const moduleUrl = requested ? sameOriginModuleUrl(requested, location.href) : null;
+  const refused = requested && !moduleUrl ? 'module refused (not from this site) · ' : '';   // first, so the hint pill never covers it
+  if (!s) { show(refused + 'no shell.json next to this scene — run a capture, then open the model view'); return; }
   shell = s;
   if (moduleUrl) {
     // a hand-modelled room: the agent's module gets THREE and the measurements, and returns real geometry
@@ -94,7 +98,7 @@ async function load() {
   if (objectsRoot) scene.add(objectsRoot);
   const walls = s.walls?.length ?? 0;
   const objects = s.objects?.length ?? 0;
-  show(`${walls} walls · ${(s.openings ?? []).length} openings · ${objects} objects`);
+  show(`${refused}${walls} walls · ${(s.openings ?? []).length} openings · ${objects} objects`);
   buildOutliner(s);
   const pose = params.get('pose');
   if (pose) {
@@ -293,12 +297,12 @@ function buildOutliner(s: Shell) {
   for (const [kind, items] of [...groups.entries()].sort((a, b) => b[1].length - a[1].length)) {
     const row = document.createElement('details');
     row.open = items.length <= 6;
-    row.innerHTML = `<summary><span>${kind}</span><em>${items.length}</em></summary>`;
+    const head = document.createElement('summary'); head.append(cell('span', kind), cell('em', String(items.length))); row.append(head);
     for (const o of items) {
       const item = document.createElement('button');
       item.className = 'item';
       item.dataset.id = o.id;
-      item.innerHTML = `<span>${o.name}</span><em>${o.half.map((v) => (v * 2).toFixed(1)).join('×')}</em>`;
+      item.append(cell('span', o.name), cell('em', o.half.map((v) => (v * 2).toFixed(1)).join('×')));
       item.addEventListener('click', () => {
         const target = objectsRoot?.getObjectByName(o.id);
         if (target) { select(target); const b = new THREE.Box3().setFromObject(target); const c = b.getCenter(new THREE.Vector3()); controls.target.copy(c); }

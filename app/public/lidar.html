@@ -97,7 +97,8 @@ function setPoints(geometry, label) {
 }
 
 function fail(message) {
-  statEl.innerHTML = `<span class="err">${message}</span><br>Drop a .ply on the window, or open one from the button above.`;
+  const err = document.createElement('span'); err.className = 'err'; err.textContent = message;   // the message can quote the ?ply= URL
+  statEl.replaceChildren(err, document.createElement('br'), 'Drop a .ply on the window, or open one from the button above.');
   nameEl.textContent = 'nothing loaded';
 }
 
