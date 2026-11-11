@@ -3,6 +3,47 @@
 What changed in the pipeline, why, and how it was measured. The newest work is first. Each entry names the defect,
 the evidence for it, the change, and what the change was checked against. Costs are from `modal billing report`.
 
+## 2026-11-11: Walk mode on existing twins (`stages/occupancy.py`, `plypipe/walkcheck.py`)
+
+**Evidence.** Walk was the intended mode, but the walker got stuck, so the viewer opened in Free. `walkcheck` scores
+a grid with the viewer's own rules (0.22 m walker tested at 9 points, unknown cells blocked) from the spawn. On the
+published `chapel-high-2` grid the reachable floor was **0.01 m²**: 2.6% of the capture positions and 6.8% of the
+281 labelled places. The free cells were real (58 m²), but the walked line was one cell wide and any stray point or
+pew end beside it closed it to a 0.44 m walker; the standable floor fell apart into 291 pieces.
+
+**Change.** Rebuilt from the saved solve, with no retraining:
+- The walked corridor is 0.2 m either side of the camera path and wins over blocked cells. The path is cut where the
+  camera jumps (a new clip starting elsewhere), so the corridor never joins two places through a wall.
+- Free space also comes from sight lines: where a line from a camera to a point it saw runs below 0.6 m, nothing
+  solid stands there. A cell needs 3 lines. Blocked cells still win.
+- The morphological close is gone (it bridged plain walls up to 0.6 m), free space not connected to the walk is
+  dropped, and only small unknown pockets enclosed by free cells are filled.
+- `occupancy.json` carries the walk check (`walk`); the viewer opens in Walk when `walk.pass` is true (at least 99%
+  of capture positions reachable), and in Free otherwise.
+
+**Measured on the chapel** (the solve of `chapel/high` on the `ply-bench` Volume; 3 s on a CPU):
+
+| | Published grid | New grid |
+|---|---|---|
+| Floor reachable from the spawn | 0.01 m² | 28.1 m² |
+| Capture positions reachable | 2.6% | 100% |
+| Labelled places reachable (within 1.5 m) | 6.8% | 100% |
+| Cells free / blocked / unknown | 5,835 / 5,505 / 6,582 | 7,465 / 4,684 / 5,773 |
+
+834 cells that were blocked are now free, nearly all within the walked corridor along the aisles. Corridor widths
+tried: 0.15 m leaves the chapel stuck (6% of positions), 0.2 m connects it, 0.3 m opens 375 more blocked cells for
+no gain in reach. Letting the corridor override only cells with few points does not work: the aisles are lined with
+well-observed pew ends (blocked cells in the corridor hold a median of 4 points, others 7).
+
+**Limits.** Where the phone was held out over furniture, a 0.2 m strip of it opens (`test_walk.py` pins this). An
+untextured wall thinner than about two cells (0.2 m) can still be crossed, because floor points from both sides land
+in the cells it spans; the dense depth pass (plan, 2.3) is the fix. Wall crossings have not been measured against
+ground truth on a real capture; that needs MuSHRoom (plan, phase 1).
+
+**Tests.** `tests/test_walk.py` adds a two-room scene joined by a doorway through a plain 0.25 m partition: the wall
+holds, the door passes, stray points beside the walk no longer trap the walker, and the old close rule is shown to
+bridge that wall. The synthetic table in `synth.py` moved beside the camera loop, which used to pass over it.
+
 ## 2026-11-05: the room crop, ALIKED, the CPU camera solve
 
 Follow-ups from the chapel test. Costs from `modal billing report`: $1.32 in total on ricco-marcelino ($1.06 of it the
