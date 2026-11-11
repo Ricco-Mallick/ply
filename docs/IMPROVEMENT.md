@@ -3,6 +3,23 @@
 What changed in the pipeline, why, and how it was measured. The newest work is first. Each entry names the defect,
 the evidence for it, the change, and what the change was checked against. Costs are from `modal billing report`.
 
+## 2026-11-11: the sparse depth loss no longer turns the model NaN
+
+**Evidence.** Variant Q4a (`--depth-loss`) went NaN near step 158 of 15,000 on the chapel and aborted near step 570
+(`EXPERIMENTS.md`). gsplat's `depth_l1_loss` at the pinned commit, run on a CPU with the trainer's own sampling
+around it: a track point whose sampled depth is exactly 0 gets a NaN gradient (`where(depth > 0, 1 / depth, 0)`),
+and the bilinear sample passes it to a rendered neighbour whenever the point lies exactly on a pixel row or column.
+That is 1 to 5 steps in 300 with 2,000 track points on a 1728 px frame. A view with no track point in frame makes
+the loss itself NaN.
+
+**Change.** `train_launcher.py` replaces the trainer's `depth_l1_loss` when `--depth-loss` is on: the same value,
+with 1 / 0 kept out of the graph, and 0 for a view without track points. It stops if more than one GPU is visible or
+the pinned trainer has no such function, so a run cannot train on the old loss unnoticed.
+
+**Measured.** On a CPU only: the same loss value as gsplat's on 900 random frames, and no NaN or infinite gradient
+where gsplat's sent one into a rendered pixel on 11 of them. Not run on a GPU: Q4a has to be launched again to show
+that it trains.
+
 ## 2026-11-11: a top view for every twin, job limits, the eval runner (second batch)
 
 **Evidence.** The owner: the minimap "is not like a top view of the model" (it drew the 10 cm walking grid), and Walk

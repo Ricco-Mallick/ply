@@ -38,6 +38,7 @@ def test_each_variant_changes_one_thing_against_the_baseline():
         return {k: ours[k] for k in base if base[k] != ours[k]}
     assert diff("q2") == {"pose_opt": True} and diff("q4a") == {"depth_loss": True}
     assert diff("q5a") == {"opacity_reg": 0.005} and diff("q5b") == {"opacity_reg": 0.002}
+    assert diff("q5c") == {"opacity_reg": 0.001} and diff("q5d") == {"opacity_reg": 0.0}
     assert evalrun.VARIANTS["q5a"]["args"][-2:] == ["--opacity-reg", "0.005"]
 
 
