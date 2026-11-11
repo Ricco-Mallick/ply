@@ -28,6 +28,7 @@ import numpy as np
 
 from plypipe import clean as clean_mod
 from plypipe import spz as spz_mod
+from plypipe import topview as topview_mod
 from plypipe.util import Ctx, need, read_scene, run, splat_transform_cmd, update_scene
 
 SPLAT_TRANSFORM = "@playcanvas/splat-transform@3.10.1"
@@ -317,6 +318,7 @@ def run_stage(ctx: Ctx) -> dict:
     shipped = _score_shipped(ctx, st, {"full": full, "lite": lite}, holdout, aa) if viewer else None
     needed_src.unlink(missing_ok=True)
     update_scene(ctx, {"splat": {"file": "scene.spz", "lite": "scene_lite.spz", "format": "spz"}})
+    top = _topview(ctx, cleaned if cleaned.exists() else full)
     return {"spz": full.name, "spzMB": round(full.stat().st_size / 2**20, 2), "lite": lite.name, "liteMB": round(lite.stat().st_size / 2**20, 2),
             "cropBox": box, "cropDropped": drop_crop, "gaussiansIn": total, "gaussiansOut": n, "floaterFilter": floaters, "liteGaussians": min(n, LITE_MAX),
             "keptFraction": round(n / total, 3) if total else None,
@@ -324,7 +326,20 @@ def run_stage(ctx: Ctx) -> dict:
             "floaterClean": clean_stats, "clippedFraction": clipped, **({"viewerEval": viewer} if viewer else {}),
             **({"roomCrop": room_crop} if room_crop else {}),
             "shRestore": sh, **({"shippedEval": shipped} if shipped else {}),
-            **({"cleanupChoice": choice} if choice else {})}
+            **({"cleanupChoice": choice} if choice else {}), **({"topview": top} if top else {})}
+
+
+def _topview(ctx: Ctx, source: Path) -> dict | None:
+    """The twin seen from above, next to scene.spz, for the viewer's minimap. The export is good without it."""
+    try:
+        top = topview_mod.build(source, ctx.out, read_scene(ctx))
+        update_scene(ctx, {"topview": top})
+        ctx.log.emit("export", "progress", f"top view: {top['width']}x{top['height']} px at {top['metersPerPixel'] * 100:g} cm, "
+                     f"cut at {top['cutY']} m")
+        return top
+    except Exception as e:
+        ctx.log.emit("export", "warn", f"top view skipped: {str(e)[-160:]}")
+        return None
 
 
 def _restore_sh(ctx: Ctx, spz: Path, ply: Path) -> dict:
