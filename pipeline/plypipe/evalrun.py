@@ -1,0 +1,434 @@
+# Copyright (c) 2026 Ricco Marcelino. All rights reserved. Proprietary and confidential — see LICENSE.
+"""The pure half of pipeline/modal/ply_eval.py: train-only image-quality experiments that all start from one saved
+camera solve (docs/IMPROVEMENT-PLAN.md, phase 1 and 4).
+
+What lives here, so it can be tested without Modal: the table of variants, what a run restores from the saved job
+folder and what it leaves out, resume decisions, saving after each stage, price and timeout estimates, and the
+assembly of metrics.json from the job's report. `python -m plypipe.evalrun plan --variant q0a` prints what a run
+would do without importing Modal.
+"""
+
+from __future__ import annotations
+
+import argparse
+import hashlib
+import json
+import math
+import os
+import re
+import shlex
+import shutil
+import subprocess
+import sys
+from datetime import datetime, timezone
+from pathlib import Path
+
+SCHEMA = 1
+
+# The plan's baseline: the saved High chapel run's settings (job.json: preset high, cap 2M from the plan, SH 3, no
+# appearance model, antialiased, hold-out 30), 15k steps instead of 60k, plus the 20-frame hold-out block.
+BASE = ["--preset", "high", "--iterations", "15000", "--cap-max", "2000000", "--holdout", "30", "--holdout-block", "20"]
+VARIANTS: dict[str, dict] = {
+    "smoke": {"args": ["--preset", "high", "--iterations", "300", "--cap-max", "2000000", "--holdout", "30", "--holdout-block", "20"],
+              "note": "300 steps: proves restore, train, export, scoring and saving end to end", "timeout_min": 12},
+    "q0a": {"args": BASE, "role": "baseline", "note": "baseline; with q0b it gives the noise floor"},
+    "q0b": {"args": BASE, "role": "baseline", "note": "identical to q0a"},
+    "q2": {"args": BASE + ["--pose-opt"], "note": "pose refinement"},
+    "q4a": {"args": BASE + ["--depth-loss"], "note": "sparse depth loss at the SfM track points"},
+    "q5a": {"args": BASE + ["--opacity-reg", "0.005"], "note": "opacity regulariser 0.005 (baseline 0.01)"},
+    "q5b": {"args": BASE + ["--opacity-reg", "0.002"], "note": "opacity regulariser 0.002"},
+}
+
+# Modal list prices per hour, 2026-11. Only L4 and L40S match the CI wheels (sm_89).
+GPU_PER_HOUR = {"H100": 3.95, "A100-80GB": 2.50, "L40S": 1.95, "L4": 0.80}
+CPU_PER_CORE_HOUR = 0.047
+MEMORY_PER_GIB_HOUR = 0.008
+CPU, MEMORY_GIB = 8, 32  # what the chapel's train and export ran on (the worker's own sizing)
+
+# 1,717.9 s for 60,000 steps on an L40S (the saved High run's report). An L4 is about twice as slow (ply_bench's notes).
+SECONDS_PER_STEP = {"L40S": 1717.9 / 60_000, "L4": 2 * 1717.9 / 60_000}
+OVERHEAD_MIN = 5   # restore, export and scoring for a 2M-splat model
+STOP_LOSS = 1.5    # IMPROVEMENT-PLAN rule 3: the timeout is 1.5 times the estimate
+GRACE_MIN = 2      # the Modal function outlives the in-code deadline by this much, to save what a stopped run has
+
+# What a run takes from the saved job folder: the camera solve and the files train and export read. Everything else
+# (frames, colmap, the old splat, SPZ files, logs, training state) is left out; data/images is a link to dense/images.
+RESTORE_FILES = ("report.json", "plan.json", "scene.json", "shell.json", "places.json", "occupancy.json", "occupancy.png",
+                 "frames_index.json")
+RESTORE_STAGES = ("frames", "sfm", "align", "occupancy", "label")  # .done markers; train, export and mesh are redone
+RESTORE_TREES = ("data/sparse", "dense/images")
+IMAGES_LINK = ("data/images", "dense/images")                       # `modal volume put` drops symlinks: made again here
+STALE_REPORT_SECTIONS = ("train", "export", "mesh", "quality")      # what the old run's stages wrote into report.json
+
+# What is kept on the Volume after each stage: everything the job made except the shared inputs and re-creatable bulk.
+SAVE_SKIP_DIRS = ("data", "dense", "frames", "frames_raw", "colmap", "train", "train-snapshot")
+SAVE_SKIP_FILES = ("scene_clean.ply", "scene_lite.ply")
+
+INPUT = "saved-solve"  # the CLI wants an input path; train and export never read it
+NAME = re.compile(r"^[a-z0-9][a-z0-9_.-]{0,39}$")
+
+
+# ------------------------------------------------------------------ variants
+
+def resolve(variant: str, extra: str = "") -> dict:
+    """The named variant's arguments, or for a new name the baseline's plus `extra` (a later option wins)."""
+    if not NAME.match(variant or ""):
+        raise ValueError(f"variant name '{variant}' must be lower case letters, digits, '_', '.' or '-' (available: {', '.join(VARIANTS)})")
+    extra_args = shlex.split(extra or "")
+    if variant in VARIANTS:
+        if extra_args:
+            raise ValueError(f"'{variant}' is a table variant: its arguments are fixed. Pick a new name for an ad-hoc run")
+        v = VARIANTS[variant]
+        return {"name": variant, "args": list(v["args"]), "source": "table", "role": v.get("role"), "note": v.get("note"),
+                "timeoutMin": v.get("timeout_min")}
+    if not extra_args:
+        raise ValueError(f"unknown variant '{variant}' (available: {', '.join(VARIANTS)}); for an ad-hoc run pass --args")
+    return {"name": variant, "args": BASE + extra_args, "source": "--args", "role": None, "note": "baseline arguments plus --args",
+            "timeoutMin": None}
+
+
+def steps_of(args: list[str]) -> int | None:
+    found = [args[i + 1] for i, a in enumerate(args[:-1]) if a == "--iterations"]
+    return int(found[-1]) if found else None
+
+
+# ------------------------------------------------------------------ price, estimate, stop-loss
+
+def gpu_key(name: str | None) -> str | None:
+    """Price-table key for an nvidia-smi name ('NVIDIA L40S', 'NVIDIA A100-SXM4-80GB'); L4 is not a prefix of L40S."""
+    tokens = set(re.split(r"[^A-Za-z0-9]+", (name or "").upper()))
+    for key in ("H100", "L40S", "L4"):
+        if key in tokens:
+            return key
+    return "A100-80GB" if "A100" in tokens and "80GB" in tokens else None
+
+
+def per_hour(gpu: str | None, cpu: float = CPU, memory_gib: float = MEMORY_GIB) -> float | None:
+    key = gpu_key(gpu) or gpu
+    return round(GPU_PER_HOUR[key] + cpu * CPU_PER_CORE_HOUR + memory_gib * MEMORY_PER_GIB_HOUR, 4) if key in GPU_PER_HOUR else None
+
+
+def estimate(args: list[str], gpu: str = "L40S", timeout_min: int | None = None) -> dict:
+    """Minutes and dollars for one run on `gpu`, and the stop-loss timeout (1.5x the estimate unless the variant sets one)."""
+    steps = steps_of(args)
+    if steps is None or gpu_key(gpu) not in SECONDS_PER_STEP:
+        raise ValueError(f"cannot estimate '{' '.join(args)}' on {gpu}: needs --iterations and an L4 or L40S")
+    train_min = math.ceil(steps * SECONDS_PER_STEP[gpu_key(gpu)] / 60)
+    total_min = train_min + OVERHEAD_MIN
+    timeout = timeout_min or math.ceil(STOP_LOSS * total_min)
+    rate = per_hour(gpu)
+    return {"gpu": gpu, "steps": steps, "trainMin": train_min, "overheadMin": OVERHEAD_MIN, "totalMin": total_min,
+            "timeoutMin": timeout, "usd": round(total_min / 60 * rate, 2), "maxUsd": round(timeout / 60 * rate, 2), "perHour": rate}
+
+
+def make_job(scenario: str, src: str, variant: str, args: str = "", force: bool = False, gpus: tuple[str, ...] = ("L40S",),
+             ceiling_min: int | None = None, revision: dict | None = None) -> dict:
+    """Everything the Modal function needs, decided locally. Refuses a run whose stop-loss would not fit the function's timeout."""
+    v = resolve(variant, args)
+    slowest = max(gpus, key=lambda g: SECONDS_PER_STEP.get(gpu_key(g) or "", 0))
+    est = estimate(v["args"], slowest, v["timeoutMin"])
+    ceiling = ceiling_min or default_ceiling_min(gpus)
+    if est["timeoutMin"] > ceiling:
+        raise ValueError(f"{variant}: stop-loss {est['timeoutMin']} min on {slowest} is above the function timeout of {ceiling} min "
+                         "(set PLY_EVAL_TIMEOUT_MIN when launching to raise it)")
+    return {"scenario": scenario, "src": src.strip("/"), "variant": variant, "args": v["args"], "argsSource": v["source"],
+            "role": v["role"], "note": v["note"], "force": force, "gpus": list(gpus), "stopLossMin": est["timeoutMin"],
+            "ceilingMin": ceiling, "estimate": est, "revision": revision or {}}
+
+
+def default_ceiling_min(gpus: tuple[str, ...]) -> int:
+    """The function's timeout: the stop-loss of the longest table variant on the slowest GPU allowed."""
+    slowest = max(gpus, key=lambda g: SECONDS_PER_STEP.get(gpu_key(g) or "", 0))
+    return max(estimate(v["args"], slowest, v.get("timeout_min"))["timeoutMin"] for v in VARIANTS.values())
+
+
+def plypipe_command(stage: str, job_dir: str, args: list[str], python: str = "python") -> list[str]:
+    return [python, "-m", "plypipe", "run", INPUT, "--out", job_dir, "--only", stage, *args]
+
+
+def variant_dir(scenario: str, variant: str) -> str:
+    return f"{scenario}/eval/{variant}"
+
+
+def describe(job: dict, job_dir: str = "/tmp/work/job") -> str:
+    e = job["estimate"]
+    out = [f"variant {job['variant']} ({job['argsSource']}{', ' + job['note'] if job.get('note') else ''})",
+           f"scenario {job['scenario']}, saved solve /vol/{job['src']}, results /vol/{variant_dir(job['scenario'], job['variant'])}/",
+           f"GPU {' then '.join(job['gpus'])} (slowest one priced), {CPU} cores, {MEMORY_GIB} GiB; steps {e['steps']}",
+           f"estimate {e['trainMin']} min training + {e['overheadMin']} min restore/export/scoring = {e['totalMin']} min, about ${e['usd']:.2f} "
+           f"at ${e['perHour']:.2f}/h",
+           f"stop-loss {job['stopLossMin']} min (1.5x the estimate unless the table sets one), at most ${e['maxUsd']:.2f}; the Modal "
+           f"function times out at {job['ceilingMin'] + GRACE_MIN} min ({GRACE_MIN} more, to save a stopped run)",
+           "restore from the saved folder: " + ", ".join([*RESTORE_FILES, *(f".done/{s}.json" for s in RESTORE_STAGES), *(f"{t}/" for t in RESTORE_TREES)]),
+           "  then " + f"{IMAGES_LINK[0]} -> {os.path.relpath(IMAGES_LINK[1], os.path.dirname(IMAGES_LINK[0]))}" + " (made again: volume put drops links); "
+           f"report.json loses its {', '.join(STALE_REPORT_SECTIONS)} sections",
+           "left out: frames/, frames_raw/, colmap/, dense/ except images/, the old scene*.ply and *.spz, eval/, logs/, log.jsonl, job.json, "
+           ".done/{train,export,mesh}.json",
+           f"a relaunch layers /vol/{variant_dir(job['scenario'], job['variant'])}/ over that and runs only the stages not finished"
+           f"{' (--force: ignores it)' if job['force'] else ''}",
+           "commands:"]
+    out += ["  " + " ".join(plypipe_command(s, job_dir, job["args"])) for s in ("train", "export")]
+    out += [f"saved after each stage (markers last), skipping {', '.join(SAVE_SKIP_DIRS)}/, {', '.join(SAVE_SKIP_FILES)}; "
+            "the newest training snapshot every 3 min",
+            "then verify.check, metrics.json, and the same again"]
+    if job.get("revision"):
+        out.append(f"code {job['revision'].get('revision')} (hash {job['revision'].get('codeHash')})")
+    return "\n".join(out)
+
+
+# ------------------------------------------------------------------ restore, resume, save
+
+def wanted(rel: str) -> bool:
+    """Is this path (relative to the saved job folder, '/' separated) restored?"""
+    parts = rel.split("/")
+    if rel in RESTORE_FILES:
+        return True
+    if parts[0] == ".done":
+        return len(parts) == 2 and parts[1].endswith(".json") and parts[1][:-5] in RESTORE_STAGES
+    return any(rel == t or rel.startswith(t + "/") for t in RESTORE_TREES)
+
+
+def _on_the_way(rel_dir: str) -> bool:
+    """Can a wanted file sit in this folder or below it?"""
+    return any(r == rel_dir or r.startswith(rel_dir + "/") or rel_dir.startswith(r + "/") for r in (".done", *RESTORE_TREES))
+
+
+def prune_report(report: dict) -> dict:
+    return {k: v for k, v in report.items() if k not in STALE_REPORT_SECTIONS}
+
+
+def restore(src: Path, dst: Path) -> dict:
+    """Copy the files a train-only run needs from the saved job folder, and make the images link the align stage makes."""
+    files = size = 0
+    for root, dirs, names in os.walk(src):
+        rel_root = Path(root).relative_to(src)
+        # folders with nothing wanted in them (frames/, dense/stereo/ ...) are not listed: each listing is a Volume round trip
+        dirs[:] = [d for d in dirs if not (Path(root) / d).is_symlink() and _on_the_way((rel_root / d).as_posix())]
+        for name in names:
+            p = Path(root) / name
+            rel = (rel_root / name).as_posix()
+            if p.is_symlink() or not wanted(rel):
+                continue
+            q = dst / rel
+            q.parent.mkdir(parents=True, exist_ok=True)
+            if rel == "report.json":
+                q.write_text(json.dumps(prune_report(json.loads(p.read_text())), indent=2))
+            else:
+                shutil.copy2(p, q)
+            files += 1
+            size += p.stat().st_size
+    link = dst / IMAGES_LINK[0]
+    target = dst / IMAGES_LINK[1]
+    if target.is_dir():
+        link.parent.mkdir(parents=True, exist_ok=True)
+        if link.is_symlink() or link.exists():
+            link.unlink() if link.is_symlink() else shutil.rmtree(link)
+        os.symlink(os.path.relpath(target, link.parent), link)
+    elif (src / IMAGES_LINK[0]).is_dir() and not (src / IMAGES_LINK[0]).is_symlink():  # the upload followed the link
+        shutil.copytree(src / IMAGES_LINK[0], link)
+    return {"files": files, "bytes": size}
+
+
+def check_job(root: Path) -> list[str]:
+    """What is missing for train and export to run on this folder (empty when it is usable)."""
+    problems = [f"data/sparse/0/{n}" for n in ("cameras.bin", "images.bin", "points3D.bin", "cameras.txt", "images.txt", "points3D.txt")
+                if not (root / "data" / "sparse" / "0" / n).exists()]
+    images = root / IMAGES_LINK[0]
+    if not images.is_dir() or not next(images.glob("*.jpg"), None):
+        problems.append(f"{IMAGES_LINK[0]} (no photos: dense/images missing or the link broken)")
+    for n in ("scene.json", "frames_index.json"):
+        if not (root / n).exists():
+            problems.append(n)
+    return problems
+
+
+def finished(job: Path) -> dict[str, bool]:
+    done = job / ".done"
+    return {"train": (done / "train.json").exists() and (job / "scene.ply").exists(),
+            "export": (done / "export.json").exists() and (job / "scene.spz").exists() and (job / "scene_lite.spz").exists()}
+
+
+def stages_to_run(job: Path) -> list[str]:
+    """Which of train and export still have to run in a job folder restored with the saved variant folder layered on it."""
+    state = finished(job)
+    if state["train"] and state["export"]:
+        return []
+    return ["export"] if state["train"] else ["train", "export"]
+
+
+def layer(saved: Path, job: Path) -> int:
+    """Put a variant folder's saved files over the job (a relaunch). Snapshots are not state to resume from."""
+    count = 0
+    for p in sorted(saved.rglob("*")):
+        rel = p.relative_to(saved)
+        if p.is_file() and not p.is_symlink() and rel.parts[0] != "train-snapshot" and p.suffix != ".part":
+            (job / rel).parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(p, job / rel)
+            count += 1
+    return count
+
+
+def clear_stale(job: Path, stages: list[str]) -> None:
+    """Forget a stage that has to run again, and everything after it, so a half-saved folder cannot pass for a finished one."""
+    for s in ("train", "export"):
+        if s in stages or (s == "export" and "train" in stages):
+            (job / ".done" / f"{s}.json").unlink(missing_ok=True)
+    if "train" in stages:
+        (job / "scene.ply").unlink(missing_ok=True)
+
+
+def savable(rel: Path) -> bool:
+    return rel.parts[0] not in SAVE_SKIP_DIRS and rel.name not in SAVE_SKIP_FILES and not rel.name.startswith("_")
+
+
+def save(job: Path, dst: Path) -> dict:
+    """Mirror the job onto the variant folder: changed files first, report.json then the .done markers last, so a
+    marker never outlives the files it vouches for."""
+    files = [p for p in sorted(job.rglob("*")) if p.is_file() and not p.is_symlink() and savable(p.relative_to(job))]
+    late = lambda p: (p.relative_to(job).parts[0] == ".done", p.name == "report.json")
+    count = size = 0
+    for p in sorted(files, key=late):
+        q = dst / p.relative_to(job)
+        st = p.stat()
+        if q.exists() and q.stat().st_size == st.st_size and q.stat().st_mtime >= st.st_mtime:
+            continue
+        q.parent.mkdir(parents=True, exist_ok=True)
+        tmp = q.with_name(q.name + ".part")
+        shutil.copy2(p, tmp)
+        tmp.replace(q)
+        count += 1
+        size += st.st_size
+    return {"files": count, "bytes": size}
+
+
+# ------------------------------------------------------------------ metrics
+
+SCORES = ("psnr", "ssim", "lpips", "ccPsnr", "ccSsim", "ccLpips", "views")
+
+
+def parse_gpu(text: str) -> dict:
+    """`nvidia-smi --query-gpu=name,memory.total --format=csv,noheader`, first line."""
+    line = (text or "").strip().splitlines()[0] if (text or "").strip() else ""
+    name, _, mem = (x.strip() for x in line.partition(","))
+    digits = re.sub(r"[^0-9]", "", mem)
+    return {"name": name or None, "memoryMiB": int(digits) if digits else None, "priced": gpu_key(name)}
+
+
+def _pick(d: dict | None, keys=SCORES) -> dict | None:
+    return {k: d[k] for k in keys if isinstance(d, dict) and d.get(k) is not None} or None
+
+
+def assemble(job: dict, report: dict, *, gpu: dict, seconds: dict, sizes: dict, invocation: dict, previous: dict | None = None) -> dict:
+    """metrics.json from the job's report.json. A run that stopped early still gets one, with `complete` false and what is missing."""
+    train, export = report.get("train") or {}, report.get("export") or {}
+    shipped = export.get("shippedEval") or {}
+    every = _pick(train.get("eval"))
+    block = _pick(train.get("evalBlock"))
+    if block is not None:
+        block.update({"images": train.get("blockImages"), "clip": train.get("blockClip"), "seconds": train.get("blockSeconds")})
+    missing = [name for name, value in (("train", train), ("scores.every", every), ("scores.block", block), ("export", export),
+                                       ("viewer.desktop", shipped.get("full")), ("viewer.phone", shipped.get("lite"))) if not value]
+    invocations = [*((previous or {}).get("invocations") or []), invocation]
+    cost = round(sum(i.get("costUsd") or 0 for i in invocations), 2)
+    quality = report.get("quality") or {}
+    return {
+        "schema": SCHEMA, "variant": job["variant"], "role": job.get("role"), "scenario": job["scenario"], "src": job["src"],
+        "args": job["args"], "argsSource": job["argsSource"], "note": job.get("note"), "revision": job.get("revision") or {},
+        "gpu": gpu, "steps": train.get("maxSteps") or steps_of(job["args"]), "capMax": train.get("capMax"),
+        "complete": not missing, "missing": missing,
+        "scores": {"every": every, "block": block},
+        "viewer": {"desktop": shipped.get("full"), "phone": shipped.get("lite"), "cleaned": export.get("viewerEval")},
+        "splats": {"atEval": (train.get("eval") or {}).get("gaussians"), "trained": export.get("gaussiansIn"),
+                   "shipped": export.get("gaussiansOut"), "keptFraction": export.get("keptFraction"), "phone": export.get("liteGaussians")},
+        "files": sizes, "seconds": {**seconds, "train": train.get("seconds"), "export": export.get("seconds")},
+        "gate": {"ok": quality.get("ok"), "issues": [{"level": i.get("level"), "code": i.get("code")} for i in quality.get("issues") or []]} if quality else None,
+        "invocations": invocations, "costUsd": cost,
+        "wallMinutes": round(sum(i.get("wallSeconds") or 0 for i in invocations) / 60, 1),
+    }
+
+
+def invocation_record(started: float, wall: float, gpu: dict, ran: list[str], skipped: list[str], error: str | None = None) -> dict:
+    rate = per_hour(gpu.get("priced") or gpu.get("name"))
+    return {"startedAt": datetime.fromtimestamp(started, timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"), "wallSeconds": round(wall, 1),
+            "gpu": gpu.get("name"), "ran": ran, "resumedAfter": skipped, "costUsd": round(wall / 3600 * rate, 3) if rate else None,
+            "pricePerHour": rate, **({"error": error} if error else {})}
+
+
+def read_metrics(path: Path) -> dict | None:
+    try:
+        data = json.loads(path.read_text())
+    except (OSError, ValueError):
+        return None
+    return data if isinstance(data, dict) and data.get("schema") == SCHEMA else None
+
+
+def check_resume(previous: dict | None, job: dict) -> None:
+    """A variant folder belongs to one set of arguments: a relaunch with others would mix two experiments."""
+    if previous and previous.get("args") != job["args"]:
+        raise ValueError(f"{job['variant']} already holds a run with other arguments ({' '.join(previous.get('args') or [])}); "
+                         "pick a new variant name or relaunch with --force")
+
+
+def summary(m: dict) -> str:
+    def row(s: dict | None) -> str:
+        return "n/a" if not s else f"cc-PSNR {s.get('ccPsnr')} cc-SSIM {s.get('ccSsim')} cc-LPIPS {s.get('ccLpips')} ({s.get('views')} views)"
+    viewer = m.get("viewer") or {}
+    return "\n".join([f"{m['variant']}: {'complete' if m['complete'] else 'INCOMPLETE, missing ' + ', '.join(m['missing'])}",
+                      f"  every-Nth hold-out: {row(m['scores']['every'])}", f"  block hold-out:     {row(m['scores']['block'])}",
+                      f"  viewer PSNR desktop {(viewer.get('desktop') or {}).get('psnr')}, phone {(viewer.get('phone') or {}).get('psnr')}; "
+                      f"splats shipped {m['splats']['shipped']} of {m['splats']['trained']} (kept {m['splats']['keptFraction']})",
+                      f"  {m['wallMinutes']} min wall, about ${m['costUsd']}"])
+
+
+def collect(volume, scenario: str, out: Path) -> dict[str, list[str]]:
+    """Copy each variant's small result files (metrics.json, per-view scores, report) from the Volume into out/<variant>/.
+    Returns what was fetched per variant; a variant without metrics.json has not finished."""
+    got: dict[str, list[str]] = {}
+    for entry in volume.listdir(f"{scenario}/eval"):
+        name = Path(entry.path).name
+        got[name] = []
+        for rel in ("metrics.json", "eval/per_view.json", "report.json"):
+            try:
+                data = b"".join(volume.read_file(f"{scenario}/eval/{name}/{rel}"))
+            except Exception:
+                continue
+            target = out / name / rel
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_bytes(data)
+            got[name].append(rel)
+    return got
+
+
+def code_revision(repo: Path) -> dict:
+    """The commit (+dirty when the working tree differs) and a hash of the code that is shipped to the container."""
+    def git(*a: str) -> str:
+        return subprocess.run(["git", "-C", str(repo), *a], capture_output=True, text=True, timeout=60).stdout.strip()
+    sha, dirty = git("rev-parse", "--short=10", "HEAD"), bool(git("status", "--porcelain", "--untracked-files=no"))
+    digest = hashlib.sha256()
+    for p in sorted([*(repo / "pipeline" / "plypipe").rglob("*.py"), repo / "pipeline" / "modal" / "ply_eval.py"]):
+        if p.exists():
+            digest.update(p.relative_to(repo).as_posix().encode() + p.read_bytes())
+    return {"revision": (sha + ("+dirty" if dirty else "")) if sha else "unknown", "codeHash": digest.hexdigest()[:12]}
+
+
+def main(argv: list[str] | None = None) -> int:
+    ap = argparse.ArgumentParser(description="Print what a ply_eval run would do. Nothing here contacts Modal.")
+    sub = ap.add_subparsers(dest="cmd", required=True)
+    p = sub.add_parser("plan")
+    p.add_argument("--variant", required=True)
+    p.add_argument("--args", default="")
+    p.add_argument("--scenario", default="chapel")
+    p.add_argument("--src", default="chapel/high/job")
+    p.add_argument("--gpu", default=os.environ.get("PLY_EVAL_GPU", "L40S"), help="comma-separated, tried in order")
+    p.add_argument("--force", action="store_true")
+    a = ap.parse_args(argv)
+    gpus = tuple(g.strip() for g in a.gpu.split(",") if g.strip())
+    repo = Path(__file__).resolve().parents[2]
+    ceiling = int(os.environ["PLY_EVAL_TIMEOUT_MIN"]) if os.environ.get("PLY_EVAL_TIMEOUT_MIN") else None
+    job = make_job(a.scenario, a.src, a.variant, a.args, a.force, gpus, ceiling, code_revision(repo))
+    print(describe(job))
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
