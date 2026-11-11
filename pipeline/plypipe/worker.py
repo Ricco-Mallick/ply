@@ -126,6 +126,23 @@ class Api:
                 return
             except Exception as e:  # HF down or the token lost write access: the bucket still has it
                 print(f"[worker] HF upload of {key} failed ({e}); using the bucket", flush=True)
+        self._bucket_put(key, path, ctype)
+
+    def upload_many(self, items: list[tuple[str, Path, str]]):
+        """(key, path, content type) per file. Each Hugging Face upload is its own commit (48 evidence frames billed
+        the GPU ~18 minutes), so there the files go up in one; the bucket takes one request per file."""
+        put = self.upload
+        if items and hf.configured() and all(key.startswith("scenes/") for key, _, _ in items):
+            try:
+                hf.upload_many([(key, path) for key, path, _ in items])
+                return
+            except Exception as e:
+                print(f"[worker] HF batch upload of {len(items)} files failed ({e}); using the bucket", flush=True)
+                put = self._bucket_put  # per-file HF commits would be the slow path again
+        for key, path, ctype in items:
+            put(key, path, ctype)
+
+    def _bucket_put(self, key: str, path: Path, ctype: str):
         size = path.stat().st_size
         if size <= 40e6:
             self.req("PUT", "/v1/files?" + urllib.parse.urlencode({"key": key}), path.read_bytes(), ctype)
@@ -614,11 +631,11 @@ def run_job(api: Api, job: dict, work: Path, extra: list[str]) -> None:
             frames = ev / "frames"
             have = sorted(frames.glob("*.jpg")) if frames.exists() else []
             picked = have if len(have) <= 48 else [have[int(i)] for i in np.linspace(0, len(have) - 1, 48)]
-            for f in picked:
-                api.upload(f"scenes/{jid}/evidence/frames/{f.name}", f, "image/jpeg")
+            batch = [(f"scenes/{jid}/evidence/frames/{f.name}", f, "image/jpeg") for f in picked]
             poses = ev / "poses.json"
             if poses.exists():
-                api.upload(f"scenes/{jid}/evidence/poses.json", poses, "application/json")
+                batch.append((f"scenes/{jid}/evidence/poses.json", poses, "application/json"))
+            api.upload_many(batch)
         except Exception as e:
             print(f"[worker] evidence upload failed: {e}", flush=True)
         report = json.loads((out / "report.json").read_text()) if (out / "report.json").exists() else {}

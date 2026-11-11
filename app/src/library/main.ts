@@ -78,16 +78,16 @@ function card(j: Job) {
   const pct = Math.round((j.progress ?? 0) * 100);
   const ready = j.status === 'done' && j.files?.includes('scene.json');
   const action = ready ? `<a class="btn sm" href="./walk.html?scene=${encodeURIComponent(sceneUrl(j.id))}">Walk it</a>`
-    : j.status === 'review' ? `<a class="btn sm" href="./capture.html?job=${j.id}">Review</a>`
-    : j.status === 'running' || j.status === 'queued' ? `<a class="ghost sm" href="./capture.html?job=${j.id}">Watch</a>`
+    : j.status === 'review' ? `<a class="btn sm" href="./capture.html?job=${encodeURIComponent(j.id)}">Review</a>`
+    : j.status === 'running' || j.status === 'queued' ? `<a class="ghost sm" href="./capture.html?job=${encodeURIComponent(j.id)}">Watch</a>`
     : '';
   const legacy = /demo|rehearsal/i.test(j.name) && !ready ? '' : /demo|rehearsal/i.test(j.name) ? 'legacy' : '';
   return `<article class="card ${ready ? '' : 'dim'}">
-    <div class="chead"><h3>${esc(j.name || 'Capture')}</h3><span class="badge ${j.status}">${BADGE[j.status] ?? esc(j.status)}</span></div>
+    <div class="chead"><h3>${esc(j.name || 'Capture')}</h3><span class="badge ${esc(j.status)}">${BADGE[j.status] ?? esc(j.status)}</span></div>
     ${legacy ? '<p class="meta legacy-note">Bad capture · very old development pipeline</p>' : ''}
     <p class="meta mono">${j.stage ? esc(j.stage) + ' · ' : ''}${j.createdAt ? ago(j.createdAt) : ''}${j.message && j.status !== 'done' ? ' · ' + esc(String(j.message).slice(0, 70)) : ''}</p>
     ${j.status === 'running' || j.status === 'queued' ? `<div class="bar"><i style="transform:scaleX(${(pct / 100).toFixed(3)})"></i></div>` : ''}
-    <div class="row">${action}<span class="id mono">${j.id.slice(0, 8)}</span></div>
+    <div class="row">${action}<span class="id mono">${esc(j.id.slice(0, 8))}</span></div>
   </article>`;
 }
 

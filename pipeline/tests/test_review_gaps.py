@@ -32,6 +32,8 @@ def test_coverage_check_jobs_skip_the_live_preview(tmp_path):
     assert not any("live-sparse" in k for k in Api.puts)
 
 
+# splat-transform's decimation (-d) runs on WebGPU: a GPU, or on a GPU-less Linux box Mesa's software Vulkan
+# (apt mesa-vulkan-drivers, lavapipe). Without an adapter it fails with "Unable to retrieve a WebGPU adapter".
 @pytest.mark.skipif(not shutil.which("npx"), reason="needs node")
 def test_export_decimates_the_phone_file(tmp_path, monkeypatch):
     from plypipe.log import Log

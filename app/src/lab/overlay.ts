@@ -67,6 +67,8 @@ function brackets(h: [number, number, number], k = .3) {
   return out;
 }
 
+const node = (tag: string, cls = '', ...kids: (Node | string)[]) => { const e = document.createElement(tag); if (cls) e.className = cls; e.append(...kids); return e; };
+
 export class Overlay {
   root = new THREE.Group(); labels = document.createElement('div');
   places: Place[] = []; pinStyle: PinStyle = 'tag'; showPins = true; dest: string | null = null;
@@ -84,10 +86,11 @@ export class Overlay {
   constructor(public engine: WalkEngine, public nav: Navigator | null) {
     engine.scene.add(this.root); this.root.add(this.beacons, this.route, this.ai, this.measure, this.arGroup);
     this.labels.className = 'lab-labels'; document.body.append(this.labels);
-    this.measureEl = this.tag('measure-tag', ''); this.measureEl.hidden = true;
+    this.measureEl = this.tag('measure-tag'); this.measureEl.hidden = true;
     engine.frameHooks.add(this.frame);
   }
-  private tag(cls: string, html: string) { const d = document.createElement('div'); d.className = `lab-tag ${cls}`; d.innerHTML = html; this.labels.append(d); return d; }
+  // children are nodes or plain strings (text nodes): place names and detection classes come from places.json, so never HTML
+  private tag(cls: string, ...kids: (Node | string)[]) { const d = document.createElement('div'); d.className = `lab-tag ${cls}`; d.append(...kids); this.labels.append(d); return d; }
 
   // ---------- pins ----------
   setPlaces(places: Place[], style: PinStyle, show: boolean) {
@@ -95,10 +98,9 @@ export class Overlay {
     for (const el of this.pinEls.values()) el.remove(); this.pinEls.clear(); this.beacons.clear();
     if (!show) return;
     for (const p of places) {
-      const el = this.tag(`pin pin-${style}`, style === 'tag'
-        ? `<span class="pin-chip"><i></i><b>${p.name}</b><em></em></span><span class="pin-stem"></span>`
-        : style === 'beacon' ? `<span class="pin-beacon-l"><b>${p.name}</b><em></em></span>`
-        : `<span class="pin-dot"></span><span class="pin-dot-l">${p.name}<em></em></span>`);
+      const el = style === 'tag' ? this.tag(`pin pin-${style}`, node('span', 'pin-chip', node('i'), node('b', '', p.name), node('em')), node('span', 'pin-stem'))
+        : style === 'beacon' ? this.tag(`pin pin-${style}`, node('span', 'pin-beacon-l', node('b', '', p.name), node('em')))
+        : this.tag(`pin pin-${style}`, node('span', 'pin-dot'), node('span', 'pin-dot-l', p.name, node('em')));
       el.dataset.id = p.id; this.pinEls.set(p.id, el);
       if (style === 'beacon') {
         const h = 2.2, geo = new THREE.CylinderGeometry(.035, .035, h, 12, 1, true);
@@ -172,7 +174,8 @@ export class Overlay {
         faint.position.set(...p.p); bold.position.set(...p.p); this.ai.add(faint, bold);
       }
       if (style !== 'review') {
-        const el = this.tag(`ai-tag ai-${style}`, `<i style="background:${classColor(p.ai!.cls)}"></i>${p.ai!.cls}<em>${Math.round(p.ai!.conf * 100)}%</em>`);
+        const swatch = node('i'); swatch.style.background = classColor(p.ai!.cls);
+        const el = this.tag(`ai-tag ai-${style}`, swatch, p.ai!.cls, node('em', '', `${Math.round(p.ai!.conf * 100)}%`));
         el.style.setProperty('--c', classColor(p.ai!.cls)); this.aiEls.set(p.id, el);
       }
     }

@@ -5,7 +5,8 @@ Features: ALIKED (N16ROT) + LightGlue by default, falling back to SIFT if the ON
 be loaded. One SIMPLE_RADIAL camera shared by every frame (a phone video is one camera).
 Pairs: exhaustive for small captures (<= exhaustive_max frames, best loop closure), sequential
 with quadratic overlap otherwise (video order is a strong prior).
-Mapper: global SfM (GLOMAP, merged into COLMAP 4.x), keeping the largest model.
+Mapper: global SfM (GLOMAP, merged into COLMAP 4.x), keeping the largest model; ordered video of
+incremental_min frames or more goes straight to the incremental mapper (see choose_mapper).
 
 Outputs:
     colmap/database.db, colmap/sparse/0          raw model (SIMPLE_RADIAL, binary)
@@ -251,6 +252,16 @@ def drop_spikes(rec, ratio: float = 8.0, clip_of: dict[str, str] | None = None) 
     return dropped
 
 
+def choose_mapper(requested: str | None, source: str | None, n_images: int, incremental_min: int = 400) -> tuple[str, str]:
+    """The mapper to run first and why. An explicit choice always wins. Without one, a long ordered walk skips the
+    global mapper: it was rejected on all five chapel solves (21 to 83 path jumps), 32 minutes before the fallback."""
+    if requested:
+        return requested, "requested"
+    if source in ORDERED_SOURCES and n_images >= incremental_min:
+        return "incremental", f"{source} of {n_images} frames, at least {incremental_min}"
+    return "global", "default"
+
+
 def incremental_options(pycolmap, n_images: int, max_runtime_s: int | None = None):
     """Incremental mapper settings. On long videos global bundle adjustment dominates (the chapel's 1,236 frames:
     90 min on 8 cores), so it runs less often and skips 3D points that add no coverage."""
@@ -388,11 +399,13 @@ def _extract_and_match(ctx: Ctx, pycolmap, cdir: Path, db: Path, images: Path, n
 
 def _map(ctx: Ctx, pycolmap, cdir: Path, db: Path, images: Path, n_images: int, source: str | None, features: str,
          requested: str, matcher: str, loops, cam_params: str | None):
-    mapper = ctx.opt("mapper", "global")
-    ctx.log.emit("sfm", "progress", f"{mapper} mapping")
+    mapper, mapper_why = choose_mapper(ctx.opt("mapper"), source, n_images, int(ctx.opt("incremental_min", 400)))
+    ctx.log.emit("sfm", "progress", f"{mapper} mapping ({mapper_why})")
     raw_out = cdir / "sparse_all"
     if mapper == "incremental":
-        models = pycolmap.incremental_mapping(db, images, raw_out, incremental_options(pycolmap, n_images))
+        # no time cap unless asked: there is no other model to fall back on, so a cut-off would only ship a partial one
+        models = pycolmap.incremental_mapping(db, images, raw_out,
+                                              incremental_options(pycolmap, n_images, ctx.opt("incremental_max_s")))
     else:
         models = pycolmap.global_mapping(db, images, raw_out, pycolmap.GlobalPipelineOptions())
     if not models:
@@ -449,7 +462,7 @@ def _map(ctx: Ctx, pycolmap, cdir: Path, db: Path, images: Path, n_images: int, 
     rec.write_text(txt)
 
     reg = rec.num_reg_images()
-    report = {"features": features, "featuresRequested": requested, "matcher": matcher, "loopDetection": loops, "mapper": mapper, "mapperFallback": fallback,
+    report = {"features": features, "featuresRequested": requested, "matcher": matcher, "loopDetection": loops, "mapper": mapper, "mapperReason": mapper_why, "mapperFallback": fallback,
               "trajectoryJumps": jumps, "droppedViews": len(dropped) + len(spikes), "droppedSpikes": spikes, "images": n_images, "registered": reg,
               "registeredRatio": reg / n_images, "models": len(models), "points": rec.num_points3D(),
               "meanReprojErrorPx": float(rec.compute_mean_reprojection_error()),

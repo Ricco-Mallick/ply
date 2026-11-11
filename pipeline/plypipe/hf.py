@@ -40,6 +40,16 @@ def upload(key: str, path: str | Path) -> None:
     api.upload_file(path_or_fileobj=str(path), path_in_repo=key, repo_id=os.environ["PLY_HF_REPO"], repo_type="dataset")
 
 
+def upload_many(files: list[tuple[str, str | Path]], message: str | None = None) -> None:
+    """(key, path) pairs in ONE commit: upload_file makes a commit per call, and each is a round trip."""
+    api = _api()
+    from huggingface_hub import CommitOperationAdd
+
+    ops = [CommitOperationAdd(path_in_repo=key, path_or_fileobj=str(path)) for key, path in files]
+    api.create_commit(repo_id=os.environ["PLY_HF_REPO"], repo_type="dataset", operations=ops,
+                      commit_message=message or f"add {len(ops)} files")
+
+
 def download(key: str, dest: str | Path) -> None:
     from huggingface_hub import hf_hub_download
 
