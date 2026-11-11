@@ -11,7 +11,8 @@ session, so the next one starts here and not from an exported transcript.
 | API (`ply-api`, Cloudflare) | `35c9c1d`, 2026-11-05 | read from `GET /` |
 | GPU worker (Modal app `ply`, riccomarcelino) | not redeployed since before PR #21 | the mapper choice, one-commit evidence upload, job limits and top view reach jobs only after a redeploy |
 | Twins on Hugging Face (`ply-data`) | `4c46886`, 2026-11-11 | 13 twins have `topview.webp` and a `topview` block in `scene.json`; `4c09354` is the commit before. `chapel-high-2` has the rebuilt walking grid (`4c09354`; `e063f08` before it) |
-| CUDA wheels | `wheels/cp312-cu128-sm89` at `e063f08` | L4 and L40S only; `pipeline/wheels.lock.json` |
+| CUDA wheels | `wheels/cp312-cu128-sm89` at `e063f08` | L4 and L40S; what `pipeline/wheels.lock.json` pins and every image built so far uses |
+| CUDA wheels, rebuilt | `wheels/cp312-cu128-sm80-89-90` at `716b3e4` | checked on an L40S and an A100. **Not usable on an H100**: its `fused-ssim` has no 9.0 kernel (`fused-bilagrid` has none either). The lock for it is `pipeline/wheels.lock.sm80-89-90.json`; the default lock is unchanged |
 
 ## Accounts
 
@@ -23,20 +24,29 @@ session, so the next one starts here and not from an exported transcript.
 
 ## Running
 
-- **Wheel rebuild for H100 and A100**: workflow run 43063630302, started 2026-11-11 16:58 UTC, 5-hour limit. Three
-  packages are built; `gsplat` was still compiling at 19:15 UTC. Artifacts are kept for 30 days.
-- **Phase 1 baselines** on opservemakesalt: see `EXPERIMENTS.md` for what has finished.
+- **Rebuild of `fused-ssim` and `fused-bilagrid` with an H100 kernel**: the `wheels` workflow, dispatched on the
+  work branch with `pkgs=["fused-ssim","fused-bilagrid"]` after `install_gpu.sh` learned to pass the architecture
+  list to both. About 7 minutes each once GitHub runs them.
+
+## Experiments so far (`EXPERIMENTS.md`)
+
+- Noise floor from two identical baselines: 0.14 dB and 0.0011 LPIPS on the every-30th hold-out.
+- Opacity regulariser 0.002 (`q5b`) is the first clear gain: +0.55 dB, −0.033 LPIPS, 80% of splats kept against 61%.
+- Pose refinement (`q2`): no gain. Sparse depth loss (`q4a`): diverges, a defect to fix.
+- Spent on opservemakesalt on 2026-11-11: $2.98 by Modal's billing.
 
 ## Next
 
-1. **Publish the rebuilt wheels** when the run is green: `gh run download 43063630302 -D /tmp/wh`, copy the four
-   `.whl` files flat into `pipeline/wheels`, `modal run scripts/wheels.py::publish --tag <python-cuda-arch list>`,
-   commit the lock file, then `::fetch` into an empty folder and compare checksums. If `gsplat` times out, build it
-   alone per GPU type.
-2. **Phase 4 variants** from the same saved solve, one launch each, read against the noise floor:
-   `MODAL_PROFILE=opservemakesalt modal run --detach pipeline/modal/ply_eval.py --variant q5a` (then `q5b`, `q2`,
-   `q4a`); `python pipeline/modal/ply_eval.py collect --scenario chapel --out /tmp/ply-eval` and
-   `python scripts/eval_table.py /tmp/ply-eval` for the table. Q1, Q3 and Q6 still need code.
+1. **Finish the H100 wheels**: download the two rebuilt wheels, put them with `gsplat` and `ppisp` from
+   `wheels/cp312-cu128-sm80-89-90` into `pipeline/wheels`, `modal run scripts/wheels.py::publish --tag <new tag>`,
+   build an image from them and run a GPU check on L40S, A100 and H100 (gsplat render, `fused_ssim` forward and
+   backward, a bilateral-grid step). Only then switch `pipeline/wheels.lock.json`; every account rebuilds its image
+   once after that.
+2. **Phase 4, next variants** from the same saved solve: opacity regulariser 0.001 and 0, a look at the see-through
+   views of `q5a` and `q5b`, then one full-length run of the winner before the trainer's default changes.
+   `MODAL_PROFILE=opservemakesalt modal run --detach pipeline/modal/ply_eval.py --variant <name>` returns at once;
+   `python pipeline/modal/ply_eval.py collect --scenario chapel --out /tmp/ply-eval` and
+   `python scripts/eval_table.py /tmp/ply-eval` give the table. Fix `--depth-loss` before Q4. Q1, Q3 and Q6 need code.
 3. **Redeploy the worker** (riccomarcelino) and run the smoke capture (0.6) before any long job. The first long
    ordered capture after that shows whether skipping the global mapper saves the expected 32 minutes.
 4. **Make the `ci` checks required** on `main` (repository settings, owner).
@@ -48,7 +58,7 @@ session, so the next one starts here and not from an exported transcript.
 
 - The capture app cannot ask for the global mapper on a long video: it sends `--mapper` only for `incremental`, and
   its "Global (fast, default)" label no longer describes what a 400-frame walk gets (`app/src/capture/lib/backend.ts`).
-- `wheels.yml` still defaults to Python 3.13 and arch 7.5. Dispatch it with `python=3.12` and the arch list.
+- `chapel_e2e.py`, `sfm_cpu.py` and `ply_bench.py` wait on their run with `.remote()`: a killed client cancels them (`MISTAKES.md`, 2026-11-11).
 - The model page accepts a module from anywhere on the site's origin, not only under `/ply/`. There is no content
   security policy, and `?scene=` accepts any origin by design.
 - Two old twins (`c09a4c82…`, `0ffc07fb…`) live on the bucket, not on Hugging Face, and have no top view.

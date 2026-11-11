@@ -1,0 +1,23 @@
+{
+  "repo": "Ricco-Marcelino/ply-data",
+  "prefix": "wheels/cp312-cu128-sm80-89-90",
+  "revision": "716b3e4b7494737ae1dc875b8161e3c0fd06dc06",
+  "files": {
+    "fused_bilagrid-0.0.0-cp312-cp312-linux_x86_64.whl": {
+      "sha256": "ed679d1379be94a7922c4132d01756ee66a53a6b61e5aa57b90dc0918b72637e",
+      "bytes": 3244055
+    },
+    "fused_ssim-1.0.0-cp312-cp312-linux_x86_64.whl": {
+      "sha256": "21d2ccea38bd8ecc75daed1012d31ddedac8fc3561b4939f42df234318160c4f",
+      "bytes": 3089010
+    },
+    "gsplat-1.6.0-cp312-cp312-linux_x86_64.whl": {
+      "sha256": "b20777d7ae270e679cb74f9f4fafffa70a349604f29595a82945ccb05956e220",
+      "bytes": 157289441
+    },
+    "ppisp-1.2.1-cp312-cp312-linux_x86_64.whl": {
+      "sha256": "a0fcd59793f75fed1f9e1326630533ca703af3acd3972a85a4af34c60b370e18",
+      "bytes": 3512008
+    }
+  }
+}

@@ -1,21 +1,25 @@
 # Prebuilt CUDA wheels (gsplat @ pinned SHA, fused-ssim, fused-bilagrid, ppisp) for the GPU workers.
 # Compiling CUDA needs nvcc + torch, not a GPU, so it runs here instead of burning Kaggle GPU quota (6 h/week):
-# Kaggle's 4-core build took over an hour. Matches the Kaggle image: Python 3.13, torch 2.11.0+cu128.
-# Arches: 7.5 (Kaggle T4) by default; add 8.6 (RTX 30xx / A10) and 8.9 (RTX 4090 / L4 / L40S on RunPod) for the finale.
-# Each package builds in its own job, so the wait is the slowest one (gsplat), not the sum.
+# Kaggle's 4-core build took over an hour. The defaults match the Modal worker image: Python 3.12, torch 2.11.0+cu128,
+# and the GPUs it may run on: 8.0 (A100), 8.9 (L4 / L40S / RTX 4090), 9.0 (H100). Kaggle's T4 is 7.5 with Python 3.13.
+# Each package builds in its own job, so the wait is the slowest one (gsplat, hours for three arches), not the sum;
+# `pkgs` rebuilds only the ones named.
 name: wheels
 on:
   workflow_dispatch:
     inputs:
       python:
         description: Python version of the target machine
-        default: '3.13'
+        default: '3.12'
       arch:
         description: TORCH_CUDA_ARCH_LIST
-        default: '7.5'
+        default: '8.0;8.9;9.0'
       jobs:
         description: parallel nvcc jobs (gsplat main needs ~5 GB per job; 2 fits the 16 GB runner)
         default: '2'
+      pkgs:
+        description: packages to build, as a JSON list
+        default: '["gsplat", "fused-ssim", "fused-bilagrid", "ppisp"]'
 permissions:
   contents: read
 jobs:
@@ -23,7 +27,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        pkg: [gsplat, fused-ssim, fused-bilagrid, ppisp]
+        pkg: ${{ fromJSON(inputs.pkgs) }}
     runs-on: ubuntu-22.04   # glibc 2.35: the wheels then load on Kaggle's and RunPod's Ubuntu 22.04+ images
     timeout-minutes: 300
     steps:

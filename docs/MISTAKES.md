@@ -8,7 +8,8 @@ Read the checklist before any paid GPU run. Add an entry when something costs cr
 - [ ] **One run, the one that was asked for.** Extra A/B runs need a yes first.
 - [ ] **Right account.** Check which Modal account has credit and say which one the run uses.
 - [ ] **Detached.** `modal run --detach ...`, and confirm the log says detached. Only the last function the
-      entrypoint triggered survives a disconnect, so a detached entrypoint should start one long function.
+      entrypoint triggered survives a disconnect, so a detached entrypoint should start one long function, and start
+      it with `.spawn()`: a call the client waits on (`.remote()`) is cancelled when the client dies.
 - [ ] **Resumable.** Every finished stage is saved to a Volume before the next starts, and a relaunch picks up
       from there (`.done/<stage>.json` plus the job folder).
 - [ ] **GPU fallback.** `gpu=["L4", "L40S"]`, and read `modal app logs` within two minutes: a queue for capacity
@@ -24,6 +25,17 @@ Read the checklist before any paid GPU run. Add an entry when something costs cr
       symlinked folders included.
 
 ## Log
+
+### 2026-11-11: an export cancelled with its client, `--detach` or not (~$0.25, two attempts)
+
+`pipeline/modal/ply_eval.py` was launched with `modal run --detach` and its entrypoint waited on the run with
+`.remote()`. The launching shell has a 10-minute limit; when it killed the client during the `q5b` export, Modal
+logged a cancellation about 90 seconds later and the export's results were never saved. Killing the client by hand
+on a second attempt reproduced it. Four other runs finished inside the 10 minutes and hid the problem. Four apps
+started within a few seconds also hit Modal's app-creation rate limit, and one launch failed (no cost).
+**Rule:** the entrypoint starts the long function with `.spawn()` and returns (`ply_eval.py` now does; `--wait`
+blocks on purpose). `chapel_e2e.py`, `sfm_cpu.py` and `ply_bench.py` still wait with `.remote()`: launch them from a
+shell that outlives the run, or change them the same way first. Start parallel runs a few seconds apart.
 
 ### 2026-11-05: three hand-off bugs found only by a live job, and `pkill -f` again (~$2.45)
 

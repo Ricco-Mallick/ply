@@ -12,7 +12,9 @@ from the `ply-bench` Volume: its camera solve and photos are restored, its old t
 then `plypipe --only train` and `--only export` run with the variant's arguments. Each finished stage is saved to
 <scenario>/eval/<variant>/ and committed before the next starts; a relaunch layers that folder over the restore and
 runs only what is not finished (training itself cannot resume part-way: the newest snapshot is kept only so a stopped
-run leaves a model behind). The entrypoint starts exactly one long function, so `--detach` keeps it alive.
+run leaves a model behind). The entrypoint starts exactly one long function and does not wait for it: a call the
+client waits on was cancelled about 90 s after the client was killed, `--detach` or not (2026-11-11, an export lost
+that way). `--wait` blocks and prints the summary, for a run short enough to sit through.
 
 The stop-loss is in code: the function's timeout (1.5x the estimate, plus two minutes to save) and an earlier in-code
 deadline for the variant. GPU: one type for comparable timings (L40S); PLY_EVAL_GPU=L40S,L4 allows a fallback, with a
@@ -168,11 +170,16 @@ def run_variant(job: dict) -> dict:
 
 
 @app.local_entrypoint()
-def main(src: str = "chapel/high/job", scenario: str = "chapel", variant: str = "", args: str = "", force: bool = False):
+def main(src: str = "chapel/high/job", scenario: str = "chapel", variant: str = "", args: str = "", force: bool = False,
+         wait: bool = False):
     job = evalrun.make_job(scenario, src, variant, args, force, tuple(GPUS), CEILING_MIN, evalrun.code_revision(HERE.parent.parent))
     print(evalrun.describe(job), flush=True)
-    result = run_variant.remote(job)
-    print(evalrun.summary(result), flush=True)
+    if wait:
+        print(evalrun.summary(run_variant.remote(job)), flush=True)
+        return
+    call = run_variant.spawn(job)
+    print(f"[eval] started {call.object_id}: not waiting. `modal app logs ply-eval` follows it; the result lands in "
+          f"{evalrun.variant_dir(job['scenario'], job['variant'])}/metrics.json on the Volume (collect)", flush=True)
 
 
 if __name__ == "__main__":  # `plan` and `collect` run here, on this machine, not through `modal run` (which would build the image first)
