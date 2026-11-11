@@ -12,7 +12,7 @@ session, so the next one starts here and not from an exported transcript.
 | GPU worker (Modal app `ply`, riccomarcelino) | not redeployed since before PR #21 | the mapper choice, one-commit evidence upload, job limits and top view reach jobs only after a redeploy |
 | Twins on Hugging Face (`ply-data`) | `4c46886`, 2026-11-11 | 13 twins have `topview.webp` and a `topview` block in `scene.json`; `4c09354` is the commit before. `chapel-high-2` has the rebuilt walking grid (`4c09354`; `e063f08` before it) |
 | CUDA wheels | `wheels/cp312-cu128-sm89` at `e063f08` | L4 and L40S; what `pipeline/wheels.lock.json` pins and every image built so far uses |
-| CUDA wheels, rebuilt | `wheels/cp312-cu128-sm80-89-90` at `716b3e4` | checked on an L40S and an A100. **Not usable on an H100**: its `fused-ssim` has no 9.0 kernel (`fused-bilagrid` has none either). The lock for it is `pipeline/wheels.lock.sm80-89-90.json`; the default lock is unchanged |
+| CUDA wheels, rebuilt | `wheels/cp312-cu128-sm80-89-90-r2` at `73b576a` | for A100, L4/L40S and H100. An image built from it passed a GPU check on an L40S, an A100 and an H100 request (served by an H200): gsplat render, `fused_ssim` and a bilateral-grid kernel forward and backward, the trainer's imports. No training run has used it. Its lock is `pipeline/wheels.lock.sm80-89-90.json`; the default lock is unchanged. (`…sm80-89-90` without `-r2` is the first rebuild, whose `fused-ssim` failed on the H100) |
 
 ## Accounts
 
@@ -24,9 +24,7 @@ session, so the next one starts here and not from an exported transcript.
 
 ## Running
 
-- **Rebuild of `fused-ssim` and `fused-bilagrid` with an H100 kernel**: the `wheels` workflow, dispatched on the
-  work branch with `pkgs=["fused-ssim","fused-bilagrid"]` after `install_gpu.sh` learned to pass the architecture
-  list to both. About 7 minutes each once GitHub runs them.
+Nothing. No Modal app is running on either account and no workflow is in progress.
 
 ## Experiments so far (`EXPERIMENTS.md`)
 
@@ -37,11 +35,10 @@ session, so the next one starts here and not from an exported transcript.
 
 ## Next
 
-1. **Finish the H100 wheels**: download the two rebuilt wheels, put them with `gsplat` and `ppisp` from
-   `wheels/cp312-cu128-sm80-89-90` into `pipeline/wheels`, `modal run scripts/wheels.py::publish --tag <new tag>`,
-   build an image from them and run a GPU check on L40S, A100 and H100 (gsplat render, `fused_ssim` forward and
-   backward, a bilateral-grid step). Only then switch `pipeline/wheels.lock.json`; every account rebuilds its image
-   once after that.
+1. **Switch to the rebuilt wheels** when an A100 or H100 is wanted, or at the next worker deploy:
+   `cp pipeline/wheels.lock.sm80-89-90.json pipeline/wheels.lock.json`, `modal run scripts/wheels.py::fetch`, then
+   the 300-step smoke variant (`ply_eval.py --variant smoke --force`) before anything longer. Every account rebuilds
+   its image once after the switch.
 2. **Phase 4, next variants** from the same saved solve: opacity regulariser 0.001 and 0, a look at the see-through
    views of `q5a` and `q5b`, then one full-length run of the winner before the trainer's default changes.
    `MODAL_PROFILE=opservemakesalt modal run --detach pipeline/modal/ply_eval.py --variant <name>` returns at once;
