@@ -1,0 +1,67 @@
+# Checks on every pull request and on main: the API tests, the app's typecheck, build and tests, and the pipeline's
+# fast suite (about 4 minutes on a CPU). Nothing here deploys; api.yml and pages.yml do that from main.
+name: ci
+on:
+  pull_request:
+  push:
+    branches: [main]
+permissions:
+  contents: read
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  api:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: tests
+        working-directory: cloud
+        run: |
+          node --experimental-strip-types test/sigv4.test.mts
+          node --experimental-strip-types test/cdn.test.mts
+          node --experimental-strip-types test/modal.test.mts
+  app:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: app/package-lock.json
+      - run: npm ci
+        working-directory: app
+      - name: typecheck and build
+        run: npm run build
+        working-directory: app
+      - name: tests
+        working-directory: app
+        run: |
+          node --experimental-strip-types test/scene-status.test.mts
+          node --experimental-strip-types test/module-url.test.mts
+  pipeline:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: pipeline/pyproject.toml
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      # ffmpeg for the frames tests; Mesa's software Vulkan gives splat-transform the WebGPU adapter its decimation needs
+      - name: system packages
+        run: sudo apt-get update -q && sudo apt-get install -y -q --no-install-recommends ffmpeg mesa-vulkan-drivers
+      - run: python -m pip install -e "pipeline[sfm-cpu,test]"
+      - name: fast suite
+        working-directory: pipeline
+        run: python -m pytest -q -m "not slow"
