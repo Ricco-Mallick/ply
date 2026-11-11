@@ -146,9 +146,13 @@ viewer's rules. Chapel: 0.01 → 28.1 m² reachable, capture positions 2.6% → 
 the new grids to the live twins; wall crossings are not yet measured against ground truth (phase 1). Replaced by 2.3
 wherever a GPU pass exists.
 
-**2.1 Viewer (free).** Free stays the default until Walk works. Done: the pipeline writes its walk check into
-`occupancy.json` (`walk.pass`), and the viewer opens in Walk only for a scene that passed. Still to do: sub-step
-movement so no step exceeds half a cell, and cap wheel speed in Walk. A failed `unstick()` returns to the spawn point. Put the
+**2.1 Viewer (free).** Free is the default on every twin (owner's decision, 2026-11-11, after trying Walk on the
+rebuilt chapel grid: it moves too slowly and catches on things). The pipeline still writes its walk check into
+`occupancy.json` (`walk.pass`); the viewer no longer reads it. Both complaints are in the engine: Walk moves at
+1.4 m/s against 2.2 m/s in Free, and a blocked axis has its speed set to zero, so every 10 cm step in a grid edge
+stops the walker dead where it should slide. Still to do, in this order: walking speed and sliding along edges,
+then sub-step movement
+so no step exceeds half a cell, and cap wheel speed in Walk. A failed `unstick()` returns to the spawn point. Put the
 grid behind one collider interface (the engine calls it directly in four places today), so a mesh collider or a
 navmesh can replace it later. Files: `app/src/walk/engine.ts:22,136-144,163,183-187`, `app/src/walk/scene.ts`. Tests
 (Playwright): holding W into a wall for five seconds at maximum wheel speed keeps the camera inside the room, and a
@@ -374,5 +378,8 @@ Made by the owner on 2026-11-10:
 Made on 2026-11-11:
 
 5. The rebuilt chapel walking grid replaces the published one on `chapel-high-2` (done; see `STATUS.md`).
+6. Free is the default mode on every twin, whatever the walk check says. This replaces decision 4. Walk stays one
+   click away; making it the default again is the owner's call once 2.1 is done.
+7. Work continues down this plan with the third account's credit; quality and pipeline stability come first.
 
 Open: the date of the final, so the phases can be given dates and the cut order applied.
