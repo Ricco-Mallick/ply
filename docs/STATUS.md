@@ -31,7 +31,7 @@ Nothing. No Modal app is running on either account and no workflow is in progres
 - Noise floor from two identical baselines: 0.14 dB and 0.0011 LPIPS on the every-30th hold-out.
 - Opacity regulariser 0.002 (`q5b`) is the first clear gain: +0.55 dB, −0.033 LPIPS, 80% of splats kept against 61%.
 - Pose refinement (`q2`): no gain. Sparse depth loss (`q4a`): diverges, a defect to fix.
-- Spent on opservemakesalt on 2026-11-11: $2.98 by Modal's billing.
+- Spent on opservemakesalt on 2026-11-11: $3.17 by Modal's billing ($2.88 of it on the eval runs).
 
 ## Next
 

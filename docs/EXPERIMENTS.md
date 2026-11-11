@@ -75,6 +75,6 @@ Bold is better than the baseline by more than twice the noise floor.
   the MCMC relocation near step 570. `--depth-loss` cannot be used as it is wired. The cause is not found yet; the first suspect is the disparity term, which upstream scales
   for a normalised scene and ours is in metres. It has to be fixed before any depth variant (Q4a, Q4b) can run.
 
-**Cost.** Modal's billing for the day on opservemakesalt: $2.98 ($2.88 for the eval runs, one cancelled export among
-them, and $0.11 for the two image checks). The runner's own estimates for the same runs add up to $2.32, so billing
+**Cost.** Modal's billing for the day on opservemakesalt: $3.17 ($2.88 for the eval runs, one cancelled export among
+them, and $0.29 for the image and wheel checks). The runner's own estimates for the same runs add up to $2.32, so billing
 runs about a quarter above them.
