@@ -51,6 +51,9 @@ Status, 2026-11-10: U1 is fixed. The wheels are on Hugging Face, restored by `mo
 and pinned by `pipeline/wheels.lock.json`. U2 and U8 are the owner's decisions: the credentials are not rotated,
 and the repository stays public for now at the competition organiser's request.
 
+Status, 2026-11-11: U4 and U5 are fixed in the app. U7 has its workflow (`ci.yml`); making the checks required is
+still a repository setting. S1 and T6 are changed in code and reach jobs at the next worker deploy. U3 and U6 are open.
+
 ## Walking and layout
 
 The first plan blamed wall-crossing on "37% of cells unknown". That is not what the code does: the viewer treats an

@@ -3,6 +3,37 @@
 What changed in the pipeline, why, and how it was measured. The newest work is first. Each entry names the defect,
 the evidence for it, the change, and what the change was checked against. Costs are from `modal billing report`.
 
+## 2026-11-11: phase 0, first batch (mapper choice, evidence upload, viewer labels and injection, CI)
+
+**Evidence.** From `PROJECT-REVIEW.md`: the global mapper was rejected on all five chapel solves and cost about 32
+of the 102 solve minutes (S1); 48 evidence frames went to Hugging Face one commit each, about 18 GPU-minutes (T6);
+every new twin carried a "Bad capture" badge (U4); the model page imported a module from any address and place names
+were written as HTML (U5); nothing ran on a pull request (U7).
+
+**Change.**
+- `sfm.choose_mapper`: an ordered source of `--incremental-min` (400) frames or more starts with the incremental
+  mapper. An explicit `--mapper` wins, and `--mapper` no longer has a default: the old default of `global` reached the
+  stage as an explicit choice, so no automatic rule could have applied. The reason is in the SfM report
+  (`mapperReason`). The direct route has no time cap unless `incremental_max_s` is set, because there is no second
+  model to fall back on.
+- `hf.upload_many` and `Api.upload_many`: the picked evidence frames and `poses.json` go up in one commit. Without
+  Hugging Face, or when the commit is refused, they go to the bucket one file at a time as before.
+- App: an id that is not listed gets no badge; a room module is imported only from the site's own origin; place
+  names, detection classes, outliner names, the LiDAR page's error line and the library's job ids are written as text.
+- `.github/workflows/ci.yml`: the API tests, the app's typecheck, build and tests, and the pipeline's fast suite on
+  every pull request. `test_export_decimates_the_phone_file` now passes on a machine with no GPU, through Mesa's
+  software Vulkan (`mesa-vulkan-drivers`); the test itself is unchanged.
+
+**Checked.** Pipeline fast suite: 157 passed, 1 deselected (135 before, with the one known failure). App: typecheck
+and build pass; 32 checks in `app/test` pass on Node 22 and 24. In headless Chrome a place named
+`<img src=x onerror=…>` ran script before the change and shows as text after it, and a module from another origin is
+refused without being requested. **Not measured:** no job has run with the new mapper choice or the one-commit
+upload. Both reach jobs at the next worker deploy, and the first long capture after it is the measurement.
+
+**Chapel.** The rebuilt walking grid (entry below) replaced the published one on `chapel-high-2` on the owner's
+decision: two files, `ply-data` commit `4c09354`. Rebuilt from the saved solve with the code on `main`, it gives the
+same numbers as below, and the live walkthrough now opens in Walk.
+
 ## 2026-11-11: Walk mode on existing twins (`stages/occupancy.py`, `plypipe/walkcheck.py`)
 
 **Evidence.** Walk was the intended mode, but the walker got stuck, so the viewer opened in Free. `walkcheck` scores
