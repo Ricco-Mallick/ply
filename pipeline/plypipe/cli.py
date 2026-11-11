@@ -119,6 +119,11 @@ def build_parser() -> argparse.ArgumentParser:
     g.add_argument("--train-dry-run", action="store_true", help="rehearsal: load the scene in the trainer but skip GPU training")
     g.add_argument("--holdout", type=int, default=30,
                    help="hold every Nth view out of training and score the twin on it (PSNR/SSIM/LPIPS); 0 disables")
+    g.add_argument("--holdout-block", type=int, default=0,
+                   help="also hold out this many consecutive frames from the middle of the longest clip and score them "
+                        "apart from the every-Nth views (needs --holdout); 0 disables")
+    g.add_argument("--opacity-reg", type=float,
+                   help="MCMC opacity regulariser (A/B option; the trainer's default is 0.01)")
     g.add_argument("--pose-opt", action="store_true", help="refine camera poses during training (A/B option)")
     g.add_argument("--depth-loss", action="store_true", help="supervise depth at the SfM track points (A/B option)")
     g.add_argument("--bilateral-grid", action="store_true",
