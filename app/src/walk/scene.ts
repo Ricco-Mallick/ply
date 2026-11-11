@@ -4,6 +4,9 @@
 import { deviceProfile } from './perf';
 
 export interface Occupancy { image: string; origin: [number, number]; cell: number; width: number; height: number; }
+/** The twin from straight above with the ceiling cut away (pipeline topview.py). Laid out like the occupancy image:
+    row = +z, column = +x, `mpp` metres per pixel from `origin`. `image` is an absolute URL. */
+export interface TopView { image: string; origin: [number, number]; mpp: number; width: number; height: number; }
 export interface SceneManifest {
   name: string;
   splat: string;
@@ -16,8 +19,7 @@ export interface SceneManifest {
   start?: { position: [number, number, number]; yaw?: number };
   bounds?: { min: [number, number, number]; max: [number, number, number] };
   occupancy?: Occupancy;
-  /** the pipeline's walk check passed (occupancy.json `walk.pass`): open in Walk mode */
-  walkable?: boolean;
+  topview?: TopView;
   cameraPath?: [number, number, number][];
   /** cinematic tour keyframes (pipeline tour.py) */
   tour?: { pos: [number, number, number]; target: [number, number, number]; fov: number; dur: number }[];
@@ -104,7 +106,10 @@ async function normalise(raw: any, base: URL): Promise<SceneManifest> {
   if (raw.occupancy?.meta) {
     const o = await (await fetch(new URL(raw.occupancy.meta, base))).json();
     m.occupancy = { image: raw.occupancy.image ?? o.image, origin: o.origin, cell: o.cellSize, width: o.width, height: o.height };
-    m.walkable = o.walk?.pass === true;
+  }
+  const t = raw.topview;
+  if (typeof t?.image === 'string' && Array.isArray(t.origin) && t.metersPerPixel > 0 && t.width > 0 && t.height > 0) {
+    m.topview = { image: new URL(t.image, base).href, origin: [Number(t.origin[0]), Number(t.origin[1])], mpp: t.metersPerPixel, width: t.width, height: t.height };
   }
   return m;
 }

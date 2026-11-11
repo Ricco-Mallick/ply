@@ -20,6 +20,10 @@ import json
 import os
 import sys
 
+from plypipe import evalsplit
+
+OPACITY_REG = 0.01  # the "mcmc" preset of simple_trainer; lower values keep more faint splats (plan variant Q5)
+
 PRESETS = {
     # steps, SH degree, max Gaussians (MCMC cap), appearance model. No appearance model by default: PPISP and
     # bilateral grids correct exposure only inside the trainer, so their twins opened ×1.20-1.28 brighter in the
@@ -33,7 +37,7 @@ PRESETS = {
 def build_config(st, data: str, result: str, preset: str, ppisp: bool | None, antialiased: bool,
                  iterations: int | None = None, sh_degree: int | None = None, cap_max: int | None = None,
                  holdout: int = 0, pose_opt: bool = False, depth_loss: bool = False, world_scale: float | None = None,
-                 bilateral_grid: bool = False, random_bkgd: bool = False):
+                 bilateral_grid: bool = False, random_bkgd: bool = False, opacity_reg: float = OPACITY_REG, holdout_block: int = 0):
     p = dict(PRESETS[preset])
     # the capture app's advanced settings: explicit values win over the preset
     for k, v in (("max_steps", iterations), ("sh_degree", sh_degree), ("cap_max", cap_max)):
@@ -46,8 +50,10 @@ def build_config(st, data: str, result: str, preset: str, ppisp: bool | None, an
     # noise is lr x covariance (metres cubed), so a room 3 m across got 9x the intended noise and a hall far more.
     # Dividing by the scale (squared for the noise) gives every room the noise the recipe was tuned with.
     ws = world_scale if world_scale and world_scale > 0 else 1.0
+    if holdout_block and not (holdout and holdout > 1):
+        raise ValueError("--holdout-block is scored next to the every-Nth views: it needs --holdout N (N > 1)")
     cfg = st.Config(
-        init_opa=0.5, init_scale=0.1, opacity_reg=0.01, scale_reg=0.01 / ws,  # the "mcmc" preset of simple_trainer
+        init_opa=0.5, init_scale=0.1, opacity_reg=opacity_reg, scale_reg=0.01 / ws,
         # MCMC relocates until refine_stop_iter (25k by default, i.e. 25k of gsplat's 30k). Below 25k steps it never
         # stops, so the last splats are teleported with no time left to fit; keep upstream's ratio at any length
         strategy=st.MCMCStrategy(verbose=True, cap_max=p["cap_max"], refine_stop_iter=int(steps * 0.83), noise_lr=5e5 / ws**2),
@@ -100,7 +106,9 @@ def build_config(st, data: str, result: str, preset: str, ppisp: bool | None, an
                  "ppisp": use_ppisp, "antialiased": antialiased, "holdout": holdout if holdout and holdout > 1 else 0,
                  "poseOpt": bool(pose_opt), "depthLoss": bool(depth_loss), "worldScale": round(ws, 4),
                  "appearance": getattr(cfg, "post_processing", None) or ("app_opt" if getattr(cfg, "app_opt", False) else None),
-                 "randomBkgd": bool(random_bkgd)}
+                 "randomBkgd": bool(random_bkgd),
+                 **({"opacityReg": opacity_reg} if opacity_reg != OPACITY_REG else {}),
+                 **({"holdoutBlock": holdout_block} if holdout_block else {})}
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -117,6 +125,10 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--sh-degree", type=int)
     ap.add_argument("--cap-max", type=int)
     ap.add_argument("--holdout", type=int, default=0, help="score every Nth view, held out of training (0: off)")
+    ap.add_argument("--holdout-block", type=int, default=0,
+                    help="also hold out this many consecutive frames from the middle of the longest clip, scored apart (needs --holdout)")
+    ap.add_argument("--frames-index", help="frames_index.json (frame -> clip) the block is chosen from; without it all views count as one clip")
+    ap.add_argument("--opacity-reg", type=float, default=OPACITY_REG, help="MCMC opacity regulariser")
     ap.add_argument("--pose-opt", action="store_true")
     ap.add_argument("--depth-loss", action="store_true")
     ap.add_argument("--bilateral-grid", action="store_true")
@@ -133,13 +145,20 @@ def main(argv: list[str] | None = None) -> int:
             stub.fused_ssim = lambda *x, **k: None
             sys.modules["fused_ssim"] = stub
 
+    index = evalsplit.read_index(os.path.abspath(a.frames_index)) if a.frames_index else None
     sys.path.insert(0, os.path.abspath(a.examples))
     os.chdir(a.examples)  # simple_trainer imports sibling modules (datasets, utils, gsplat_viewer)
     import simple_trainer as st  # noqa: E402
 
     cfg, summary = build_config(st, os.path.abspath(a.data), os.path.abspath(a.result), a.preset, a.ppisp, a.antialiased,
                                 a.iterations, a.sh_degree, a.cap_max, a.holdout, a.pose_opt, a.depth_loss, a.world_scale,
-                                a.bilateral_grid, a.random_bkgd)
+                                a.bilateral_grid, a.random_bkgd, a.opacity_reg, a.holdout_block)
+    block = None
+    if a.holdout_block:
+        import torch
+        if not a.dry_run and torch.cuda.device_count() > 1:  # gsplat would spawn workers that do not see the patch
+            raise SystemExit("--holdout-block needs one visible GPU (CUDA_VISIBLE_DEVICES)")
+        block = evalsplit.install(st, a.holdout_block, index)
     cfg.adjust_steps(cfg.steps_scaler)
     os.makedirs(a.result, exist_ok=True)
     with open(os.path.join(a.result, "ply_preset.json"), "w") as f:
@@ -149,8 +168,12 @@ def main(argv: list[str] | None = None) -> int:
         parser = st.Parser(data_dir=cfg.data_dir, factor=cfg.data_factor, normalize=cfg.normalize_world_space, test_every=cfg.test_every)
         ds = st.Dataset(parser, split="train")
         item = ds[0]
-        print(json.dumps({"plyTrainDryRun": {"images": len(parser.image_names), "trainImages": len(ds), "points": int(len(parser.points)),
-                                             "imageShape": list(item["image"].shape), "sceneScale": float(parser.scene_scale)}}), flush=True)
+        found = {"images": len(parser.image_names), "trainImages": len(ds), "points": int(len(parser.points)),
+                 "imageShape": list(item["image"].shape), "sceneScale": float(parser.scene_scale)}
+        if a.holdout_block:
+            found.update(valImages=len(st.Dataset(parser, split="val")), blockImages=len(st.Dataset(parser, split="block")),
+                         block=block["block"])
+        print(json.dumps({"plyTrainDryRun": found}), flush=True)
         return 0
     st.cli(st.main, cfg, verbose=True)
     return 0
