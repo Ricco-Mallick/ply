@@ -47,16 +47,23 @@ These break the demo or cost money whatever the plan says.
 | U7 | **Nothing is checked on a pull request.** The API tests run on push to `main` only, the site workflow only builds, the pipeline tests run nowhere, and branch protection requires no check | `.github/workflows/api.yml:6-9`; branch API: protected, no required contexts | One PR workflow: API tests, app typecheck and build, pipeline fast tests; make it required | S |
 | U8 | **The repository is public** while `LICENSE` and `README.md` call it proprietary and confidential. It holds room photos, account names, budgets, the API address and a competitor teardown | `gh repo view`: PUBLIC | Owner's decision: make it private (Pages then needs a paid plan or a separate public site repo), or drop the confidentiality claim | owner |
 
+Status, 2026-11-10: U1 is fixed. The wheels are on Hugging Face, restored by `modal run scripts/wheels.py::fetch`
+and pinned by `pipeline/wheels.lock.json`. U2 and U8 are the owner's decisions: the credentials are not rotated,
+and the repository stays public for now at the competition organiser's request.
+
 ## Walking and layout
 
 The first plan blamed wall-crossing on "37% of cells unknown". That is not what the code does: the viewer treats an
 unknown cell as blocked (`app/src/walk/scene.ts:70` blocks every value under 128, and unknown is written as 127 by
-`pipeline/plypipe/stages/occupancy.py`). The code shows three other ways through a wall. Which of them matters most on
-the chapel has not been measured.
+`pipeline/plypipe/stages/occupancy.py`). So unknown cells make Walk mode too tight, not too loose. The owner confirmed
+on 2026-11-10 that this is the real complaint: in Walk the walker gets stuck and cannot get from place to place, and
+the viewer opens in Free as a workaround. W0 is that problem; W1 to W3 are the ways through a wall. None of them has
+been measured on the chapel yet.
 
 | # | Finding | Evidence | Fix |
 |---|---|---|---|
-| W1 | **The viewer opens in Free mode, where there is no collision at all.** A tour also ends in Free mode | `app/src/walk/engine.ts:22,183-187`; `app/src/walk/tour.ts:71` | Open in Walk when the scene has a grid; keep Free one tap away |
+| W0 | **Walk mode confines the walker to a narrow corridor and closes it easily.** A cell is free only where the solve has floor points or within 0.3 m of the camera path; the rest is unknown and therefore blocked. On a plain floor that is a corridor about 0.7 m wide for a walker 0.44 m wide. Two sparse points block a cell, and only the one-cell path line overrides them | `occupancy.py` (`path_radius=0.3`, `min_pts=2`, the final `grid[path] = FREE`); `app/src/walk/scene.ts:35-38,70`; `app/src/walk/engine.ts:15` | Free space from what the cameras saw through, not only from floor points (plan, 2.0 and 2.3) |
+| W1 | **The viewer opens in Free mode, where there is no collision at all**, because Walk is not usable yet. A tour also ends in Free mode | `app/src/walk/engine.ts:22,183-187`; `app/src/walk/tour.ts:71` | Open in Walk once a scene's grid passes the walking gate |
 | W2 | **Plain interior walls are bridged.** A cell is blocked only when it holds two or more sparse points between 0.2 and 1.8 m, and free space is then closed with a 0.3 m element, which fills gaps up to about 0.6 m wide. A plain wall has few sparse points, so where both sides were walked the gap is filled as free | `occupancy.py` (`min_pts=2`, `close_m=0.3`) | Build the grid from depth rendered from the trained splat, with free space carved along the view rays (plan, phase 2) |
 | W3 | **No sub-stepping.** At wheel speed ×4 one frame moves up to 0.5 m, and a one-cell wall is skipped *(reviewer, simulated)* | `app/src/walk/engine.ts:163,183-186` | Sub-step so no step exceeds half a cell; cap wheel speed in Walk |
 | W4 | A start inside a wall can leave the walker frozen: `unstick()` searches 6 m and then gives up silently | `app/src/walk/engine.ts:141-144` | Fall back to the spawn point |

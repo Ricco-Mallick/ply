@@ -19,8 +19,9 @@ Read the checklist before any paid GPU run. Add an entry when something costs cr
 - [ ] **Report spend from billing, not arithmetic.** `modal billing report --for today --json` per app.
 - [ ] **Kill by PID, never by pattern.** Read `/proc/<pid>/cmdline` and match the target binary; a pattern in your
       own command line matches your own shell.
-- [ ] **Inputs present.** `pipeline/wheels` downloaded from the last green `wheels` run; data on the Volume checked
-      with `modal volume ls`, symlinked folders included.
+- [ ] **Inputs present.** `pipeline/wheels` filled by `modal run scripts/wheels.py::fetch` (the copy on Hugging Face;
+      the `wheels` workflow's artifacts expire after 30 days); data on the Volume checked with `modal volume ls`,
+      symlinked folders included.
 
 ## Log
 

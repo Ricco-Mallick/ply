@@ -25,8 +25,9 @@ STAGE_LIMITS = os.environ.get("PLY_STAGE_LIMITS", "sfm=100")
 EXPORT_PROBES = os.environ.get("PLY_EXPORT_PROBES", "1")
 WORKER_NAME = os.environ.get("PLY_WORKER_NAME", f"modal-{GPU.lower()}")  # deploy-time: a second account needs its own row
 
-# CUDA extensions come prebuilt from CI (.github/workflows/wheels.yml, python 3.12, sm_89 for L4 / L40S):
-#   gh run download <run> -R Ricco-Mallick/ply -D pipeline/wheels   (flattened: one folder of .whl files)
+# CUDA extensions come prebuilt from CI (.github/workflows/wheels.yml, python 3.12, sm_89 for L4 / L40S). CI's
+# artifacts expire after 30 days, so the copy that counts is on Hugging Face:
+#   modal run scripts/wheels.py::fetch   (fills pipeline/wheels from pipeline/wheels.lock.json, checksums verified)
 # Building them here took >90 min of Modal CPU (and $1.4 of credit); installing wheels takes a minute.
 WHEELS = PIPE / "wheels"
 image = (
