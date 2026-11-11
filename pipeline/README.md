@@ -46,6 +46,7 @@ All coordinates are in the **scene frame**: right-handed, **+Y up, floor plane a
 | `scene.json` | Scene metadata, below. |
 | `occupancy.png` | 8-bit grey grid: **255 free, 0 blocked, 127 unknown**. Pixel (row r, col c) = cell r along +Z, c along +X; the top-left pixel is the cell at `origin`. |
 | `occupancy.json` | Grid metadata, below. |
+| `topview.webp` | The twin from straight above with the ceiling cut away, transparent outside the room (`plypipe.topview`, CPU, a few seconds). Laid out like `occupancy.png`: row = +Z, column = +X. The viewer's minimap. `python -m plypipe.topview <folder> --write-scene` makes it for a twin that has none. |
 | `report.json` | Per-stage stats (frames kept, registered ratio, reprojection error, floor tilt, scale, splat counts, timings). |
 
 `scene.json`
@@ -64,7 +65,9 @@ All coordinates are in the **scene frame**: right-handed, **+Y up, floor plane a
   "cameraPath": [[x, y, z], ...],    // capture trajectory, <= ~200 points, in capture order
   "spawn": { "position": [x, 1.6, z], "lookAt": [x, 1.6, z] },  // first camera, eye height
   "occupancy": { "image": "occupancy.png", "meta": "occupancy.json" },
-  "splat": { "file": "scene.spz", "lite": "scene_lite.spz", "format": "spz" }
+  "splat": { "file": "scene.spz", "lite": "scene_lite.spz", "format": "spz" },
+  "topview": { "version": 1, "image": "topview.webp", "origin": [x, z], "metersPerPixel": 0.02,
+               "width": 1010, "height": 441, "cutY": 1.8 }   // pixel (c, r) covers x = origin[0] + (c + .5) * metersPerPixel, z likewise
 }
 ```
 

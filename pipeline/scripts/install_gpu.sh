@@ -15,13 +15,19 @@ set -euo pipefail
 
 GSPLAT_SHA=512d366b67073d77ca099ede742683c165dfc23b
 FUSED_SSIM=git+https://github.com/rahul-goel/fused-ssim@a7c48d6dd7ac6dc39a7958c7c4452e0b10418f38
-FUSED_BILAGRID=git+https://github.com/harry7557558/fused-bilagrid@49f0ef06c9f81810fb9b5dd9027cf1844950cc16
+FUSED_BILAGRID_SHA=49f0ef06c9f81810fb9b5dd9027cf1844950cc16
 PPISP=git+https://github.com/nv-tlabs/ppisp@v1.2.1
 NERFVIEW=git+https://github.com/nerfstudio-project/nerfview@4538024fe0d15fd1a0e4d760f3695fc44ca72787
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 GSPLAT_DIR="${PLY_GSPLAT_DIR:-/opt/gsplat}"
 export TORCH_CUDA_ARCH_LIST="${TORCH_CUDA_ARCH_LIST:-7.5;8.0;8.6;8.9;9.0}"
+# fused-ssim and fused-bilagrid ignore TORCH_CUDA_ARCH_LIST: built on a machine with no GPU they fall back to 7.5, 8.0
+# and 8.9, and their kernels were missing on an H100 (9.0) while gsplat's were there. fused-ssim reads its own
+# variable; fused-bilagrid reads none, so its pinned setup.py gets the list written into it (bilagrid_src)
+SM_LIST="$(printf '%s' "$TORCH_CUDA_ARCH_LIST" | sed 's/+PTX//g; s/\.//g')"
+export CUDA_ARCHITECTURES="${CUDA_ARCHITECTURES:-$SM_LIST}"
+BILAGRID_DIR="${PLY_BILAGRID_DIR:-/tmp/fused-bilagrid}"
 export MAX_JOBS="${MAX_JOBS:-4}"
 PY="${PYTHON:-python3}"
 PIP="$PY -m pip"
@@ -43,16 +49,28 @@ git -C "$GSPLAT_DIR" fetch -q --depth 1 origin "$GSPLAT_SHA"
 git -C "$GSPLAT_DIR" checkout -q FETCH_HEAD
 git -C "$GSPLAT_DIR" submodule update -q --init --recursive --depth 1
 
-CUDA_PKGS=("$GSPLAT_DIR" "$FUSED_SSIM" "$FUSED_BILAGRID" "$PPISP")
+CUDA_PKGS=("$GSPLAT_DIR" "$FUSED_SSIM" "$BILAGRID_DIR" "$PPISP")
 # CI builds each package in its own job (PLY_ONLY_PKG=gsplat|fused-ssim|fused-bilagrid|ppisp) so they compile in parallel
 case "${PLY_ONLY_PKG:-}" in
-  gsplat) CUDA_PKGS=("$GSPLAT_DIR");; fused-ssim) CUDA_PKGS=("$FUSED_SSIM");; fused-bilagrid) CUDA_PKGS=("$FUSED_BILAGRID");; ppisp) CUDA_PKGS=("$PPISP");;
+  gsplat) CUDA_PKGS=("$GSPLAT_DIR");; fused-ssim) CUDA_PKGS=("$FUSED_SSIM");; fused-bilagrid) CUDA_PKGS=("$BILAGRID_DIR");; ppisp) CUDA_PKGS=("$PPISP");;
 esac
+bilagrid_src() {
+  rm -rf "$BILAGRID_DIR" && git init -q "$BILAGRID_DIR"
+  git -C "$BILAGRID_DIR" remote add origin https://github.com/harry7557558/fused-bilagrid.git
+  git -C "$BILAGRID_DIR" fetch -q --depth 1 origin "$FUSED_BILAGRID_SHA" && git -C "$BILAGRID_DIR" checkout -q FETCH_HEAD
+  git -C "$BILAGRID_DIR" submodule update -q --init --recursive --depth 1
+  sed -i '/"-gencode=arch=compute_[0-9]*,code=sm_[0-9]*",$/d' "$BILAGRID_DIR/setup.py"
+  printf '%s\n' "$SM_LIST" | tr ';' '\n' | sed 's/.*/    "-gencode=arch=compute_&,code=sm_&",/' \
+    | sed -i '/^fallback_archs = \[$/r /dev/stdin' "$BILAGRID_DIR/setup.py"
+  [ "$(grep -c -- '-gencode=arch=compute_' "$BILAGRID_DIR/setup.py")" = "$(printf '%s\n' "$SM_LIST" | tr ';' '\n' | grep -c .)" ] \
+    || { echo "fused-bilagrid's setup.py no longer has the fallback list this script rewrites" >&2; exit 1; }
+}
 if [ -n "${PLY_WHEELS:-}" ] && ls "$PLY_WHEELS"/gsplat-*.whl >/dev/null 2>&1; then
   log "installing prebuilt CUDA wheels from $PLY_WHEELS"
   $PIP install -q --no-deps "$PLY_WHEELS"/*.whl
 else
   log "building CUDA extensions for TORCH_CUDA_ARCH_LIST=$TORCH_CUDA_ARCH_LIST (10-20 min)"
+  case " ${CUDA_PKGS[*]} " in *" $BILAGRID_DIR "*) bilagrid_src;; esac
   if [ -n "${PLY_SAVE_WHEELS:-}" ]; then
     mkdir -p "$PLY_SAVE_WHEELS"
     $PIP wheel -q --no-build-isolation --no-deps -w "$PLY_SAVE_WHEELS" "${CUDA_PKGS[@]}"

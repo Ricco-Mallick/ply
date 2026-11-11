@@ -164,22 +164,35 @@ function Joystick({ engine }: { engine: WalkEngine }) {
   );
 }
 
-/** North-up map of the occupancy grid with the visitor's position and view cone. Hidden when the scene has no grid. */
+/** North-up map with the visitor's position and view cone: the pipeline's picture of the twin from above when the scene
+    has one, else the occupancy grid. Hidden when the scene has neither. Click to enlarge. */
 /** Map extras the design lab draws: a route polyline (floor x, z) and place dots. */
 export interface MapExtras { path?: [number, number][] | null; pins?: { x: number; z: number; dest?: boolean }[] }
+/** A picture of the floor plane: row = +z, column = +x, `cell` metres per pixel from `origin`. */
+interface MapImage { img: CanvasImageSource; origin: [number, number]; cell: number; width: number; height: number; photo: boolean }
 export function Minimap({ engine, manifest, extras }: { engine: WalkEngine; manifest: SceneManifest | null; extras?: MapExtras }) {
   const ex = useRef(extras); ex.current = extras;
-  const cv = useRef<HTMLCanvasElement>(null); const [img, setImg] = useState<HTMLCanvasElement | null>(null);
+  const cv = useRef<HTMLCanvasElement>(null); const [map, setMap] = useState<MapImage | null>(null); const [big, setBig] = useState(false);
   useEffect(() => {
-    const g = engine.grid; if (!g) return; const { width: w, height: h } = g.meta; const c = document.createElement('canvas'); c.width = w; c.height = h; const x = c.getContext('2d')!; const d = x.createImageData(w, h);
-    for (let i = 0; i < w * h; i++) { const b = g.data[i]; d.data.set(b ? [7, 11, 20, 120] : [236, 241, 250, 225], i * 4); /* walkable bright, blocked dark */ } x.putImageData(d, 0, 0); setImg(c);
+    let live = true; const g = engine.grid;
+    if (g) {
+      const { width: w, height: h } = g.meta; const c = document.createElement('canvas'); c.width = w; c.height = h; const x = c.getContext('2d')!; const d = x.createImageData(w, h);
+      for (let i = 0; i < w * h; i++) { const b = g.data[i]; d.data.set(b ? [7, 11, 20, 120] : [236, 241, 250, 225], i * 4); /* walkable bright, blocked dark */ } x.putImageData(d, 0, 0);
+      setMap({ img: c, origin: g.meta.origin, cell: g.meta.cell, width: w, height: h, photo: false });
+    }
+    // the grid shows at once; the top view replaces it when it has loaded, and a twin without one keeps the grid
+    const t = manifest?.topview;
+    if (t) { const im = new Image(); im.onload = () => { if (live) setMap({ img: im, origin: t.origin, cell: t.mpp, width: t.width, height: t.height, photo: true }); }; im.src = t.image; }
+    return () => { live = false; };
   }, [engine.grid, manifest]);
+  const S = big ? Math.max(168, Math.min(420, innerWidth - 60, innerHeight - 190)) : 168;
   useEffect(() => {
-    if (!img) return; let raf = 0; const S = 168;
-    const draw = () => { raf = requestAnimationFrame(draw); const c = cv.current; if (!c || !engine.grid) return; const x = c.getContext('2d')!, dpr = Math.min(2, devicePixelRatio);
+    if (!map) return; let raf = 0;
+    const draw = () => { raf = requestAnimationFrame(draw); const c = cv.current; if (!c) return; const x = c.getContext('2d')!, dpr = Math.min(2, devicePixelRatio);
       if (c.width !== S * dpr) { c.width = c.height = S * dpr; } x.setTransform(dpr, 0, 0, dpr, 0, 0); x.clearRect(0, 0, S, S);
-      const { origin, cell, width, height } = engine.grid.meta, sc = Math.min(S / width, S / height) * .92, ox = (S - width * sc) / 2, oy = (S - height * sc) / 2;
-      x.imageSmoothingEnabled = false; x.globalAlpha = .9; x.drawImage(img, ox, oy, width * sc, height * sc); x.globalAlpha = 1;
+      const { origin, cell, width, height } = map, sc = Math.min(S / width, S / height) * (map.photo ? .96 : .92), ox = (S - width * sc) / 2, oy = (S - height * sc) / 2;
+      if (map.photo) { x.fillStyle = 'rgba(9,13,22,.78)'; x.fillRect(0, 0, S, S); }  // the picture is see-through outside the room: a plate keeps it readable over the scene
+      x.imageSmoothingEnabled = map.photo; x.imageSmoothingQuality = 'high'; x.globalAlpha = map.photo ? 1 : .9; x.drawImage(map.img, ox, oy, width * sc, height * sc); x.globalAlpha = 1;
       const p = engine.state.pos, px = ox + (p.x - origin[0]) / cell * sc, py = oy + (p.z - origin[1]) / cell * sc, yaw = engine.state.yaw;
       const toPx = (wx: number, wz: number) => [ox + (wx - origin[0]) / cell * sc, oy + (wz - origin[1]) / cell * sc] as const;
       for (const q of ex.current?.pins ?? []) { const [qx, qy] = toPx(q.x, q.z); x.fillStyle = q.dest ? '#FF6B00' : '#0B1220'; x.strokeStyle = q.dest ? '#fff' : 'rgba(11,18,32,.6)'; x.lineWidth = 1; x.beginPath(); x.arc(qx, qy, q.dest ? 4.5 : 2.6, 0, 7); x.fill(); x.stroke(); }
@@ -190,9 +203,9 @@ export function Minimap({ engine, manifest, extras }: { engine: WalkEngine; mani
       x.fillStyle = 'rgba(255,107,0,.22)'; x.beginPath(); x.moveTo(px, py); x.arc(px, py, 26, -Math.PI / 2 - yaw - .6, -Math.PI / 2 - yaw + .6); x.closePath(); x.fill();
       x.fillStyle = '#FF6B00'; x.beginPath(); x.arc(px, py, 4, 0, 7); x.fill(); x.strokeStyle = '#fff'; x.lineWidth = 1.5; x.stroke(); };
     draw(); return () => cancelAnimationFrame(raf);
-  }, [img, engine]);
-  if (!img) return null;
-  return <Glass className="map" opts={{ radius: 14, shader: false }} style={{ position: 'fixed', right: 18, bottom: 18, left: 'auto', top: 'auto' }}><canvas ref={cv} style={{ width: 168, height: 168 }} aria-label="Map of the floor with your position" role="img" /><span className="wide map-l">Floor 01</span></Glass>;
+  }, [map, engine, S]);
+  if (!map) return null;
+  return <Glass className="map" opts={{ radius: 14, shader: false }} style={{ position: 'fixed', right: 18, bottom: 18, left: 'auto', top: 'auto' }}><button type="button" className="map-b" aria-expanded={big} aria-label={`Map of the floor with your position. ${big ? 'Shrink' : 'Enlarge'} it`} onClick={() => setBig(b => !b)}><canvas ref={cv} style={{ width: S, height: S }} /></button><span className="wide map-l">Floor 01</span></Glass>;
 }
 
 const Q_LABEL: Record<QualityMode, string> = { auto: 'Auto', high: 'High', mid: 'Medium', low: 'Low' };

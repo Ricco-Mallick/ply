@@ -65,7 +65,7 @@ then Q3 to Q5 of phase 4. Phases 0 to 2 and variants Q1, Q2 and Q6 are the minim
 |---|---|---|---|---|
 | 0.1 | **Keep the wheels.** Done 2026-11-10: the four wheels are in the `ply-data` dataset under `wheels/cp312-cu128-sm89`, pinned with checksums by `pipeline/wheels.lock.json`. `modal run scripts/wheels.py::fetch` restores them and `::publish` stores a rebuild. Open: they are built for sm_89 only (L4, L40S); see phase 7 | `scripts/wheels.py`, `pipeline/wheels.lock.json` | fetched into an empty folder; checksums equal to the originals | $0 |
 | 0.2 | **Credentials.** Owner's decision, 2026-11-10: the tokens and invite codes posted in chat stay as they are. New secrets go in project variables, never in chat. That leaves 0.3 as the protection against a leaked code | owner | — | $0 |
-| 0.3 | **Spend limits.** Per invite: one active job and a daily count. Settings are mapped to trainer flags on the server; raw flags stay for the team key. One wall-clock cap per job. Stage limits that add up to less than the container timeout. A size cap on downloads. An idempotency key on job creation | `cloud/src/index.ts`, `pipeline/plypipe/worker.py:49`, `pipeline/modal/ply_modal.py:87,98`, `app/src/capture/lib/backend.ts` | new cases in `cloud/test/` and `tests/test_worker.py` | $0 |
+| 0.3 | **Spend limits.** Worker side done 2026-11-11 (`plypipe/limits.py`: a 240-minute GPU-time cap per job carried across the CPU solve, stage limits checked against their containers at deploy time, a 12 GB input cap); the API side (per-invite limits, flags mapped on the server, the idempotency key) is open. Per invite: one active job and a daily count. Settings are mapped to trainer flags on the server; raw flags stay for the team key. One wall-clock cap per job. Stage limits that add up to less than the container timeout. A size cap on downloads. An idempotency key on job creation | `cloud/src/index.ts`, `pipeline/plypipe/worker.py:49`, `pipeline/modal/ply_modal.py:87,98`, `app/src/capture/lib/backend.ts` | new cases in `cloud/test/` and `tests/test_worker.py` | $0 |
 | 0.4 | **Judge-facing bugs.** App side done 2026-11-11; the two API items (results by status, an owner per job) are open. No "bad capture" badge on new twins. Room modules from our own origin only. Place names as text. Results served only for published and in-review jobs. An owner per job | `app/src/shared/scene-status.ts`, `app/src/model/main.ts`, `app/src/lab/overlay.ts`, `cloud/src/index.ts:134-139` | unit tests, and a Playwright check of a new job's walkthrough | $0 |
 | 0.5 | **Checks on pull requests**: API tests, app typecheck and build, pipeline fast tests (205 s on a CPU). Required by branch protection. Workflow added 2026-11-11; making it required is a repository setting (owner) | `.github/workflows/ci.yml` | the workflow | $0 |
 | 0.6 | **Smoke capture.** A 30-second clip (60 to 90 frames) kept on every account. `plyctl smoke` submits it through the real API with the CPU split forced on and 2k training steps, then checks every stage, the hand-off, the uploaded files and `verify` | `scripts/plyctl.py`, `PLY_CPU_SFM_MIN` | after every deploy and before every long run | ~$0.15 a run |
@@ -73,7 +73,7 @@ then Q3 to Q5 of phase 4. Phases 0 to 2 and variants Q1, Q2 and Q6 are the minim
 | 0.8 | **Skip the mapper that always fails (1a).** Ordered video of 400 frames or more goes straight to the incremental mapper. In code 2026-11-11; live at the next worker deploy, saving not yet measured | `pipeline/plypipe/stages/sfm.py:391-433` | `test_sfm_plan.py`: mapper choice by source and frame count | saves ~32 min and ~$0.35 a run |
 | 0.9 | **Publish without the GPU waiting.** Evidence frames go up in one commit. In code 2026-11-11; live at the next worker deploy, saving not yet measured | `pipeline/plypipe/worker.py:618`, `pipeline/plypipe/hf.py` | `test_worker.py`: one upload call for the folder | saves ~15 GPU-min a run |
 | 0.10 | **`docs/STATUS.md`**: what is deployed, what is running, what is next. Updated at the end of every session. Started 2026-11-11 | `docs/` | — | $0 |
-| 0.11 | **Record each clip's colour transfer** (`color_transfer` from ffprobe) in the frames report, and read it for the chapel clips. If they are HLG or D-Log, convert properly before JPEG | `pipeline/plypipe/stages/frames.py:104,247` | `test_frames.py` | $0 |
+| 0.11 | **Record each clip's colour transfer** (`color_transfer` from ffprobe) in the frames report, and read it for the chapel clips. Done 2026-11-11: the tags are recorded with a warning for HLG and PQ; the chapel clips are `bt709` (`EXPERIMENTS.md`), so no conversion was added. Converting HLG and PQ clips before JPEG is open until a capture needs it | `pipeline/plypipe/stages/frames.py:104,247` | `test_frames.py` | $0 |
 
 ## 5. Phase 1: measure
 
@@ -117,6 +117,12 @@ working, stop and score geometry on S5 and on the chapel's hand-drawn plan only.
 - `scripts/eval_table.py`: collects every `metrics.json` into `docs/EXPERIMENTS.md`, one table per phase, with the
   cost of each run.
 
+Built 2026-11-11, for image quality only: `ply_eval.py` runs one named variant per launch from the saved chapel solve
+(`plypipe/evalrun.py` holds the logic and prints the plan and cost without Modal), `--holdout-block 20` is the second
+hold-out with per-view scores, and `eval_table.py` prints the table and the noise floor. A 300-step smoke variant
+proved the chain on the third account for $0.26. The geometry, layout and walking modules (`plypipe/eval/`) are not
+built; they wait for the MuSHRoom rooms.
+
 ### Runs
 
 | Run | What it answers | Cost |
@@ -146,9 +152,13 @@ viewer's rules. Chapel: 0.01 → 28.1 m² reachable, capture positions 2.6% → 
 the new grids to the live twins; wall crossings are not yet measured against ground truth (phase 1). Replaced by 2.3
 wherever a GPU pass exists.
 
-**2.1 Viewer (free).** Free stays the default until Walk works. Done: the pipeline writes its walk check into
-`occupancy.json` (`walk.pass`), and the viewer opens in Walk only for a scene that passed. Still to do: sub-step
-movement so no step exceeds half a cell, and cap wheel speed in Walk. A failed `unstick()` returns to the spawn point. Put the
+**2.1 Viewer (free).** Free is the default on every twin (owner's decision, 2026-11-11, after trying Walk on the
+rebuilt chapel grid: it moves too slowly and catches on things). The pipeline still writes its walk check into
+`occupancy.json` (`walk.pass`); the viewer no longer reads it. Both complaints are in the engine: Walk moves at
+1.4 m/s against 2.2 m/s in Free, and a blocked axis has its speed set to zero, so every 10 cm step in a grid edge
+stops the walker dead where it should slide. Still to do, in this order: walking speed and sliding along edges,
+then sub-step movement
+so no step exceeds half a cell, and cap wheel speed in Walk. A failed `unstick()` returns to the spawn point. Put the
 grid behind one collider interface (the engine calls it directly in four places today), so a mesh collider or a
 navmesh can replace it later. Files: `app/src/walk/engine.ts:22,136-144,163,183-187`, `app/src/walk/scene.ts`. Tests
 (Playwright): holding W into a wall for five seconds at maximum wheel speed keeps the camera inside the room, and a
@@ -374,5 +384,8 @@ Made by the owner on 2026-11-10:
 Made on 2026-11-11:
 
 5. The rebuilt chapel walking grid replaces the published one on `chapel-high-2` (done; see `STATUS.md`).
+6. Free is the default mode on every twin, whatever the walk check says. This replaces decision 4. Walk stays one
+   click away; making it the default again is the owner's call once 2.1 is done.
+7. Work continues down this plan with the third account's credit; quality and pipeline stability come first.
 
 Open: the date of the final, so the phases can be given dates and the cut order applied.
