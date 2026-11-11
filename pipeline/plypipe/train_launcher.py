@@ -111,6 +111,23 @@ def build_config(st, data: str, result: str, preset: str, ppisp: bool | None, an
                  **({"holdoutBlock": holdout_block} if holdout_block else {})}
 
 
+def depth_l1_loss(pred_depth, gt_depth, scene_scale: float = 1.0):
+    """gsplat's sparse depth loss (L1 in disparity): the same value, with a gradient that stays finite.
+
+    gsplat writes where(depth > 0, 1 / depth, 0), whose gradient is NaN wherever the sampled depth is exactly 0. The
+    bilinear sample passes that NaN to every pixel around the track point, also to one it weighs at exactly 0, and
+    every splat rendered on that pixel turns NaN (docs/EXPERIMENTS.md, Q4a). The inner where keeps 1 / 0 out of the graph.
+    """
+    import torch
+
+    if pred_depth.numel() == 0:  # a view with no track point in frame: the mean of nothing is NaN
+        return pred_depth.sum()
+    seen, known = pred_depth > 0.0, gt_depth > 0.0
+    disp = torch.where(seen, 1.0 / torch.where(seen, pred_depth, torch.ones_like(pred_depth)), torch.zeros_like(pred_depth))
+    disp_gt = torch.where(known, 1.0 / torch.where(known, gt_depth, torch.ones_like(gt_depth)), torch.zeros_like(gt_depth))
+    return torch.nn.functional.l1_loss(disp, disp_gt) * scene_scale
+
+
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--examples", required=True, help="gsplat/examples directory of the pinned checkout")
@@ -154,11 +171,17 @@ def main(argv: list[str] | None = None) -> int:
                                 a.iterations, a.sh_degree, a.cap_max, a.holdout, a.pose_opt, a.depth_loss, a.world_scale,
                                 a.bilateral_grid, a.random_bkgd, a.opacity_reg, a.holdout_block)
     block = None
-    if a.holdout_block:
+    patched = [flag for flag, on in (("--holdout-block", a.holdout_block), ("--depth-loss", a.depth_loss)) if on]
+    if patched:
         import torch
         if not a.dry_run and torch.cuda.device_count() > 1:  # gsplat would spawn workers that do not see the patch
-            raise SystemExit("--holdout-block needs one visible GPU (CUDA_VISIBLE_DEVICES)")
+            raise SystemExit(f"{', '.join(patched)}: needs one visible GPU (CUDA_VISIBLE_DEVICES)")
+    if a.holdout_block:
         block = evalsplit.install(st, a.holdout_block, index)
+    if a.depth_loss:
+        if not hasattr(st, "depth_l1_loss"):  # a gsplat pin that computes the loss elsewhere must not train unpatched
+            raise SystemExit("--depth-loss: simple_trainer has no depth_l1_loss to replace (check the gsplat pin)")
+        st.depth_l1_loss = depth_l1_loss
     cfg.adjust_steps(cfg.steps_scaler)
     os.makedirs(a.result, exist_ok=True)
     with open(os.path.join(a.result, "ply_preset.json"), "w") as f:

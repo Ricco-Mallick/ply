@@ -37,6 +37,8 @@ VARIANTS: dict[str, dict] = {
     "q4a": {"args": BASE + ["--depth-loss"], "note": "sparse depth loss at the SfM track points"},
     "q5a": {"args": BASE + ["--opacity-reg", "0.005"], "note": "opacity regulariser 0.005 (baseline 0.01)"},
     "q5b": {"args": BASE + ["--opacity-reg", "0.002"], "note": "opacity regulariser 0.002"},
+    "q5c": {"args": BASE + ["--opacity-reg", "0.001"], "note": "opacity regulariser 0.001"},
+    "q5d": {"args": BASE + ["--opacity-reg", "0"], "note": "no opacity regulariser"},
 }
 
 # Modal list prices per hour, 2026-11. Only L4 and L40S match the CI wheels (sm_89).

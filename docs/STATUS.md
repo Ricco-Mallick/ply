@@ -1,6 +1,6 @@
 # Status
 
-Updated 2026-11-11 (evening). What is deployed, what is running and what is next. Update this file at the end of every
+Updated 2026-11-11 (night). What is deployed, what is running and what is next. Update this file at the end of every
 session, so the next one starts here and not from an exported transcript.
 
 ## Deployed
@@ -30,7 +30,8 @@ Nothing. No Modal app is running on either account and no workflow is in progres
 
 - Noise floor from two identical baselines: 0.14 dB and 0.0011 LPIPS on the every-30th hold-out.
 - Opacity regulariser 0.002 (`q5b`) is the first clear gain: +0.55 dB, −0.033 LPIPS, 80% of splats kept against 61%.
-- Pose refinement (`q2`): no gain. Sparse depth loss (`q4a`): diverges, a defect to fix.
+- Pose refinement (`q2`): no gain. Sparse depth loss (`q4a`): went NaN on a gradient defect in gsplat's loss. The
+  launcher now replaces that loss (checked on a CPU); not run again on a GPU.
 - Spent on opservemakesalt on 2026-11-11: $3.17 by Modal's billing ($2.88 of it on the eval runs).
 
 ## Next
@@ -39,11 +40,12 @@ Nothing. No Modal app is running on either account and no workflow is in progres
    `cp pipeline/wheels.lock.sm80-89-90.json pipeline/wheels.lock.json`, `modal run scripts/wheels.py::fetch`, then
    the 300-step smoke variant (`ply_eval.py --variant smoke --force`) before anything longer. Every account rebuilds
    its image once after the switch.
-2. **Phase 4, next variants** from the same saved solve: opacity regulariser 0.001 and 0, a look at the see-through
-   views of `q5a` and `q5b`, then one full-length run of the winner before the trainer's default changes.
+2. **Phase 4, next variants** from the same saved solve: `q4a` again first (it shows whether the `--depth-loss` fix
+   trains), opacity regulariser 0.001 and 0 (`q5c`, `q5d`), a look at the see-through views of `q5a` and `q5b`, then
+   one full-length run of the winner before the trainer's default changes.
    `MODAL_PROFILE=opservemakesalt modal run --detach pipeline/modal/ply_eval.py --variant <name>` returns at once;
    `python pipeline/modal/ply_eval.py collect --scenario chapel --out /tmp/ply-eval` and
-   `python scripts/eval_table.py /tmp/ply-eval` give the table. Fix `--depth-loss` before Q4. Q1, Q3 and Q6 need code.
+   `python scripts/eval_table.py /tmp/ply-eval` give the table. Q1, Q3 and Q6 need code.
 3. **Redeploy the worker** (riccomarcelino) and run the smoke capture (0.6) before any long job. The first long
    ordered capture after that shows whether skipping the global mapper saves the expected 32 minutes.
 4. **Make the `ci` checks required** on `main` (repository settings, owner).

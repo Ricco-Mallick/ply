@@ -1,5 +1,6 @@
 """The GPU trainer cannot run here; check the config the launcher hands to gsplat's simple_trainer."""
 
+import sys
 import types
 
 import pytest
@@ -86,6 +87,77 @@ def test_holdout_scores_the_last_step_only_when_asked():
 def test_ab_options_reach_gsplat():
     cfg, info = train_launcher.build_config(st, "/d", "/r", "quick", None, True, pose_opt=True, depth_loss=True)
     assert cfg.pose_opt and cfg.depth_loss and info["poseOpt"] and info["depthLoss"]
+
+
+def _depth_term(torch, loss, rendered, points, depths_gt):
+    """What simple_trainer does around the loss: expected depth (2 m here), sampled bilinearly at the track points."""
+    alpha = rendered.clone().requires_grad_(True)
+    acc = (rendered * 2.0).requires_grad_(True)
+    depth = acc / alpha.clamp(min=1e-10)
+    height, width = depth.shape[1:3]
+    grid = torch.stack([points[..., 0] / (width - 1) * 2 - 1, points[..., 1] / (height - 1) * 2 - 1], dim=-1).unsqueeze(2)
+    sampled = torch.nn.functional.grid_sample(depth.permute(0, 3, 1, 2), grid, align_corners=True).squeeze(3).squeeze(1)
+    value = loss(sampled, depths_gt, scene_scale=1.1)
+    value.backward()
+    return value.item(), acc.grad, alpha.grad
+
+
+def test_depth_loss_keeps_gsplats_value_with_a_finite_gradient_beside_an_empty_pixel():
+    torch = pytest.importorskip("torch")
+
+    def gsplats(pred, gt, scene_scale=1.0):  # gsplat/losses.py at the pinned commit
+        disp = torch.where(pred > 0.0, 1.0 / pred, torch.zeros_like(pred))
+        disp_gt = torch.where(gt > 0.0, 1.0 / gt, torch.zeros_like(gt))
+        return torch.nn.functional.l1_loss(disp, disp_gt) * scene_scale
+
+    rendered = torch.zeros(1, 9, 9, 1)
+    rendered[0, 3, 4, 0] = 0.5  # the only pixel a splat reaches
+    # the second track point sits on column 3 exactly, between two empty pixels: its weight for the rendered pixel is 0
+    points, depths = torch.tensor([[[4.0, 3.0], [3.0, 3.5]]]), torch.tensor([[2.5, 2.0]])
+    theirs, their_acc, their_alpha = _depth_term(torch, gsplats, rendered, points, depths)
+    assert torch.isnan(their_acc[0, 3, 4, 0]) and torch.isnan(their_alpha[0, 3, 4, 0])  # the defect being guarded against
+    ours, acc, alpha = _depth_term(torch, train_launcher.depth_l1_loss, rendered, points, depths)
+    assert ours == theirs and ours > 0
+    assert torch.isfinite(acc).all() and torch.isfinite(alpha).all()
+    assert acc[0, 3, 4, 0] != 0  # the track point on the rendered pixel still pulls its depth
+
+
+def test_depth_loss_of_a_view_with_no_track_point_in_frame_is_zero():
+    torch = pytest.importorskip("torch")
+    rendered = torch.full((1, 9, 9, 1), 0.5)
+    value, acc, alpha = _depth_term(torch, train_launcher.depth_l1_loss, rendered, torch.zeros(1, 0, 2), torch.zeros(1, 0))
+    assert value == 0.0 and torch.isfinite(acc).all() and torch.isfinite(alpha).all()
+
+
+def _launch(tmp_path, monkeypatch, *flags, gpus=1, trainer_has_the_loss=True):
+    """main() up to the hand-over to gsplat, with stand-ins for simple_trainer and torch. Returns the stand-in trainer."""
+    class Config(FakeConfig):
+        def adjust_steps(self, factor):
+            pass
+
+    trainer = types.ModuleType("simple_trainer")
+    trainer.Config, trainer.MCMCStrategy, trainer.main, trainer.cli = Config, FakeMCMC, None, lambda fn, cfg, verbose: None
+    if trainer_has_the_loss:
+        trainer.depth_l1_loss = "gsplat's"
+    monkeypatch.setitem(sys.modules, "simple_trainer", trainer)
+    monkeypatch.setitem(sys.modules, "torch", types.SimpleNamespace(cuda=types.SimpleNamespace(device_count=lambda: gpus)))
+    monkeypatch.setattr(sys, "path", list(sys.path))
+    monkeypatch.chdir(tmp_path)
+    train_launcher.main(["--examples", str(tmp_path), "--data", str(tmp_path / "d"), "--result", str(tmp_path / "r"),
+                         "--preset", "quick", *flags])
+    return trainer
+
+
+def test_depth_loss_replaces_gsplats_loss_only_when_asked(tmp_path, monkeypatch):
+    assert _launch(tmp_path, monkeypatch).depth_l1_loss == "gsplat's"
+    assert _launch(tmp_path, monkeypatch, "--depth-loss").depth_l1_loss is train_launcher.depth_l1_loss
+
+
+def test_depth_loss_refuses_to_train_where_the_replacement_would_not_hold(tmp_path, monkeypatch):
+    with pytest.raises(SystemExit, match="one visible GPU"):  # gsplat's spawned workers import their own trainer
+        _launch(tmp_path, monkeypatch, "--depth-loss", gpus=2)
+    with pytest.raises(SystemExit, match="gsplat pin"):
+        _launch(tmp_path, monkeypatch, "--depth-loss", trainer_has_the_loss=False)
 
 
 def test_held_out_scores_are_read_from_gsplat_stats(tmp_path):

@@ -72,8 +72,14 @@ Bold is better than the baseline by more than twice the noise floor.
 - **Q2, pose refinement: no gain at this length.** Every-30th PSNR and SSIM are inside the noise and LPIPS is a hair worse (+0.0027, just outside it), the
   block's LPIPS is a little better (−0.0068), and training takes 4% longer. Not worth a default on this evidence.
 - **Q4a, sparse depth loss: a defect, not a result.** The loss is NaN from about step 158 and the trainer aborts in
-  the MCMC relocation near step 570. `--depth-loss` cannot be used as it is wired. The cause is not found yet; the first suspect is the disparity term, which upstream scales
-  for a normalised scene and ours is in metres. It has to be fixed before any depth variant (Q4a, Q4b) can run.
+  the MCMC relocation near step 570. **Cause (found on a CPU, 2026-11-11):** gsplat's loss takes
+  `where(depth > 0, 1 / depth, 0)`, and the gradient of that is NaN wherever the sampled depth is exactly 0. The
+  bilinear sample hands the NaN to all four pixels around the track point, also to a pixel it weighs at exactly 0; if
+  that pixel is rendered, every splat on it turns NaN. With gsplat's own function, 2,000 track points and a 1728 px
+  frame this happens in 1 to 5 steps of 300 (by how much of the frame is rendered), so first somewhere between step
+  60 and 300. The scene's scale is not the cause: disparity times scene scale is the same in metres as in a
+  normalised scene. `train_launcher.py` now swaps in a loss with the same value and a finite gradient.
+  **Not confirmed on a GPU:** Q4a has to be run again before it counts, and before Q4b.
 
 **Cost.** Modal's billing for the day on opservemakesalt: $3.17 ($2.88 for the eval runs, one cancelled export among
 them, and $0.29 for the image and wheel checks). The runner's own estimates for the same runs add up to $2.32, so billing
