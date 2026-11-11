@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shutil
 import subprocess
 import tarfile
@@ -24,6 +25,9 @@ from plypipe.util import Ctx, need, run
 
 IMAGE_EXT = {".jpg", ".jpeg", ".png", ".webp", ".heic", ".tif", ".tiff"}
 VIDEO_EXT = {".mp4", ".mov", ".webm", ".mkv", ".m4v"}
+# transfer functions of HDR video (phones record HLG by default in HDR mode); the frames are written without
+# tone mapping, so these come out washed out
+HDR_TRANSFERS = {"arib-std-b67": "HLG", "smpte2084": "PQ"}
 
 
 def sharpness(img: np.ndarray) -> float:
@@ -71,22 +75,42 @@ def probe_duration(video: Path) -> float | None:
         return None
 
 
+def _color_of(st: dict) -> dict:
+    """How a clip says its colours are encoded. Tags the file leaves out stay None (ffprobe may also say 'unknown')."""
+    pix, raw = st.get("pix_fmt"), str(st.get("bits_per_raw_sample") or "")
+    deep = re.search(r"p(\d\d)(?:le|be)$", pix or "")
+    depth = int(raw) if raw.isdigit() else int(deep.group(1)) if deep else 8 if re.match(r"^(yuvj?4\d\dp|nv12|nv21)$", pix or "") else None
+    return {"transfer": st.get("color_transfer"), "primaries": st.get("color_primaries"), "space": st.get("color_space"),
+            "pixFmt": pix, "bitDepth": depth, "hdr": HDR_TRANSFERS.get(st.get("color_transfer") or "")}
+
+
+def color_summary(clips: list[dict]) -> dict:
+    """colorTransfers: clips per transfer tag ('unknown' when untagged); hdrClips: the clips tagged HLG or PQ."""
+    counts: dict[str, int] = {}
+    for c in clips:
+        t = (c.get("color") or {}).get("transfer") or "unknown"
+        counts[t] = counts.get(t, 0) + 1
+    return {"colorTransfers": counts, "hdrClips": [c["file"] for c in clips if (c.get("color") or {}).get("hdr")]}
+
+
 def probe_video(video: Path) -> dict:
-    """Duration and pixel size of a clip, for the plan (the stage itself only needs the duration)."""
+    """Duration, pixel size and colour tags of a clip, for the plan (the stage itself only needs the duration)."""
+    none = {"durationSec": None, "width": None, "height": None, "longSide": None, "color": _color_of({})}
     if not shutil.which("ffprobe"):
-        return {"durationSec": None, "width": None, "height": None, "longSide": None}
+        return none
     try:
         out = subprocess.run(["ffprobe", "-v", "error", "-select_streams", "v:0",
-                              "-show_entries", "stream=width,height:format=duration", "-of", "json", str(video)],
+                              "-show_entries", "stream=width,height,pix_fmt,bits_per_raw_sample,color_transfer,color_primaries,color_space:format=duration",
+                              "-of", "json", str(video)],
                              capture_output=True, text=True, check=True).stdout
         j = json.loads(out)
         st = (j.get("streams") or [{}])[0]
         w, h = st.get("width"), st.get("height")
         dur = j.get("format", {}).get("duration")
         return {"durationSec": float(dur) if dur else None, "width": w, "height": h,
-                "longSide": max(w, h) if w and h else None}
+                "longSide": max(w, h) if w and h else None, "color": _color_of(st)}
     except Exception:
-        return {"durationSec": None, "width": None, "height": None, "longSide": None}
+        return none
 
 
 def _capture(src: Path, ctx: Ctx) -> dict | None:
@@ -150,8 +174,12 @@ def run_stage(ctx: Ctx, src: Path) -> dict:
     planned.update(fpsUsed=fps, longSideUsed=long_side)
     plan.write(ctx.out, "input", planned)
     ctx.log.emit("frames", "progress", f"plan: {planned['why']}")
+    hdr = [f"{v.name} ({p['color']['hdr']})" for v, p in zip(videos, probes) if p["color"]["hdr"]]
+    if hdr:
+        ctx.log.emit("frames", "warn", f"HDR clips: {', '.join(hdr)}. Their colours will look washed out in the twin: "
+                     "HDR to SDR conversion is not applied yet")
     if tars:
-        return _ar_frames(ctx, src, tars, videos, out, fps, oversample, long_side, max_frames)
+        return _ar_frames(ctx, src, tars, videos, out, fps, oversample, long_side, max_frames, probes)
     if not videos:
         raise ValueError(f"no videos in {src}")
     # the capture app ships capture.json (quality + sensor log, spans to skip) next to the clips; keep it with the job
@@ -159,19 +187,20 @@ def run_stage(ctx: Ctx, src: Path) -> dict:
         shutil.copy2(src / "capture.json", ctx.out / "capture.json")
     (ctx.out / "frames_index.json").unlink(missing_ok=True)
     clips, kept = [], 0
-    for v in videos:
+    for v, pr in zip(videos, probes):
         st = _video_frames(ctx, v, out, kept, fps, oversample, long_side, max_frames / len(videos) if max_frames else None)
-        clips.append({"file": v.name, "firstFrame": kept, **st})
+        clips.append({"file": v.name, "firstFrame": kept, **st, "color": pr["color"]})
         kept += st["kept"]
     if len(clips) == 1:
-        return {"source": "video", **{k: v for k, v in clips[0].items() if k not in ("file", "firstFrame")}}
+        return {"source": "video", **{k: v for k, v in clips[0].items() if k not in ("file", "firstFrame")}, **color_summary(clips)}
     soft = blurry_clips(clips)
     if soft:
         ctx.log.emit("frames", "warn", "much blurrier than the sharpest clip (kept, since dropping them would open gaps in "
                      "the solve; reshoot slower if those areas look soft): "
                      + ", ".join(f"{c['file']} ({c['ratio']:.0%})" for c in soft))
     return {"source": "videos", "clips": clips, "kept": kept, "dropped": sum(c["dropped"] for c in clips),
-            "sharpnessMedian": float(np.median([c["sharpnessMedian"] for c in clips])), "blurryClips": soft}
+            "sharpnessMedian": float(np.median([c["sharpnessMedian"] for c in clips])), "blurryClips": soft,
+            **color_summary(clips)}
 
 
 def blurry_clips(clips: list[dict], ratio: float = 0.3) -> list[dict]:
@@ -282,7 +311,7 @@ def _video_frames(ctx: Ctx, src: Path, out: Path, start: int, fps: float, oversa
 
 
 def _ar_frames(ctx: Ctx, src: Path, tars: list[Path], videos: list[Path], out: Path, fps: float, oversample: int,
-               long_side: int, max_frames) -> dict:
+               long_side: int, max_frames, probes: list[dict]) -> dict:
     """AR scans from the capture app: tars of keyframes (already chosen on the phone for motion and spacing) plus
     poses.json (camera-to-world in ARCore's 'local-floor' space: metres, +y up, floor at y = 0). Frames are copied
     in order, the softest few percent dropped; poses go to ar_poses.json for align (real scale, level floor)."""
@@ -341,9 +370,10 @@ def _ar_frames(ctx: Ctx, src: Path, tars: list[Path], videos: list[Path], out: P
         raise ValueError("the AR scans held no usable frames")
     (ctx.out / "ar_poses.json").write_text(json.dumps({"space": "local-floor", "segments": segments}))
     extra = []
-    for v in videos:  # uploaded videos next to AR scans: frames appended after the scans (no poses)
+    for v, pr in zip(videos, probes):  # uploaded videos next to AR scans: frames appended after the scans (no poses)
         st = _video_frames(ctx, v, out, kept, fps, oversample, long_side, None)
-        extra.append({"file": v.name, "firstFrame": kept, **st})
+        extra.append({"file": v.name, "firstFrame": kept, **st, "color": pr["color"]})
         kept += st["kept"]
     return {"source": "ar", "segments": [{k: v for k, v in sg.items() if k != "frames"} for sg in segments], "videos": extra,
-            "kept": kept, "dropped": dropped, "sharpnessMedian": float(np.median(scores_all)) if scores_all else 0.0}
+            "kept": kept, "dropped": dropped, "sharpnessMedian": float(np.median(scores_all)) if scores_all else 0.0,
+            **color_summary(extra)}
