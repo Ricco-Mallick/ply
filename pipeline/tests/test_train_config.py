@@ -145,3 +145,96 @@ def test_bilateral_grid_replaces_ppisp_and_random_backgrounds_reach_gsplat():
     assert cfg.post_processing is None and not cfg.random_bkgd           # no appearance model by default
     cfg, info = train_launcher.build_config(st2, "/d", "/r", "high", True, True)
     assert cfg.post_processing == "ppisp" and info["ppisp"] is True
+
+
+# ------------------------------------------------------------------ the held-out block and opacity options
+
+def test_defaults_are_exactly_what_the_launcher_built_before_the_block_and_opacity_options():
+    """Golden values from the launcher before --holdout-block and --opacity-reg existed: nothing may move while they are off."""
+    cfg, info = train_launcher.build_config(st, "/d", "/r", "high", None, True, iterations=15_000, cap_max=2_000_000, holdout=30)
+    assert {**vars(cfg), "strategy": vars(cfg.strategy)} == {
+        "antialiased": True, "app_opt": False, "data_dir": "/d", "data_factor": 1, "depth_loss": False, "disable_video": True,
+        "disable_viewer": True, "eval_steps": [15000], "init_opa": 0.5, "init_scale": 0.1, "max_steps": 15000,
+        "normalize_world_space": False, "opacity_reg": 0.01, "ply_steps": [15000], "pose_opt": False, "post_processing": None,
+        "random_bkgd": False, "result_dir": "/r", "save_ply": True, "save_steps": [15000], "scale_reg": 0.01, "sh_degree": 3,
+        "steps_scaler": 1.0, "test_every": 30, "use_color_correction_metric": True,
+        "strategy": {"cap_max": 2000000, "noise_lr": 500000.0, "refine_stop_iter": 12450, "verbose": True}}
+    assert info == {"antialiased": True, "appearance": None, "capMax": 2000000, "depthLoss": False, "holdout": 30, "maxSteps": 15000,
+                    "poseOpt": False, "ppisp": False, "preset": "high", "randomBkgd": False, "shDegree": 3, "worldScale": 1.0}
+
+
+def test_opacity_regulariser_reaches_gsplat_and_is_reported_only_when_changed():
+    cfg, info = train_launcher.build_config(st, "/d", "/r", "high", None, True, holdout=30, opacity_reg=0.005)
+    assert cfg.opacity_reg == 0.005 and info["opacityReg"] == 0.005
+    cfg, info = train_launcher.build_config(st, "/d", "/r", "high", None, True, holdout=30, opacity_reg=0.01)
+    assert cfg.opacity_reg == 0.01 and "opacityReg" not in info
+
+
+def test_the_block_needs_the_every_nth_holdout_and_is_reported():
+    cfg, info = train_launcher.build_config(st, "/d", "/r", "high", None, True, holdout=30, holdout_block=20)
+    assert info["holdoutBlock"] == 20 and cfg.eval_steps == [cfg.max_steps] and cfg.use_color_correction_metric
+    assert "holdoutBlock" not in train_launcher.build_config(st, "/d", "/r", "high", None, True, holdout=30)[1]
+    with pytest.raises(ValueError, match="--holdout"):
+        train_launcher.build_config(st, "/d", "/r", "high", None, True, holdout=0, holdout_block=20)
+
+
+class _Captured(Exception):
+    pass
+
+
+def _stage_command(tmp_path, monkeypatch, **opts):
+    from plypipe.log import Log
+    from plypipe.stages import train as train_stage
+    from plypipe.util import Ctx
+    (tmp_path / "gs" / "examples").mkdir(parents=True, exist_ok=True)
+    (tmp_path / "gs" / "examples" / "simple_trainer.py").write_text("")
+    seen = {}
+
+    def capture(cmd, ctx, stage, **kw):
+        seen["cmd"] = [str(c) for c in cmd]
+        raise _Captured
+
+    monkeypatch.setattr(train_stage, "run", capture)
+    ctx = Ctx(out=tmp_path / "job", log=Log(tmp_path / "job", quiet=True), opts={"gsplat_dir": str(tmp_path / "gs"), "preset": "high", **opts})
+    with pytest.raises(_Captured):
+        train_stage.run_stage(ctx)
+    return seen["cmd"]
+
+
+def test_train_stage_command_line_is_unchanged_without_the_new_options(tmp_path, monkeypatch):
+    cmd = _stage_command(tmp_path, monkeypatch)
+    assert [c for c in cmd if c.startswith("--")] == ["--examples", "--data", "--result", "--preset", "--iterations", "--cap-max",
+                                                      "--antialiased", "--holdout"]
+    cmd = _stage_command(tmp_path, monkeypatch, holdout_block=0, opacity_reg=None)
+    assert "--holdout-block" not in cmd and "--opacity-reg" not in cmd and "--frames-index" not in cmd
+
+
+def test_train_stage_passes_the_block_and_opacity_options_on(tmp_path, monkeypatch):
+    cmd = _stage_command(tmp_path, monkeypatch, holdout_block=20, opacity_reg=0.005, iterations=15_000)
+    assert cmd[cmd.index("--holdout") + 1] == "30" and cmd[cmd.index("--holdout-block") + 1] == "20"
+    assert cmd[cmd.index("--frames-index") + 1] == str(tmp_path / "job" / "frames_index.json")
+    assert cmd[cmd.index("--opacity-reg") + 1] == "0.005" and cmd[cmd.index("--iterations") + 1] == "15000"
+    with pytest.raises(RuntimeError, match="needs --holdout"):
+        _stage_command(tmp_path, monkeypatch, holdout_block=20, holdout=0)
+
+
+def test_train_report_carries_both_score_sets_the_block_images_and_the_per_view_file(tmp_path):
+    import json
+    from plypipe.stages import train as train_stage
+    res = tmp_path / "train"
+    (res / "stats").mkdir(parents=True)
+    (res / "renders").mkdir()
+    for stage, n, psnr in (("val", 4, 25.0), ("block", 20, 22.5)):
+        (res / "stats" / f"{stage}_step14999.json").write_text(json.dumps(
+            {"psnr": psnr, "ssim": 0.8, "lpips": 0.3, "cc_psnr": psnr + 0.5, "cc_ssim": 0.81, "cc_lpips": 0.29, "num_GS": 900000, "ellipse_time": 0.01}))
+        for i in range(n):
+            (res / "renders" / f"{stage}_step14999_{i:04d}.png").write_bytes(b"png")
+    (res / "stats" / "per_view_step14999.json").write_text(json.dumps({"step": 14999, "sets": {}}))
+    (res / "ply_block.json").write_text(json.dumps({"clip": "a.mp4", "frames": ["000001.jpg", "000002.jpg"], "seconds": 0.5}))
+    out = train_stage.block_report(res, tmp_path / "eval")
+    assert out["evalBlock"]["ccPsnr"] == 23.0 and out["evalBlock"]["views"] == 20 and out["evalBlock"]["gaussians"] == 900000
+    assert out["blockImages"] == ["000001.jpg", "000002.jpg"] and out["blockClip"] == "a.mp4" and out["perView"] == "eval/per_view.json"
+    assert train_stage.held_out_scores(res, tmp_path / "eval")["views"] == 4           # the every-Nth set is read as before
+    assert (tmp_path / "eval" / "per_view.json").exists() and (tmp_path / "eval" / "block_stats.json").exists()
+    assert sorted(p.name for p in (tmp_path / "eval").glob("block_step*.png")) == [f"block_step14999_{i:04d}.png" for i in (0, 5, 10, 15)]
+    assert train_stage.block_report(tmp_path / "nothing", tmp_path / "eval2") == {}
