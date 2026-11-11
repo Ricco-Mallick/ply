@@ -28,6 +28,7 @@ import numpy as np
 
 from plypipe import clean as clean_mod
 from plypipe import spz as spz_mod
+from plypipe import topview as topview_mod
 from plypipe.util import Ctx, need, read_scene, run, splat_transform_cmd, update_scene
 
 SPLAT_TRANSFORM = "@playcanvas/splat-transform@3.10.1"

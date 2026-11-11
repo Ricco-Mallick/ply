@@ -7,7 +7,9 @@ Image (built once, cached): CUDA 12.8 runtime, Python 3.12, torch 2.11 cu128, gs
 fused-bilagrid from CI wheels (sm_89: L4 / L40S), pycolmap-cuda12 4.2.1, transformers 5 (SAM 3), ffmpeg, Node 22 +
 splat-transform.
 The pipeline code is mounted at run time, so code changes redeploy in seconds without rebuilding.
-Budget: one container at a time, 3-minute idle exit, 3-hour hard cap per wake-up.
+Budget: one container at a time, 3-minute idle exit, a 6-hour container timeout, and the worker ends every job at its
+GPU-time cap (PLY_JOB_MAX_MIN, 240 min by default). The limits live in pipeline/plypipe/limits.py; deploying with limits
+that cannot fit the container fails here, and tests/test_limits.py fails when a limit or timeout is changed out of fit.
 """
 import os
 import subprocess
@@ -20,8 +22,12 @@ PIPE = Path(__file__).resolve().parents[1]
 GPU = os.environ.get("PLY_MODAL_GPU", "L4")
 HF_REPO = os.environ.get("PLY_HF_REPO", "Ricco-Marcelino/ply-data")  # results storage (private dataset repo)
 # read HERE, at deploy time on the developer's machine: values read inside work() see the container's env,
-# which never has these, so deploy-time flags like PLY_STAGE_LIMITS were silently ignored before
-STAGE_LIMITS = os.environ.get("PLY_STAGE_LIMITS", "sfm=100")
+# which never has these, so deploy-time flags like PLY_STAGE_LIMITS were silently ignored before.
+# The limits are empty unless set: the worker then uses its own defaults (pipeline/plypipe/limits.py)
+STAGE_LIMITS = os.environ.get("PLY_STAGE_LIMITS", "")
+JOB_MAX_MIN = os.environ.get("PLY_JOB_MAX_MIN", "")
+MAX_INPUT_MB = os.environ.get("PLY_MAX_INPUT_MB", "")
+DEPLOY_LIMITS = {k: v for k, v in (("PLY_STAGE_LIMITS", STAGE_LIMITS), ("PLY_JOB_MAX_MIN", JOB_MAX_MIN), ("PLY_MAX_INPUT_MB", MAX_INPUT_MB)) if v}
 EXPORT_PROBES = os.environ.get("PLY_EXPORT_PROBES", "1")
 WORKER_NAME = os.environ.get("PLY_WORKER_NAME", f"modal-{GPU.lower()}")  # deploy-time: a second account needs its own row
 
@@ -82,28 +88,40 @@ HANDOFF_ENV = {"PLY_HANDOFF_DIR": "/handoff", "PLY_HANDOFF_VOLUME": "ply-handoff
 hf = modal.Secret.from_name("ply-hf")  # HF_TOKEN: gated facebook/sam3 weights for the label stage
 
 
-# longer than the longest possible job: the sum of every stage limit (JOB_MAX_MIN, 290 min once the dense mesh
-# stage was added). The worker refuses any job it cannot finish inside the remaining deadline, so a timeout
-# shorter than that sum makes it refuse everything.
-TIMEOUT_S = int(6.0 * 3600)
+# longer than the longest possible job: the worker ends a job at its GPU-time cap (240 min by default) and refuses
+# any job that could outlast the remaining deadline, so a timeout that does not fit the cap makes it refuse everything.
+TIMEOUT_S = 6 * 3600
+DEADLINE_MARGIN_S = 300
+# the camera solve of a long capture took 102 min on the chapel; the sfm limit (180 min) plus 30 min to hand the folder back
+CPU_SOLVE_TIMEOUT_S = 210 * 60
+
+if modal.is_local():  # deploy time, on this machine: limits that cannot fit their containers fail the deploy, not a job
+    import importlib.util
+    _spec = importlib.util.spec_from_file_location("ply_limits", PIPE / "plypipe" / "limits.py")
+    ply_limits = importlib.util.module_from_spec(_spec)
+    _spec.loader.exec_module(ply_limits)
+    _problems = ply_limits.fit_problems(ply_limits.stage_limits(STAGE_LIMITS), ply_limits.job_cap_min(JOB_MAX_MIN),
+                                        TIMEOUT_S, DEADLINE_MARGIN_S, CPU_SOLVE_TIMEOUT_S)
+    if _problems:
+        raise SystemExit("the worker's limits do not fit their containers: " + "; ".join(_problems))
 
 
 @app.function(gpu=GPU, cpu=8, memory=32768, timeout=TIMEOUT_S, max_containers=1, secrets=[secret, hf],
               volumes={"/handoff": handoff_vol},
               # the module is re-imported in the container without the deploy shell's variables: bake the switch in
-              env={"PLY_CPU_SFM": CPU_SFM, "PLY_CPU_SFM_MIN": CPU_SFM_MIN})  # 8 cores + 32 GB: 2560 px frames and ~800 of them  # L4 + 4 cores + 16 GB = ~$1.12/h
+              env={"PLY_CPU_SFM": CPU_SFM, "PLY_CPU_SFM_MIN": CPU_SFM_MIN, **DEPLOY_LIMITS})  # 8 cores + 32 GB: 2560 px frames and ~800 of them  # L4 + 4 cores + 16 GB = ~$1.12/h
 def work(worker_name: str = WORKER_NAME):
     """Claim and run jobs until the queue has been empty for 3 minutes. The worker only starts a job it can finish
     before this container's timeout (PLY_DEADLINE); later work waits for the next wake-up (API trigger or cron)."""
     import time
-    env = dict(os.environ, PYTHONPATH="/root/pipeline", PLY_WORKER_NAME=worker_name, PLY_WORK_DIR="/tmp/work", PLY_HF_REPO=HF_REPO, PLY_MODAL_GPU=GPU, PLY_STAGE_LIMITS="sfm=300,export=60",
-               PLY_IDLE_EXIT_MIN="3", MPLBACKEND="Agg", PLY_DEADLINE=str(time.time() + TIMEOUT_S - 300),
+    env = dict(os.environ, PYTHONPATH="/root/pipeline", PLY_WORKER_NAME=worker_name, PLY_WORK_DIR="/tmp/work", PLY_HF_REPO=HF_REPO, PLY_MODAL_GPU=GPU,
+               PLY_IDLE_EXIT_MIN="3", MPLBACKEND="Agg", PLY_DEADLINE=str(time.time() + TIMEOUT_S - DEADLINE_MARGIN_S),
                PLY_CPU_SFM=CPU_SFM, PLY_CPU_SFM_MIN=CPU_SFM_MIN, **HANDOFF_ENV)
     subprocess.run(["nvidia-smi", "--query-gpu=name,memory.total", "--format=csv,noheader"], check=False)
     return subprocess.run([sys.executable, "-m", "plypipe.worker"], env=env, check=False).returncode
 
 
-@app.function(image=cpu_image, cpu=8, memory=32768, timeout=3 * 3600, secrets=[secret], volumes={"/handoff": handoff_vol})
+@app.function(image=cpu_image, cpu=8, memory=32768, timeout=CPU_SOLVE_TIMEOUT_S, secrets=[secret], volumes={"/handoff": handoff_vol})
 def solve(jid: str):
     """Map a handed-over job's matches here (8 cores + 32 GB: $0.63/h against $1.43/h for the L4 box), then re-queue
     the job and start a GPU worker for the rest unless one is already up."""
