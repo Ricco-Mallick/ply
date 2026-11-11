@@ -3,6 +3,38 @@
 What changed in the pipeline, why, and how it was measured. The newest work is first. Each entry names the defect,
 the evidence for it, the change, and what the change was checked against. Costs are from `modal billing report`.
 
+## 2026-11-11: a top view for every twin, job limits, the eval runner (second batch)
+
+**Evidence.** The owner: the minimap "is not like a top view of the model" (it drew the 10 cm walking grid), and Walk
+"moves too slowly and catches on things" on the rebuilt chapel grid. From `PROJECT-REVIEW.md`: a job could hold a GPU
+for the 6-hour container timeout and the stage limits added up to 590 minutes (U3); no run had been repeated, so no
+score difference could be told from noise (T3).
+
+**Change.**
+- `plypipe/topview.py`: the exported model drawn from straight above on a CPU, each splat with its real footprint,
+  composited from the top down below a cut at 1.8 m (lower under a low ceiling), transparent outside the room.
+  `export` writes `topview.webp` and names it in `scene.json`; the worker uploads it; the viewer's minimap shows it,
+  keeps the grid for a twin without one, and enlarges on click. `python -m plypipe.topview <folder> --write-scene`
+  makes one for an existing twin.
+- Viewer: Free is the default on every twin (owner's decision). The walk check is still written, no longer read.
+- `plypipe/limits.py`: one GPU-time cap per job (240 min, carried across the CPU solve; a training run stopped by it
+  still exports its snapshot), stage limits that are checked against their containers when the worker is deployed,
+  and a 12 GB cap on a job's inputs. The frames report records each clip's colour tags and warns on HLG and PQ.
+- `--holdout-block N`, `--opacity-reg`, `modal/ply_eval.py`, `scripts/eval_table.py`: the image-quality harness of
+  phase 1 (`EXPERIMENTS.md`).
+
+**Checked.** Pipeline fast suite: 244 passed, 2 skipped (they need the pinned gsplat checkout and torch), 1
+deselected. The top view was rendered for the 13 twins that have a splat on Hugging Face (3 to 4.5 s and under
+600 MB each), looked at one by one, and published with their `scene.json` in one commit (`ply-data` `4c46886`; the
+commit before it is `4c09354`); `scene.json` differs only by the new block. In headless Chrome the built viewer opens
+the chapel and the classroom in Free with the top view in the minimap. **Not measured or not run:** no job has run with
+the new limits or exported a top view itself (both reach jobs at the next worker deploy); the minimap was not tried
+on a phone.
+
+**Limits.** One poor early twin (`989e2ca0`) has a top view as poor as its model. Walls are fuzzy bands, the outline
+follows the scanned wall ring, and furniture above the cut is sliced. The stage limits no longer add up to less than
+the container timeout, as the plan's row 0.3 asked: the job cap is what bounds a job.
+
 ## 2026-11-11: phase 0, first batch (mapper choice, evidence upload, viewer labels and injection, CI)
 
 **Evidence.** From `PROJECT-REVIEW.md`: the global mapper was rejected on all five chapel solves and cost about 32
