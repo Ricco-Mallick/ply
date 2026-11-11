@@ -98,8 +98,6 @@ export class WalkEngine {
     // no start in the manifest: begin in the middle of the walkable floor
     if (!m.start && this.grid) this.openSpawn();
     if (this.grid && !this.grid.clear(this.state.pos.x, this.state.pos.z, RADIUS)) this.unstick();
-    // Free stays the default until a scene's grid has passed the pipeline's walk check (plypipe/walkcheck.py)
-    if (m.walkable && this.grid) this.state.mode = 'walk';
     this.emit();
   }
 
