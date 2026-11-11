@@ -127,3 +127,74 @@ def test_a_clip_soft_throughout_is_reported():
              {"file": "0064.MP4", "sharpnessMedian": 1450.0}]
     assert fr.blurry_clips(clips) == [{"file": "0053.MP4", "ratio": 0.27}]
     assert fr.blurry_clips([{"file": "a", "sharpnessMedian": 0.0}]) == []
+
+
+def tagged_clip(path, trc=None, primaries=None, space=None, pix_fmt="yuv420p", seconds=3):
+    """A tiny clip with ffmpeg's test pattern, tagged the way a phone tags its HDR or SDR recordings."""
+    import subprocess
+    tags = [x for flag, v in (("-color_trc", trc), ("-color_primaries", primaries), ("-colorspace", space)) if v for x in (flag, v)]
+    subprocess.run(["ffmpeg", "-hide_banner", "-loglevel", "error", "-y", "-f", "lavfi", "-i", f"testsrc=size=160x120:rate=10:duration={seconds}",
+                    "-c:v", "libx264", "-pix_fmt", pix_fmt, *tags, str(path)], check=True)
+    return path
+
+
+def warnings(out) -> list[str]:
+    lines = [json.loads(line) for line in (out / "log.jsonl").read_text().splitlines()]
+    return [e["msg"] for e in lines if e["stage"] == "frames" and e["event"] == "warn"]
+
+
+needs_ffmpeg = pytest.mark.skipif(not (shutil.which("ffmpeg") and shutil.which("ffprobe")), reason="ffmpeg not installed")
+
+
+@needs_ffmpeg
+def test_probe_reads_each_clips_colour_tags(tmp_path):
+    hlg = tagged_clip(tmp_path / "hlg.mp4", "arib-std-b67", "bt2020", "bt2020nc", "yuv420p10le")
+    sdr = tagged_clip(tmp_path / "sdr.mp4", "bt709", "bt709", "bt709")
+    assert frames.probe_video(hlg)["color"] == {"transfer": "arib-std-b67", "primaries": "bt2020", "space": "bt2020nc",
+                                                "pixFmt": "yuv420p10le", "bitDepth": 10, "hdr": "HLG"}
+    assert frames.probe_video(sdr)["color"] == {"transfer": "bt709", "primaries": "bt709", "space": "bt709",
+                                                "pixFmt": "yuv420p", "bitDepth": 8, "hdr": None}
+    assert frames.probe_video(tagged_clip(tmp_path / "pq.mp4", "smpte2084", "bt2020", "bt2020nc"))["color"]["hdr"] == "PQ"
+    assert frames.probe_video(sdr)["durationSec"] and frames.probe_video(sdr)["longSide"] == 160   # the plan's probe is unchanged
+
+
+@needs_ffmpeg
+def test_hdr_clip_is_recorded_and_warned_about_without_changing_the_frames(tmp_path):
+    src = tmp_path / "capture"
+    src.mkdir()
+    tagged_clip(src / "clip-01.mp4", "bt709", "bt709", "bt709")
+    tagged_clip(src / "clip-02.mp4", "arib-std-b67", "bt2020", "bt2020nc", "yuv420p10le")
+    ctx = Ctx(out=tmp_path / "out", log=Log(tmp_path / "out", quiet=True), opts={"fps": 2.5, "oversample": 2, "long_side": 160})
+    rep = frames.run_stage(ctx, src)
+    colors = {c["file"]: c["color"] for c in rep["clips"]}
+    assert colors["clip-01.mp4"]["transfer"] == "bt709" and colors["clip-01.mp4"]["hdr"] is None
+    assert colors["clip-02.mp4"] == {"transfer": "arib-std-b67", "primaries": "bt2020", "space": "bt2020nc",
+                                     "pixFmt": "yuv420p10le", "bitDepth": 10, "hdr": "HLG"}
+    assert rep["hdrClips"] == ["clip-02.mp4"] and rep["colorTransfers"] == {"bt709": 1, "arib-std-b67": 1}
+    warned = warnings(tmp_path / "out")
+    assert len(warned) == 1 and "clip-02.mp4 (HLG)" in warned[0] and "clip-01.mp4" not in warned[0]
+    assert "washed out" in warned[0] and "not applied yet" in warned[0]
+    assert rep["kept"] == len(list((tmp_path / "out" / "frames").glob("*.jpg")))      # extraction itself is untouched
+
+
+@needs_ffmpeg
+def test_sdr_and_untagged_clips_do_not_warn_and_a_single_clip_reports_its_colours(tmp_path):
+    sdr = tagged_clip(tmp_path / "sdr.mp4", "bt709", "bt709", "bt709")
+    ctx = Ctx(out=tmp_path / "o1", log=Log(tmp_path / "o1", quiet=True), opts={"fps": 2.5, "oversample": 2, "long_side": 160})
+    rep = frames.run_stage(ctx, sdr)
+    assert rep["source"] == "video" and rep["color"]["transfer"] == "bt709" and rep["hdrClips"] == []
+    assert warnings(tmp_path / "o1") == []
+    bare = tagged_clip(tmp_path / "bare.mp4")                   # no colour tags at all: the stage must still run
+    ctx = Ctx(out=tmp_path / "o2", log=Log(tmp_path / "o2", quiet=True), opts={"fps": 2.5, "oversample": 2, "long_side": 160})
+    rep = frames.run_stage(ctx, bare)
+    assert rep["color"]["hdr"] is None and rep["kept"] > 0 and rep["hdrClips"] == []
+    assert rep["colorTransfers"] == {(rep["color"]["transfer"] or "unknown"): 1}
+    assert warnings(tmp_path / "o2") == []
+
+
+def test_colour_summary_and_missing_probe_tags():
+    assert frames._color_of({}) == {"transfer": None, "primaries": None, "space": None, "pixFmt": None, "bitDepth": None, "hdr": None}
+    assert frames._color_of({"color_transfer": "unknown", "pix_fmt": "yuv420p", "bits_per_raw_sample": "10"})["bitDepth"] == 10
+    clips = [{"file": "a", "color": frames._color_of({"color_transfer": "smpte2084"})}, {"file": "b", "color": frames._color_of({})},
+             {"file": "c", "color": frames._color_of({"color_transfer": "unknown"})}]
+    assert frames.color_summary(clips) == {"colorTransfers": {"smpte2084": 1, "unknown": 2}, "hdrClips": ["a"]}
