@@ -7,6 +7,8 @@ Loop: claim the oldest queued job -> download its clips + capture.json -> `pytho
 -> tail log.jsonl and post stage/progress (also a heartbeat, so a dead worker's job is re-queued after 20 min)
 -> upload scene.spz, scene_lite.spz, scene.json, occupancy.png/.json, report.json to scenes/<jobId>/ -> done.
 Exits after --idle-exit minutes with no work (Kaggle GPU hours are rationed), 0 = never.
+Spend is bounded three ways (plypipe.limits): a limit per stage, one cap on the job's GPU time that survives the CPU
+camera solve (PLY_JOB_MAX_MIN), and a cap on the bytes of clips it will download (PLY_MAX_INPUT_MB).
 Standard library only, so it runs anywhere the pipeline does.
 """
 
@@ -32,6 +34,7 @@ from pathlib import Path
 
 import numpy as np
 
+from plypipe.limits import EXPORT_RESERVE_MIN, job_cap_min, max_input_mb, stage_limits, worst_case_min
 from plypipe.live import Live
 from plypipe import hf
 from plypipe.progress import SfmProgress
@@ -44,12 +47,8 @@ RESULTS = ["scene.spz", "scene_lite.spz", "scene.json", "occupancy.png", "occupa
 # not a rebuild: 400 MB of transfer against three hours of L40S
 KEEP_MODEL = ["scene.ply", "scene_clean.ply"]
 PART = 32 * 1024 * 1024
-# stop-loss: a stage that runs past its limit is killed and the job fails with a clear message (minutes;
-# PLY_STAGE_LIMITS="sfm=30,train=60" overrides). Generous for a T4; they exist to cap a stuck run, not to race.
-STAGE_LIMITS_MIN = {"frames": 15, "sfm": 45, "align": 5, "occupancy": 5, "label": 15, "train": 120, "export": 15, "mesh": 70}
-# the most a job can take (frames..export limits): a worker with a hard deadline (Modal timeout) never starts a job
-# it could not finish
-JOB_MAX_MIN = sum(STAGE_LIMITS_MIN.values())
+# stop-loss: a stage that runs past its limit is killed and the job fails with a clear message (minutes, see
+# plypipe.limits; PLY_STAGE_LIMITS="sfm=30,train=60" overrides). They exist to cap a stuck run, not to race.
 PRESET_STEPS = {"quick": 7_000, "standard": 30_000, "high": 40_000}
 # checkpoints: after these stages the out/ folder (minus re-creatable bulk) goes to B2, so a retry with the same
 # settings resumes there instead of re-downloading the clips and redoing frames + SfM
@@ -96,11 +95,8 @@ class Api:
         'gdrive:<id>:<name>' inputs (large shared clips, e.g. demo footage) come straight from Google Drive instead,
         which keeps multi-GB captures off the bucket's daily download allowance."""
         dest.parent.mkdir(parents=True, exist_ok=True)
-        if key.startswith("gdrive:"):
-            url = f"https://drive.usercontent.google.com/download?id={key.split(':')[1]}&export=download&confirm=t"
-        else:
-            _, info = self.req("GET", "/v1/worker/file?" + urllib.parse.urlencode({"key": key}))
-            url = info["url"]
+        url = self._input_url(key)
+        ceiling = int(max_input_mb() * 2**20)
         for i in range(4):
             try:
                 with urllib.request.urlopen(urllib.request.Request(url, headers=UA), timeout=600) as resp:
@@ -108,7 +104,13 @@ class Api:
                     if "text/html" in (resp.headers.get("content-type") or ""):
                         raise RuntimeError(f"{key}: the link returned a web page, not the file (is it shared as 'Anyone with the link'?)")
                     with dest.open("wb") as f:
-                        shutil.copyfileobj(resp, f, 8 * 1024 * 1024)
+                        # a file whose size the server did not say still cannot fill the disk: stop at the whole job's cap
+                        got = 0
+                        while chunk := resp.read(8 * 1024 * 1024):
+                            got += len(chunk)
+                            if got > ceiling:
+                                raise RuntimeError(f"{key}: larger than this worker's {ceiling / 2**30:g} GB input limit (PLY_MAX_INPUT_MB)")
+                            f.write(chunk)
                 return
             except (urllib.error.URLError, TimeoutError, ConnectionError):
                 dest.unlink(missing_ok=True)
@@ -118,6 +120,26 @@ class Api:
             except Exception:
                 dest.unlink(missing_ok=True)
                 raise
+
+    def _input_url(self, key: str) -> str:
+        if key.startswith("gdrive:"):
+            return f"https://drive.usercontent.google.com/download?id={key.split(':')[1]}&export=download&confirm=t"
+        _, info = self.req("GET", "/v1/worker/file?" + urllib.parse.urlencode({"key": key}))
+        return info["url"]
+
+    def input_size(self, key: str) -> int | None:
+        """Bytes of an input from the headers of a one-byte ranged request, before any of it is downloaded; None when
+        the server does not say."""
+        try:
+            req = urllib.request.Request(self._input_url(key), headers={**UA, "range": "bytes=0-0"})
+            with urllib.request.urlopen(req, timeout=60) as resp:
+                total = re.match(r"bytes \d+-\d+/(\d+)$", resp.headers.get("content-range") or "")
+                if total:
+                    return int(total.group(1))
+                length = resp.headers.get("content-length") or ""
+                return int(length) if resp.status == 200 and length.isdigit() and "text/html" not in (resp.headers.get("content-type") or "") else None
+        except Exception:
+            return None
 
     def upload(self, key: str, path: Path, ctype: str):
         if key.startswith("scenes/") and hf.configured():
@@ -276,12 +298,34 @@ def _restart_at(args: list[str], stage: str) -> list[str]:
     return [*out, "--from", stage]
 
 
-def stage_limits() -> dict:
-    lim = dict(STAGE_LIMITS_MIN)
-    for part in filter(None, os.environ.get("PLY_STAGE_LIMITS", "").split(",")):
-        k, _, v = part.partition("=")
-        lim[k.strip()] = float(v)
-    return lim
+def carried_s(jid: str, base: Path) -> float:
+    """GPU seconds a job used before it was handed to the CPU solver, from the marker the hand-over left in the shared
+    folder (any state: a solver that died leaves the job to be solved on the GPU, and the cap keeps counting)."""
+    from plypipe import handoff
+    try:
+        return max(0.0, float(json.loads((base / jid / handoff.MARK).read_text())["job"].get("capUsedS") or 0))
+    except (OSError, ValueError, KeyError, TypeError, AttributeError):
+        return 0.0
+
+
+def input_bytes(api, keys: list[str], cache: Path) -> int:
+    """Size of a job's inputs: what is cached counts at its size on disk, the rest at what the server says (an unknown
+    size counts as 0 here and is caught once the file is down)."""
+    size_of, total = getattr(api, "input_size", None), 0
+    for k in keys:
+        cached = cache / k.replace(':', '_')
+        if cached.exists():
+            total += cached.stat().st_size
+        elif size_of and not k.endswith(".json"):
+            total += size_of(k) or 0
+    return total
+
+
+def check_input_size(total: int) -> None:
+    cap_mb = max_input_mb()
+    if total > cap_mb * 2**20:
+        raise RuntimeError(f"the clips total {total / 2**30:.1f} GB, over this worker's {cap_mb / 1024:g} GB input limit "
+                           "(PLY_MAX_INPUT_MB); nothing was processed")
 
 
 # checkpoints carry the undistorted frames; above this they cost more (upload time, the bucket's 1 GB/day download
@@ -357,8 +401,13 @@ def run_job(api: Api, job: dict, work: Path, extra: list[str]) -> None:
     root = work / jid
     inp, out = root / "input", root / "out"
     root.mkdir(parents=True, exist_ok=True)
-    state = {"stage": None, "frac": 0.0, "msg": "downloading clips", "alive": True, "stage_t0": time.time(), "timeout": None}
+    t_claim = time.time()
+    cap_min = job_cap_min()
+    state = {"stage": None, "frac": 0.0, "msg": "downloading clips", "alive": True, "stage_t0": t_claim, "timeout": None,
+             "cap_end": t_claim + cap_min * 60}
     limits = stage_limits()
+    export_reserve_s = (limits["export"] + EXPORT_RESERVE_MIN) * 60
+    cap_msg = lambda st: f"{st or 'startup'} was stopped: the job reached its {cap_min:g}-minute time cap (GPU time since it was claimed)"
     rehearsal = "--train-dry-run" in job["args"]
     post = lambda **kw: api.req("POST", f"/v1/worker/jobs/{jid}", kw)
     live = Live(api, jid, out, log=lambda m: print(m, file=sys.stderr, flush=True))  # what the status page shows in 3D
@@ -396,6 +445,9 @@ def run_job(api: Api, job: dict, work: Path, extra: list[str]) -> None:
         split = []
         if hd is not None and os.environ.get("PLY_CPU_SFM", "0") == "1":
             back = handoff.take_back(jid, out, hd)
+            state["cap_end"] -= carried_s(jid, hd)
+            if state["cap_end"] <= time.time():
+                raise RuntimeError(f"the job had already used its {cap_min:g}-minute time cap (GPU time) before the CPU camera solve")
             if back:
                 resumed = "sfm"
                 post(message="resuming after the CPU camera solve")
@@ -410,7 +462,11 @@ def run_job(api: Api, job: dict, work: Path, extra: list[str]) -> None:
             post(message=f"resuming after {resumed} (checkpoint)")
             print(f"[worker] resuming {jid} after {resumed}", flush=True)
         inp.mkdir(parents=True, exist_ok=True)
+        if not resumed:
+            check_input_size(input_bytes(api, job["files"], cache))  # known sizes: refuse before downloading any of it
         for k in ([] if resumed else job["files"]):  # a checkpoint past SfM needs no clips at all
+            if time.time() >= state["cap_end"]:
+                raise RuntimeError(cap_msg("downloading clips"))
             cached = cache / k.replace(':', '_')
             if k.endswith(".json"):  # capture.json is re-uploaded (e.g. new spans to skip): always fresh
                 cached.unlink(missing_ok=True)
@@ -425,6 +481,8 @@ def run_job(api: Api, job: dict, work: Path, extra: list[str]) -> None:
                 n += 1
             if not dest.exists():
                 os.link(cached, dest) if hasattr(os, "link") else shutil.copy2(cached, dest)
+        if not resumed:
+            check_input_size(input_bytes(api, job["files"], cache))  # sizes the server would not say
         # PLY_PIPELINE_CMD swaps the pipeline for a stand-in (tests: the worker plumbing without a GPU)
         runner = os.environ.get("PLY_PIPELINE_CMD", f"{sys.executable} -m plypipe").split()
         def pipeline(args: list[str]):
@@ -439,15 +497,23 @@ def run_job(api: Api, job: dict, work: Path, extra: list[str]) -> None:
             step = {"key": None, "t0": time.time()}
 
             deadline = float(os.environ.get("PLY_DEADLINE") or 0)
+            matching_only = "--sfm-part" in cmd  # the CPU box solves, so the GPU's sfm is matching alone
 
-            def watchdog():  # stop-loss per stage
+            def watchdog():  # stop-loss per stage, and the job's own cap
                 while p.poll() is None:
                     st, lim = state["stage"], limits.get(state["stage"] or "", 0)
+                    if st == "sfm" and matching_only:
+                        lim = limits.get("sfm_match", lim)
                     now = time.time()
                     lim_s = lim * 60
                     if st == "train":
-                        lim_s = train_limit_s(lim_s, now - state["stage_t0"], state["frac"], deadline,
-                                              (limits.get("export", 15) + 10) * 60, now)
+                        lim_s = train_limit_s(lim_s, now - state["stage_t0"], state["frac"], deadline, export_reserve_s, now)
+                    # training stops early enough for export and publishing to finish inside the cap
+                    if now >= state["cap_end"] - (export_reserve_s if st == "train" else 0):
+                        state["timeout"] = cap_msg(st)
+                        state["salvage"] = st == "train"
+                        p.kill()
+                        return
                     if st and lim_s and now - state["stage_t0"] > lim_s:
                         state["timeout"] = f"{st} exceeded its {lim_s / 60:g}-minute limit and was stopped"
                         state["salvage"] = st == "train"
@@ -535,10 +601,12 @@ def run_job(api: Api, job: dict, work: Path, extra: list[str]) -> None:
         judged = "--until" not in job["args"] and not rehearsal
         for attempt in range(1, (orchestrate.MAX_ATTEMPTS if judged else 1) + 1):
             state["msg"] = f"attempt {attempt}: starting pipeline"
+            t_attempt = time.time()
             code, last_err, tail = pipeline(args)
             if code == 0 and split and handoff.paused(out):
                 # matched: the mapping goes to a CPU box, and this GPU is free for the next job (or to stop billing)
-                handoff.hand_over(jid, job, out, hd)
+                used = cap_min * 60 - (state["cap_end"] - time.time())
+                handoff.hand_over(jid, {**job, "capUsedS": round(used)}, out, hd)
                 handoff.spawn("solve", jid)
                 state["alive"] = False
                 post(stage="sfm", progress=overall("sfm", 0.3), message="matched on the GPU; solving the cameras on a CPU box")
@@ -584,6 +652,9 @@ def run_job(api: Api, job: dict, work: Path, extra: list[str]) -> None:
             refined, notes, force = orchestrate.refine(report, args, run_plan)
             if refined == args or not notes:
                 break  # nothing settings can do; the failure is the capture itself
+            if state["cap_end"] - time.time() < (export_reserve_s if force == "export" else time.time() - t_attempt):
+                print("[worker] attempt failed the gate; too little of the job's time cap is left to retry: " + "; ".join(notes), flush=True)
+                break  # a retry the cap would stop half-way costs the finished attempt's result
             args = [*refined, "--force", force]
             state["frac"] = 0.0
             post(stage="frames", progress=0, message="quality gate: " + "; ".join(notes)[:200])
@@ -705,13 +776,19 @@ def main(argv: list[str] | None = None) -> int:
     api, idle_since = Api(a.api, a.token), time.time()
     print(f"[worker] {a.name} polling {a.api}", flush=True)
     deadline = float(os.environ.get("PLY_DEADLINE", 0))  # epoch seconds when this machine will be killed (Modal timeout)
+    need_min, took_job = worst_case_min(stage_limits(), job_cap_min()), False
     while True:
-        if deadline and deadline - time.time() < JOB_MAX_MIN * 60:
-            print(f"[worker] less than {JOB_MAX_MIN} min left before this machine's deadline: not taking new jobs", flush=True)
+        if deadline and deadline - time.time() < need_min * 60:
+            if not took_job:  # nothing has used the window yet: these limits can never fit this machine
+                print(f"[worker] ERROR: a job can take up to {need_min:g} min (stage limits and PLY_JOB_MAX_MIN) but this machine's "
+                      "deadline leaves less: lower the limits or raise the container timeout", flush=True)
+                return 2
+            print(f"[worker] less than {need_min:g} min left before this machine's deadline: not taking new jobs", flush=True)
             return 0
         status, job = api.req("POST", "/v1/worker/claim", {"worker": a.name, "prefix": os.environ.get("PLY_CLAIM_PREFIX", "")})
         if status == 200 and job:
             print(f"[worker] claimed {job['id']} ({job['name']})", flush=True)
+            took_job = True
             run_job(api, job, a.work, a.extra)
             if not a.keep:
                 shutil.rmtree(a.work / job["id"], ignore_errors=True)
