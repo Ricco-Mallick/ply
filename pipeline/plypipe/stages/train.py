@@ -78,6 +78,13 @@ def run_stage(ctx: Ctx) -> dict:
     holdout = int(ctx.opt("holdout", 30) or 0)
     if holdout > 1:
         cmd += ["--holdout", str(holdout)]
+    block = int(ctx.opt("holdout_block", 0) or 0)
+    if block:
+        if holdout <= 1:
+            raise RuntimeError("--holdout-block is scored next to the every-Nth views: it needs --holdout N (N > 1)")
+        cmd += ["--holdout-block", str(block), "--frames-index", str(ctx.out / "frames_index.json")]
+    if ctx.opt("opacity_reg") is not None:
+        cmd += ["--opacity-reg", str(ctx.opt("opacity_reg"))]
     for flag in ("pose_opt", "depth_loss", "bilateral_grid", "random_bkgd"):
         if ctx.opt(flag):
             cmd.append("--" + flag.replace("_", "-"))
@@ -98,10 +105,13 @@ def run_stage(ctx: Ctx) -> dict:
     if scores:
         ctx.log.emit("train", "progress", f"held-out views: PSNR {scores['psnr']:.2f}, SSIM {scores['ssim']:.3f}, "
                      f"LPIPS {scores['lpips']:.3f} over {scores['views']} views")
+    extra = block_report(result, ctx.out / "eval") if block else {}
+    if block and not extra.get("evalBlock"):
+        ctx.log.emit("train", "warn", "the held-out block was requested but the trainer left no scores for it")
     return {"ply": "scene.ply", "sizeMB": round((ctx.out / "scene.ply").stat().st_size / 2**20, 1),
             "fromStep": int(plys[-1].stem.rsplit("_", 1)[1]), **preset_info,
             "plan": {k: budget[k] for k in ("iterations", "capMax", "why")},
-            **({"eval": scores} if scores else {})}
+            **({"eval": scores} if scores else {}), **extra}
 
 
 def camera_spread(sparse: Path) -> dict | None:
@@ -130,19 +140,38 @@ def view_megapixels(images: Path) -> float | None:
         return None
 
 
-def held_out_scores(result: Path, keep: Path, renders: int = 4) -> dict | None:
-    """gsplat's scores on the held-out views (stats/val_step*.json) plus a few render|photo pairs as evidence."""
-    stats = sorted((result / "stats").glob("val_step*.json"), key=lambda p: int(p.stem.rsplit("step", 1)[1]))
+def held_out_scores(result: Path, keep: Path, renders: int = 4, stage: str = "val") -> dict | None:
+    """gsplat's scores on the held-out views (stats/<stage>_step*.json) plus a few render|photo pairs as evidence."""
+    stats = sorted((result / "stats").glob(f"{stage}_step*.json"), key=lambda p: int(p.stem.rsplit("step", 1)[1]))
     if not stats:
         return None
     raw = json.loads(stats[-1].read_text())
     names = {"psnr": "psnr", "ssim": "ssim", "lpips": "lpips", "cc_psnr": "ccPsnr", "cc_ssim": "ccSsim",
              "cc_lpips": "ccLpips", "num_GS": "gaussians", "ellipse_time": "secondsPerView"}
     out = {v: round(float(raw[k]), 4) for k, v in names.items() if k in raw}
-    pngs = sorted((result / "renders").glob(f"val_step{stats[-1].stem.rsplit('step', 1)[1].lstrip('0') or '0'}_*.png"))
+    pngs = sorted((result / "renders").glob(f"{stage}_step{stats[-1].stem.rsplit('step', 1)[1].lstrip('0') or '0'}_*.png"))
     out["views"] = len(pngs) or None
     keep.mkdir(parents=True, exist_ok=True)
     for png in pngs[:: max(1, len(pngs) // renders)][:renders]:  # left: photo, right: render (gsplat's canvas)
         shutil.copy2(png, keep / png.name)
-    shutil.copy2(stats[-1], keep / "val_stats.json")
+    shutil.copy2(stats[-1], keep / f"{stage}_stats.json")
+    return out
+
+
+def block_report(result: Path, keep: Path) -> dict:
+    """The held-out block's scores and image names, and the per-view scores of both hold-outs (eval/per_view.json)."""
+    out: dict = {}
+    scores = held_out_scores(result, keep, stage="block")
+    if scores:
+        out["evalBlock"] = scores
+    try:
+        block = json.loads((result / "ply_block.json").read_text())
+        out.update({"blockImages": block["frames"], "blockClip": block["clip"], "blockSeconds": block["seconds"]})
+    except (OSError, ValueError, KeyError):
+        pass
+    views = sorted((result / "stats").glob("per_view_step*.json"), key=lambda p: int(p.stem.rsplit("step", 1)[1]))
+    if views:
+        keep.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(views[-1], keep / "per_view.json")
+        out["perView"] = "eval/per_view.json"
     return out
