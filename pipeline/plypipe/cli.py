@@ -92,8 +92,13 @@ def build_parser() -> argparse.ArgumentParser:
                    help="lens model for SfM: OPENCV for wide action cams (DJI, GoPro), OPENCV_FISHEYE beyond ~150 deg")
     g.add_argument("--exhaustive-max", type=int, default=250, help="auto: exhaustive up to this many frames")
     g.add_argument("--device", choices=["auto", "cuda", "cpu"], default="auto")
-    g.add_argument("--mapper", choices=["global", "incremental"], default="global",
-                   help="global SfM (fast, default) or incremental (slower, more robust on rotation-heavy captures)")
+    # no argparse default: an explicit choice beats the automatic one (ordered video of --incremental-min frames or
+    # more goes straight to the incremental mapper), and a default would look explicit
+    g.add_argument("--mapper", choices=["global", "incremental"],
+                   help="global SfM (fast) or incremental (slower, more robust on rotation-heavy captures). "
+                        "Default: global, except ordered video of --incremental-min frames or more")
+    g.add_argument("--incremental-min", type=int, default=400,
+                   help="ordered video with at least this many frames skips the global mapper when --mapper is not given")
     g.add_argument("--focal-35mm", type=float,
                    help="35 mm-equivalent focal of the lens used (phone spec, e.g. 24 for the S24 FE main camera; "
                         "~26 with video stabilisation crop). Starts SfM from the right intrinsics.")

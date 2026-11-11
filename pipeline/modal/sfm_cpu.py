@@ -5,7 +5,7 @@ the pycolmap wheels. On the chapel it took 103 of the run's 119 min with the L40
 solve where the hour costs $0.63 (8 cores + 32 GB) instead of $2.58.
 
     MODAL_PROFILE=<account> modal run --detach pipeline/modal/sfm_cpu.py --src chapel/quick-e2e/job --tag auto
-    ... --args "--mapper incremental" --tag inc
+    ... --args "--mapper global" --tag glob     # ordered video of 400+ frames starts incremental unless told otherwise
 
 Reads <src> on the ply-bench Volume (frames/, frames_index.json, .done/frames.json, colmap/database.db) and writes
 the solved job (without the database) to <src parent>/sfm-<tag>/job, ready for `plypipe run --from align`.
