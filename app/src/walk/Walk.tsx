@@ -190,7 +190,8 @@ export function Minimap({ engine, manifest, extras }: { engine: WalkEngine; mani
     if (!map) return; let raf = 0;
     const draw = () => { raf = requestAnimationFrame(draw); const c = cv.current; if (!c) return; const x = c.getContext('2d')!, dpr = Math.min(2, devicePixelRatio);
       if (c.width !== S * dpr) { c.width = c.height = S * dpr; } x.setTransform(dpr, 0, 0, dpr, 0, 0); x.clearRect(0, 0, S, S);
-      const { origin, cell, width, height } = map, sc = Math.min(S / width, S / height) * (map.photo ? 1 : .92), ox = (S - width * sc) / 2, oy = (S - height * sc) / 2;
+      const { origin, cell, width, height } = map, sc = Math.min(S / width, S / height) * (map.photo ? .96 : .92), ox = (S - width * sc) / 2, oy = (S - height * sc) / 2;
+      if (map.photo) { x.fillStyle = 'rgba(9,13,22,.78)'; x.fillRect(0, 0, S, S); }  // the picture is see-through outside the room: a plate keeps it readable over the scene
       x.imageSmoothingEnabled = map.photo; x.imageSmoothingQuality = 'high'; x.globalAlpha = map.photo ? 1 : .9; x.drawImage(map.img, ox, oy, width * sc, height * sc); x.globalAlpha = 1;
       const p = engine.state.pos, px = ox + (p.x - origin[0]) / cell * sc, py = oy + (p.z - origin[1]) / cell * sc, yaw = engine.state.yaw;
       const toPx = (wx: number, wz: number) => [ox + (wx - origin[0]) / cell * sc, oy + (wz - origin[1]) / cell * sc] as const;

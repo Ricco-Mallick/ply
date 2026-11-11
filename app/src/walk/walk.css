@@ -34,7 +34,7 @@ button { font: inherit; color: inherit; cursor: pointer; }
 .hint kbd { display: inline-block; min-width: 20px; padding: 2px 6px; margin-right: 3px; border: 1px solid var(--line-2); border-radius: 5px; font: 700 10.5px/1.4 var(--font-mono); text-align: center; color: var(--fg); background: rgba(255, 255, 255, .06); }
 
 .map { position: fixed; z-index: 9; right: 18px; bottom: 18px; bottom: calc(18px + env(safe-area-inset-bottom, 0px)); border-radius: 14px; padding: 8px 8px 28px; }
-.map canvas { display: block; }
+.map canvas { display: block; border-radius: 8px; }
 .map-b { all: unset; display: block; cursor: zoom-in; border-radius: 8px; }
 .map-b[aria-expanded="true"] { cursor: zoom-out; }
 .map-b:focus-visible { outline: 2px solid #FF6B00; outline-offset: 2px; }
