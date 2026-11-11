@@ -28,17 +28,22 @@ SCHEMA = 1
 # The plan's baseline: the saved High chapel run's settings (job.json: preset high, cap 2M from the plan, SH 3, no
 # appearance model, antialiased, hold-out 30), 15k steps instead of 60k, plus the 20-frame hold-out block.
 BASE = ["--preset", "high", "--iterations", "15000", "--cap-max", "2000000", "--holdout", "30", "--holdout-block", "20"]
+# The small baseline (owner, 2026-11-11: try a variant on a small twin first and keep the credit for the final runs).
+# Dr Johnson is 260 solved photos at 1332 px. The 600k cap binds as the chapel's 2M does (the plan's own budget for this
+# set is 1.47M), every 8th view is held out as the 3DGS paper scores it (33 views), and the block is 10 photos in a row.
+SMALL = ["--preset", "high", "--iterations", "15000", "--cap-max", "600000", "--holdout", "8", "--holdout-block", "10"]
+# What each variant adds to its scenario's baseline ("steps" replaces the baseline's length); "args" is filled in below
 VARIANTS: dict[str, dict] = {
-    "smoke": {"args": ["--preset", "high", "--iterations", "300", "--cap-max", "2000000", "--holdout", "30", "--holdout-block", "20"],
+    "smoke": {"add": [], "steps": 300,
               "note": "300 steps: proves restore, train, export, scoring and saving end to end", "timeout_min": 12},
-    "q0a": {"args": BASE, "role": "baseline", "note": "baseline; with q0b it gives the noise floor"},
-    "q0b": {"args": BASE, "role": "baseline", "note": "identical to q0a"},
-    "q2": {"args": BASE + ["--pose-opt"], "note": "pose refinement"},
-    "q4a": {"args": BASE + ["--depth-loss"], "note": "sparse depth loss at the SfM track points"},
-    "q5a": {"args": BASE + ["--opacity-reg", "0.005"], "note": "opacity regulariser 0.005 (baseline 0.01)"},
-    "q5b": {"args": BASE + ["--opacity-reg", "0.002"], "note": "opacity regulariser 0.002"},
-    "q5c": {"args": BASE + ["--opacity-reg", "0.001"], "note": "opacity regulariser 0.001"},
-    "q5d": {"args": BASE + ["--opacity-reg", "0"], "note": "no opacity regulariser"},
+    "q0a": {"add": [], "role": "baseline", "note": "baseline; with q0b it gives the noise floor"},
+    "q0b": {"add": [], "role": "baseline", "note": "identical to q0a"},
+    "q2": {"add": ["--pose-opt"], "note": "pose refinement"},
+    "q4a": {"add": ["--depth-loss"], "note": "sparse depth loss at the SfM track points"},
+    "q5a": {"add": ["--opacity-reg", "0.005"], "note": "opacity regulariser 0.005 (baseline 0.01)"},
+    "q5b": {"add": ["--opacity-reg", "0.002"], "note": "opacity regulariser 0.002"},
+    "q5c": {"add": ["--opacity-reg", "0.001"], "note": "opacity regulariser 0.001"},
+    "q5d": {"add": ["--opacity-reg", "0"], "note": "no opacity regulariser"},
 }
 
 # Modal list prices per hour, 2026-11. Only L4 and L40S match the CI wheels (sm_89).
@@ -52,6 +57,28 @@ SECONDS_PER_STEP = {"L40S": 1717.9 / 60_000, "L4": 2 * 1717.9 / 60_000}
 OVERHEAD_MIN = 5   # restore, export and scoring for a 2M-splat model
 STOP_LOSS = 1.5    # IMPROVEMENT-PLAN rule 3: the timeout is 1.5 times the estimate
 GRACE_MIN = 2      # the Modal function outlives the in-code deadline by this much, to save what a stopped run has
+
+# What a scenario fixes: the saved solve on the Volume, the baseline, the container, and what its estimate is scaled from
+SCENARIOS: dict[str, dict] = {
+    "chapel": {"src": "chapel/high/job", "base": BASE, "cpu": CPU, "memory_gib": MEMORY_GIB,
+               "seconds_per_step": SECONDS_PER_STEP, "overhead_min": OVERHEAD_MIN},
+    # 6.9 min for 30,000 steps at a 733k cap on an L40S, trained and exported on 4 cores and 16 GiB (docs/BENCHMARK.md,
+    # ply_bench). A photo set saved before frames_index.json existed: its block is taken in name order
+    "drjohnson": {"src": "drjohnson/prep", "base": SMALL, "cpu": 4, "memory_gib": 16, "index": False,
+                  "seconds_per_step": {"L40S": 6.9 * 60 / 30_000, "L4": 2 * 6.9 * 60 / 30_000}, "overhead_min": 4},
+}
+
+
+def variant_args(name: str, scenario: str = "chapel") -> list[str]:
+    """A table variant's arguments on a scenario's baseline."""
+    v, base = VARIANTS[name], list(SCENARIOS[scenario]["base"])
+    if v.get("steps"):
+        base[base.index("--iterations") + 1] = str(v["steps"])
+    return base + v["add"]
+
+
+for _name, _variant in VARIANTS.items():
+    _variant["args"] = variant_args(_name)  # on the chapel
 
 # What a run takes from the saved job folder: the camera solve and the files train and export read. Everything else
 # (frames, colmap, the old splat, SPZ files, logs, training state) is left out; data/images is a link to dense/images.
@@ -72,8 +99,10 @@ NAME = re.compile(r"^[a-z0-9][a-z0-9_.-]{0,39}$")
 
 # ------------------------------------------------------------------ variants
 
-def resolve(variant: str, extra: str = "") -> dict:
-    """The named variant's arguments, or for a new name the baseline's plus `extra` (a later option wins)."""
+def resolve(variant: str, extra: str = "", scenario: str = "chapel") -> dict:
+    """The named variant's arguments on the scenario's baseline, or for a new name that baseline plus `extra` (a later option wins)."""
+    if scenario not in SCENARIOS:
+        raise ValueError(f"unknown scenario '{scenario}' (available: {', '.join(SCENARIOS)})")
     if not NAME.match(variant or ""):
         raise ValueError(f"variant name '{variant}' must be lower case letters, digits, '_', '.' or '-' (available: {', '.join(VARIANTS)})")
     extra_args = shlex.split(extra or "")
@@ -81,11 +110,11 @@ def resolve(variant: str, extra: str = "") -> dict:
         if extra_args:
             raise ValueError(f"'{variant}' is a table variant: its arguments are fixed. Pick a new name for an ad-hoc run")
         v = VARIANTS[variant]
-        return {"name": variant, "args": list(v["args"]), "source": "table", "role": v.get("role"), "note": v.get("note"),
+        return {"name": variant, "args": variant_args(variant, scenario), "source": "table", "role": v.get("role"), "note": v.get("note"),
                 "timeoutMin": v.get("timeout_min")}
     if not extra_args:
         raise ValueError(f"unknown variant '{variant}' (available: {', '.join(VARIANTS)}); for an ad-hoc run pass --args")
-    return {"name": variant, "args": BASE + extra_args, "source": "--args", "role": None, "note": "baseline arguments plus --args",
+    return {"name": variant, "args": SCENARIOS[scenario]["base"] + extra_args, "source": "--args", "role": None, "note": "baseline arguments plus --args",
             "timeoutMin": None}
 
 
@@ -110,31 +139,33 @@ def per_hour(gpu: str | None, cpu: float = CPU, memory_gib: float = MEMORY_GIB) 
     return round(GPU_PER_HOUR[key] + cpu * CPU_PER_CORE_HOUR + memory_gib * MEMORY_PER_GIB_HOUR, 4) if key in GPU_PER_HOUR else None
 
 
-def estimate(args: list[str], gpu: str = "L40S", timeout_min: int | None = None) -> dict:
+def estimate(args: list[str], gpu: str = "L40S", timeout_min: int | None = None, scenario: str = "chapel") -> dict:
     """Minutes and dollars for one run on `gpu`, and the stop-loss timeout (1.5x the estimate unless the variant sets one)."""
-    steps = steps_of(args)
-    if steps is None or gpu_key(gpu) not in SECONDS_PER_STEP:
+    steps, s = steps_of(args), SCENARIOS[scenario]
+    if steps is None or gpu_key(gpu) not in s["seconds_per_step"]:
         raise ValueError(f"cannot estimate '{' '.join(args)}' on {gpu}: needs --iterations and an L4 or L40S")
-    train_min = math.ceil(steps * SECONDS_PER_STEP[gpu_key(gpu)] / 60)
-    total_min = train_min + OVERHEAD_MIN
+    train_min = math.ceil(steps * s["seconds_per_step"][gpu_key(gpu)] / 60)
+    total_min = train_min + s["overhead_min"]
     timeout = timeout_min or math.ceil(STOP_LOSS * total_min)
-    rate = per_hour(gpu)
-    return {"gpu": gpu, "steps": steps, "trainMin": train_min, "overheadMin": OVERHEAD_MIN, "totalMin": total_min,
+    rate = per_hour(gpu, s["cpu"], s["memory_gib"])
+    return {"gpu": gpu, "steps": steps, "trainMin": train_min, "overheadMin": s["overhead_min"], "totalMin": total_min,
             "timeoutMin": timeout, "usd": round(total_min / 60 * rate, 2), "maxUsd": round(timeout / 60 * rate, 2), "perHour": rate}
 
 
 def make_job(scenario: str, src: str, variant: str, args: str = "", force: bool = False, gpus: tuple[str, ...] = ("L40S",),
              ceiling_min: int | None = None, revision: dict | None = None) -> dict:
     """Everything the Modal function needs, decided locally. Refuses a run whose stop-loss would not fit the function's timeout."""
-    v = resolve(variant, args)
-    estimates = {gpu_key(g): estimate(v["args"], g, v["timeoutMin"]) for g in gpus}
-    ceiling = ceiling_min or default_ceiling_min(gpus)
+    v = resolve(variant, args, scenario)
+    s = SCENARIOS[scenario]
+    estimates = {gpu_key(g): estimate(v["args"], g, v["timeoutMin"], scenario) for g in gpus}
+    ceiling = ceiling_min or default_ceiling_min(gpus, scenario)
     slowest = max(estimates.values(), key=lambda e: e["timeoutMin"])
     if slowest["timeoutMin"] > ceiling:
         raise ValueError(f"{variant}: stop-loss {slowest['timeoutMin']} min on {slowest['gpu']} is above the function timeout of "
                          f"{ceiling} min (set PLY_EVAL_TIMEOUT_MIN when launching to raise it)")
-    return {"scenario": scenario, "src": src.strip("/"), "variant": variant, "args": v["args"], "argsSource": v["source"],
+    return {"scenario": scenario, "src": (src or s["src"]).strip("/"), "variant": variant, "args": v["args"], "argsSource": v["source"],
             "role": v["role"], "note": v["note"], "force": force, "gpus": list(gpus), "ceilingMin": ceiling,
+            "cpu": s["cpu"], "memoryGib": s["memory_gib"], "needsIndex": s.get("index", True),
             "estimates": estimates, "revision": revision or {}}
 
 
@@ -143,9 +174,9 @@ def stop_loss_min(job: dict, gpu: dict) -> int:
     return (job["estimates"].get(gpu.get("priced")) or max(job["estimates"].values(), key=lambda e: e["timeoutMin"]))["timeoutMin"]
 
 
-def default_ceiling_min(gpus: tuple[str, ...]) -> int:
-    """The function's timeout: the stop-loss of the longest table variant on the slowest GPU allowed."""
-    return max(estimate(v["args"], g, v.get("timeout_min"))["timeoutMin"] for v in VARIANTS.values() for g in gpus)
+def default_ceiling_min(gpus: tuple[str, ...], scenario: str = "chapel") -> int:
+    """The function's timeout: the stop-loss of the scenario's longest table variant on the slowest GPU allowed."""
+    return max(estimate(variant_args(n, scenario), g, v.get("timeout_min"), scenario)["timeoutMin"] for n, v in VARIANTS.items() for g in gpus)
 
 
 def plypipe_command(stage: str, job_dir: str, args: list[str], python: str = "python") -> list[str]:
@@ -159,7 +190,7 @@ def variant_dir(scenario: str, variant: str) -> str:
 def describe(job: dict, job_dir: str = "/tmp/work/job") -> str:
     out = [f"variant {job['variant']} ({job['argsSource']}{', ' + job['note'] if job.get('note') else ''})",
            f"scenario {job['scenario']}, saved solve /vol/{job['src']}, results /vol/{variant_dir(job['scenario'], job['variant'])}/",
-           f"{CPU} cores, {MEMORY_GIB} GiB; GPU {' then '.join(job['gpus'])}" + (" (a fallback: timings differ)" if len(job["gpus"]) > 1 else "")]
+           f"{job.get('cpu', CPU)} cores, {job.get('memoryGib', MEMORY_GIB)} GiB; GPU {' then '.join(job['gpus'])}" + (" (a fallback: timings differ)" if len(job["gpus"]) > 1 else "")]
     for e in job["estimates"].values():
         out.append(f"  {e['gpu']}: {e['steps']} steps = {e['trainMin']} min training + {e['overheadMin']} min restore/export/scoring = "
                    f"{e['totalMin']} min, about ${e['usd']:.2f} at ${e['perHour']:.2f}/h; stop-loss {e['timeoutMin']} min, at most ${e['maxUsd']:.2f}")
@@ -235,14 +266,15 @@ def restore(src: Path, dst: Path) -> dict:
     return {"files": files, "bytes": size}
 
 
-def check_job(root: Path) -> list[str]:
-    """What is missing for train and export to run on this folder (empty when it is usable)."""
+def check_job(root: Path, index: bool = True) -> list[str]:
+    """What is missing for train and export to run on this folder (empty when it is usable). `index` false: a photo
+    set, which has no frames_index.json."""
     problems = [f"data/sparse/0/{n}" for n in ("cameras.bin", "images.bin", "points3D.bin", "cameras.txt", "images.txt", "points3D.txt")
                 if not (root / "data" / "sparse" / "0" / n).exists()]
     images = root / IMAGES_LINK[0]
     if not images.is_dir() or not next(images.glob("*.jpg"), None):
         problems.append(f"{IMAGES_LINK[0]} (no photos: dense/images missing or the link broken)")
-    for n in ("scene.json", "frames_index.json"):
+    for n in ("scene.json", "frames_index.json") if index else ("scene.json",):
         if not (root / n).exists():
             problems.append(n)
     return problems
@@ -353,8 +385,9 @@ def assemble(job: dict, report: dict, *, gpu: dict, seconds: dict, sizes: dict, 
     }
 
 
-def invocation_record(started: float, wall: float, gpu: dict, ran: list[str], skipped: list[str], error: str | None = None) -> dict:
-    rate = per_hour(gpu.get("priced") or gpu.get("name"))
+def invocation_record(started: float, wall: float, gpu: dict, ran: list[str], skipped: list[str], error: str | None = None,
+                      cpu: float = CPU, memory_gib: float = MEMORY_GIB) -> dict:
+    rate = per_hour(gpu.get("priced") or gpu.get("name"), cpu, memory_gib)
     return {"startedAt": datetime.fromtimestamp(started, timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"), "wallSeconds": round(wall, 1),
             "gpu": gpu.get("name"), "ran": ran, "resumedAfter": skipped, "costUsd": round(wall / 3600 * rate, 3) if rate else None,
             "pricePerHour": rate, **({"error": error} if error else {})}
@@ -423,8 +456,8 @@ def main(argv: list[str] | None = None) -> int:
     p = sub.add_parser("plan")
     p.add_argument("--variant", required=True)
     p.add_argument("--args", default="")
-    p.add_argument("--scenario", default="chapel")
-    p.add_argument("--src", default="chapel/high/job")
+    p.add_argument("--scenario", default="chapel", choices=sorted(SCENARIOS))
+    p.add_argument("--src", default="", help="the saved job on the Volume (default: the scenario's)")
     p.add_argument("--gpu", default=os.environ.get("PLY_EVAL_GPU", "L40S"), help="comma-separated, tried in order")
     p.add_argument("--force", action="store_true")
     a = ap.parse_args(argv)

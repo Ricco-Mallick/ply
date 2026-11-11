@@ -7,6 +7,11 @@
     python pipeline/modal/ply_eval.py collect --scenario chapel --out /tmp/ply-eval      # metrics.json files, from the Volume
     python scripts/eval_table.py /tmp/ply-eval                                           # the results table
 
+    PLY_EVAL_SCENARIO=drjohnson PLY_EVAL_GPU=L4,L40S MODAL_PROFILE=<account> modal run --detach pipeline/modal/ply_eval.py \\
+        --variant q0a                                           # the same variant on the small scenario, at about a third of the cost
+
+A scenario (evalrun.SCENARIOS) is a saved solve, its baseline and its container. Try a variant on the small one first.
+
 Runs on the worker's image (same cached layers) in its own app, never touching the job queue. The saved job is read
 from the `ply-bench` Volume: its camera solve and photos are restored, its old training and export outputs are not,
 then `plypipe --only train` and `--only export` run with the variant's arguments. Each finished stage is saved to
@@ -19,8 +24,8 @@ that way). `--wait` blocks and prints the summary, for a run short enough to sit
 The stop-loss is in code: the function's timeout (1.5x the estimate, plus two minutes to save) and an earlier in-code
 deadline for the variant. GPU: one type for comparable timings (L40S); PLY_EVAL_GPU=L40S,L4 allows a fallback, with a
 longer timeout. Modal 1.6.3 can also set gpu and timeout per call (Function.with_options), but only one GPU name and
-unproven under --detach here, so this file fixes them when it is loaded: PLY_EVAL_GPU and PLY_EVAL_TIMEOUT_MIN are read
-at launch, on this machine, never inside the container.
+unproven under --detach here, so this file fixes them when it is loaded: PLY_EVAL_GPU, PLY_EVAL_SCENARIO and
+PLY_EVAL_TIMEOUT_MIN are read at launch, on this machine, never inside the container.
 """
 import json
 import os
@@ -43,7 +48,11 @@ from ply_modal import image as worker_image  # noqa: E402
 from plypipe import evalrun  # noqa: E402
 
 GPUS = [g.strip() for g in os.environ.get("PLY_EVAL_GPU", "L40S").split(",") if g.strip()]
-CEILING_MIN = int(os.environ.get("PLY_EVAL_TIMEOUT_MIN") or evalrun.default_ceiling_min(tuple(GPUS)))
+SCENARIO = os.environ.get("PLY_EVAL_SCENARIO", "chapel")
+if SCENARIO not in evalrun.SCENARIOS:
+    raise SystemExit(f"PLY_EVAL_SCENARIO={SCENARIO}: not one of {', '.join(evalrun.SCENARIOS)}")
+SIZE = evalrun.SCENARIOS[SCENARIO]
+CEILING_MIN = int(os.environ.get("PLY_EVAL_TIMEOUT_MIN") or evalrun.default_ceiling_min(tuple(GPUS), SCENARIO))
 image = worker_image.add_local_file(HERE / "ply_modal.py", "/root/ply_modal.py")
 app = modal.App("ply-eval", image=image)
 vol = modal.Volume.from_name("ply-bench")  # seeded by `modal volume put`; not created here, so a wrong account fails at once
@@ -89,7 +98,7 @@ def _snapshots(dst: Path, stop: threading.Event) -> None:
         print(f"[eval] saved snapshot {plys[-1].name}", flush=True)
 
 
-@app.function(gpu=GPUS if len(GPUS) > 1 else GPUS[0], cpu=evalrun.CPU, memory=evalrun.MEMORY_GIB * 1024,
+@app.function(gpu=GPUS if len(GPUS) > 1 else GPUS[0], cpu=SIZE["cpu"], memory=SIZE["memory_gib"] * 1024,
               timeout=(CEILING_MIN + evalrun.GRACE_MIN) * 60, volumes={"/vol": vol})
 def run_variant(job: dict) -> dict:
     started = time.time()
@@ -113,7 +122,7 @@ def run_variant(job: dict) -> dict:
     shutil.rmtree(JOB, ignore_errors=True)  # a warm container may be reused by the next launch
     got = evalrun.restore(src, JOB)
     layered = evalrun.layer(saved, JOB) if saved.exists() and not job["force"] else 0
-    problems = evalrun.check_job(JOB)
+    problems = evalrun.check_job(JOB, job.get("needsIndex", True))
     if problems:
         raise RuntimeError(f"the restored job is unusable, missing: {', '.join(problems)}")
     todo = evalrun.stages_to_run(JOB)
@@ -130,7 +139,8 @@ def run_variant(job: dict) -> dict:
 
     def metrics(report: dict) -> dict:
         sizes = {n: (JOB / n).stat().st_size for n in ("scene.ply", "scene.spz", "scene_lite.spz") if (JOB / n).exists()}
-        record = evalrun.invocation_record(started, time.time() - started, gpu, ran, [s for s in ("train", "export") if s not in todo], error)
+        record = evalrun.invocation_record(started, time.time() - started, gpu, ran, [s for s in ("train", "export") if s not in todo], error,
+                                           job.get("cpu", evalrun.CPU), job.get("memoryGib", evalrun.MEMORY_GIB))
         return evalrun.assemble(job, report, gpu=gpu, seconds={**seconds, "wall": round(time.time() - started, 1)}, sizes=sizes,
                                 invocation=record, previous=previous)
 
@@ -170,8 +180,10 @@ def run_variant(job: dict) -> dict:
 
 
 @app.local_entrypoint()
-def main(src: str = "chapel/high/job", scenario: str = "chapel", variant: str = "", args: str = "", force: bool = False,
+def main(src: str = "", scenario: str = SCENARIO, variant: str = "", args: str = "", force: bool = False,
          wait: bool = False):
+    if scenario != SCENARIO:  # the function was sized for SCENARIO when this file was loaded
+        raise SystemExit(f"--scenario {scenario}: launch it with PLY_EVAL_SCENARIO={scenario}, which sets the container and the timeout")
     job = evalrun.make_job(scenario, src, variant, args, force, tuple(GPUS), CEILING_MIN, evalrun.code_revision(HERE.parent.parent))
     print(evalrun.describe(job), flush=True)
     if wait:
@@ -187,7 +199,7 @@ if __name__ == "__main__":  # `plan` and `collect` run here, on this machine, no
 
     if sys.argv[1:2] == ["collect"]:
         ap = argparse.ArgumentParser(prog="ply_eval.py collect")
-        ap.add_argument("--scenario", default="chapel")
+        ap.add_argument("--scenario", default=SCENARIO)
         ap.add_argument("--out", type=Path, required=True)
         a = ap.parse_args(sys.argv[2:])
         for name, files in evalrun.collect(vol, a.scenario, a.out).items():

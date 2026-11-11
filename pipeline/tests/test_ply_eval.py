@@ -20,7 +20,7 @@ SCRIPT = Path(__file__).resolve().parents[1] / "modal" / "ply_eval.py"
 
 
 def load(monkeypatch, name="ply_eval_under_test", **env):
-    for k in ("PLY_EVAL_GPU", "PLY_EVAL_TIMEOUT_MIN"):
+    for k in ("PLY_EVAL_GPU", "PLY_EVAL_TIMEOUT_MIN", "PLY_EVAL_SCENARIO"):
         monkeypatch.delenv(k, raising=False)
     for k, v in env.items():
         monkeypatch.setenv(k, v)
@@ -47,6 +47,19 @@ def test_a_gpu_fallback_is_opt_in_and_lengthens_the_timeout(monkeypatch):
     m = load(monkeypatch, "ply_eval_fallback", PLY_EVAL_GPU="L40S,L4")
     assert m.GPUS == ["L40S", "L4"] and m.CEILING_MIN == 30
     assert load(monkeypatch, "ply_eval_longer", PLY_EVAL_TIMEOUT_MIN="45").CEILING_MIN == 45
+
+
+def test_the_scenario_sizes_the_container_and_must_match_the_launch(monkeypatch):
+    m = load(monkeypatch, "ply_eval_small", PLY_EVAL_SCENARIO="drjohnson", PLY_EVAL_GPU="L4,L40S")
+    assert m.SCENARIO == "drjohnson" and m.CEILING_MIN == 17
+    original = next(v for k, v in vars(m.run_variant).items() if k.startswith("_sync_original"))
+    info = getattr(original, "_function_info", None)
+    if info is not None:
+        assert info.gpus == [("L4", 1), ("L40S", 1)] and info.cpu == 4 and info.memory_mib == 16384 and info.timeout == 19 * 60
+    with pytest.raises(SystemExit, match="PLY_EVAL_SCENARIO=chapel"):          # sized for Dr Johnson: a chapel run would get its container
+        m.main.info.raw_f(scenario="chapel", variant="q0a")
+    with pytest.raises(SystemExit, match="not one of"):
+        load(monkeypatch, "ply_eval_unknown", PLY_EVAL_SCENARIO="garden")
 
 
 def test_the_stop_loss_kills_a_stage_that_outlives_its_deadline(monkeypatch):
@@ -142,6 +155,18 @@ def test_a_failed_export_leaves_train_saved_and_a_relaunch_runs_only_export(tmp_
     assert result["complete"] and [i["ran"] for i in result["invocations"]] == [["train"], ["export"]]
     assert result["invocations"][0]["error"] == "export exited with 1" and result["invocations"][1]["resumedAfter"] == ["train"]
     assert result["costUsd"] == round(sum(i["costUsd"] for i in result["invocations"]), 2)
+
+
+def test_a_photo_set_without_a_frames_index_runs_on_the_small_scenario(tmp_path, monkeypatch):
+    rig = Rig(tmp_path, monkeypatch)
+    (saved_job(rig.vol / "drjohnson" / "prep") / "frames_index.json").unlink()
+    result = rig.m.run_variant.local(evalrun.make_job("drjohnson", "", "q0a", gpus=("L4", "L40S")))
+    assert result["complete"] and [s[1] for s in rig.stages] == [evalrun.SMALL, evalrun.SMALL]
+    assert (rig.vol / "drjohnson" / "eval" / "q0a" / "metrics.json").exists() and not (rig.vol / "chapel" / "eval").exists()
+    assert result["invocations"][0]["pricePerHour"] == pytest.approx(1.95 + 4 * 0.047 + 16 * 0.008)   # the rig's L40S at this scenario's size
+    (rig.vol / "chapel" / "high" / "job" / "frames_index.json").unlink()
+    with pytest.raises(RuntimeError, match="frames_index.json"):                # a video's block comes from its clips: still required
+        rig.go()
 
 
 def test_a_volume_without_the_saved_job_fails_before_any_gpu_work(tmp_path, monkeypatch):
