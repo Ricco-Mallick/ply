@@ -16,8 +16,6 @@ export interface SceneManifest {
   start?: { position: [number, number, number]; yaw?: number };
   bounds?: { min: [number, number, number]; max: [number, number, number] };
   occupancy?: Occupancy;
-  /** the pipeline's walk check passed (occupancy.json `walk.pass`): open in Walk mode */
-  walkable?: boolean;
   cameraPath?: [number, number, number][];
   /** cinematic tour keyframes (pipeline tour.py) */
   tour?: { pos: [number, number, number]; target: [number, number, number]; fov: number; dur: number }[];
@@ -104,7 +102,6 @@ async function normalise(raw: any, base: URL): Promise<SceneManifest> {
   if (raw.occupancy?.meta) {
     const o = await (await fetch(new URL(raw.occupancy.meta, base))).json();
     m.occupancy = { image: raw.occupancy.image ?? o.image, origin: o.origin, cell: o.cellSize, width: o.width, height: o.height };
-    m.walkable = o.walk?.pass === true;
   }
   return m;
 }
