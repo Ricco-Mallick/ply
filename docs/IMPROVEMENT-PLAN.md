@@ -139,15 +139,16 @@ viewer blocks unknown. On a plain floor that leaves a corridor about 0.7 m wide 
 0.44 m wide. Two sparse points in a cell block it, and only the one-cell path line overrides them, so a stray point
 closes the corridor (`stages/occupancy.py`; `app/src/walk/scene.ts:35-38,70`; `app/src/walk/engine.ts:15`).
 
-**2.0 Stopgap for existing twins (free, CPU only).** Rebuild the grid from the saved solve, with no retraining. The
-walked corridor is free at the walker's width, not one cell. Free space is carved along the rays from each camera to
-the sparse points it saw, which the solve already stores. Blocked cells still win, and plain low furniture can be
-carved open, so this is judged by the same walking gate and replaced by 2.3 wherever a GPU pass exists. Test
-(`test_align_occupancy.py`): in the two-room scene every camera position can be reached from every other.
+**2.0 Stopgap for existing twins (free, CPU only). Done 2026-11-11** (`IMPROVEMENT.md`). The grid is rebuilt from the
+saved solve: a walked corridor 0.2 m either side of the camera path that wins over blocked cells, free space from
+sight lines below 0.6 m (blocked still wins), no morphological close. `plypipe/walkcheck.py` scores it with the
+viewer's rules. Chapel: 0.01 → 28.1 m² reachable, capture positions 2.6% → 100%, places 6.8% → 100%. Open: publish
+the new grids to the live twins; wall crossings are not yet measured against ground truth (phase 1). Replaced by 2.3
+wherever a GPU pass exists.
 
-**2.1 Viewer (free).** Free stays the default until Walk works. The pipeline writes the result of its own
-walkability check into `scene.json`, and the viewer opens in Walk only for a scene that passed. Sub-step movement so
-no step exceeds half a cell, and cap wheel speed in Walk. A failed `unstick()` returns to the spawn point. Put the
+**2.1 Viewer (free).** Free stays the default until Walk works. Done: the pipeline writes its walk check into
+`occupancy.json` (`walk.pass`), and the viewer opens in Walk only for a scene that passed. Still to do: sub-step
+movement so no step exceeds half a cell, and cap wheel speed in Walk. A failed `unstick()` returns to the spawn point. Put the
 grid behind one collider interface (the engine calls it directly in four places today), so a mesh collider or a
 navmesh can replace it later. Files: `app/src/walk/engine.ts:22,136-144,163,183-187`, `app/src/walk/scene.ts`. Tests
 (Playwright): holding W into a wall for five seconds at maximum wheel speed keeps the camera inside the room, and a
