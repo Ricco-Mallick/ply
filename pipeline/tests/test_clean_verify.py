@@ -97,6 +97,46 @@ def test_value_filters_use_splat_transforms_units():
         assert 0 < v < 1
 
 
+def _choose(good: set[tuple[str, str]], unscored: bool = False):
+    """choose_cleanup over three filters and three steps, where only the (filter, cleanup) pairs in `good` pass."""
+    from plypipe.stages import export as export_stage
+    filters = [{"why": n} for n in ("strict", "looser", "loosest")]
+    steps, calls = [(True, True), (False, True), (False, False)], []
+
+    def measure(f, step):
+        calls.append((f["why"], export_stage.cleanup_name(step)))
+        return None if unscored else {"ok": calls[-1] in good}
+
+    f, step, score = export_stage.choose_cleanup(filters, steps, measure, lambda s: bool(s) and s["ok"])
+    return (f["why"], export_stage.cleanup_name(step)), score, calls
+
+
+def test_a_cleanup_the_viewer_does_not_pay_for_is_taken_at_the_first_try():
+    assert _choose({("strict", "crop+floaters")}) == (("strict", "crop+floaters"), {"ok": True}, [("strict", "crop+floaters")])
+    picked, _, calls = _choose({("strict", "values only"), ("looser", "crop+floaters")})
+    assert picked == ("strict", "values only") and calls == [("strict", "crop+floaters"), ("strict", "floaters"), ("strict", "values only")]
+
+
+def test_a_value_filter_that_costs_the_picture_even_alone_is_loosened():
+    """Dr Johnson with a weak opacity regulariser: the strictest filter kept 88 % of the splats, so the count let it
+    through, and it cost 1.8 dB and 7 % of the pixels under every cleanup. It used to ship like that."""
+    picked, score, calls = _choose({("loosest", "values only"), ("loosest", "floaters")})
+    assert picked == ("loosest", "floaters") and score == {"ok": True}
+    assert calls == [("strict", "crop+floaters"), ("strict", "floaters"), ("strict", "values only"),
+                     ("looser", "values only"),                              # failed alone: no heavier step can save it
+                     ("loosest", "values only"), ("loosest", "crop+floaters"), ("loosest", "floaters")]
+    picked, score, calls = _choose({("looser", "values only")})
+    assert picked == ("looser", "values only") and score == {"ok": True}       # the heavier steps were measured and left out
+    assert calls[-3:] == [("looser", "values only"), ("looser", "crop+floaters"), ("looser", "floaters")]
+
+
+def test_the_last_try_stands_when_nothing_passes_and_nothing_is_loosened_without_a_score():
+    picked, score, calls = _choose(set())
+    assert picked == ("loosest", "values only") and score == {"ok": False} and len(calls) == 5
+    picked, score, calls = _choose(set(), unscored=True)
+    assert picked == ("strict", "values only") and score is None and len(calls) == 3
+
+
 def test_floater_filter_keeps_a_plain_wall_of_big_splats(tmp_path):
     """MCMC covers a plain wall with few large splats; one per cell, straddling cell edges, is still a wall."""
     zs, ys = np.meshgrid(np.arange(0, 3.0, 0.15), np.arange(0, 2.7, 0.15))
