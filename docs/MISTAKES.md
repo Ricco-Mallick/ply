@@ -13,7 +13,8 @@ Read the checklist before any paid GPU run. Add an entry when something costs cr
 - [ ] **Resumable.** Every finished stage is saved to a Volume before the next starts, and a relaunch picks up
       from there (`.done/<stage>.json` plus the job folder).
 - [ ] **GPU fallback.** `gpu=["L4", "L40S"]`, and read `modal app logs` within two minutes: a queue for capacity
-      looks exactly like a slow start.
+      looks exactly like a slow start. Never one type alone, not even for comparable timings.
+- [ ] **A launch runs only after its checks.** Join it to them with `&&`; a `;` launches whatever the check said.
 - [ ] **Estimate from evidence.** Scale the closest earlier run's per-stage times by frame count (SfM grows faster
       than linearly), price the GPU *and* the CPU/memory asked for, state that basis, and report back if spend
       passes 1.5x the estimate.
@@ -27,6 +28,18 @@ Read the checklist before any paid GPU run. Add an entry when something costs cr
       symlinked folders included.
 
 ## Log
+
+### 2026-11-12: a failed Volume copy and a launch that ran anyway, again; one GPU type, again ($0, about ten minutes)
+
+Two entries below already cover both. An export-only rerun needed a copy of a variant's folder on the Volume. The copy
+and the launch were written in one shell line joined with `;`: `modal volume cp -r` failed (`recursive` is not
+supported for V1 volumes), its message was cut off by the output filter, and the launch went ahead as a full chapel
+training run that nobody asked for. It was cancelled by its call id a minute later, before a container started. In
+the same hour a baseline launched with `PLY_EVAL_GPU=L40S` alone sat nine minutes with no container, while a launch
+with the two-type list got an L40S within a minute; it was cancelled and launched again with the list.
+**Rule:** a launch is joined to its checks with `&&`, and the check is read from the Volume (`modal volume ls`), not
+from the copy's exit. Copy single files on this Volume (`modal volume cp ply-bench a/file b/file`). The GPU list
+always has two types.
 
 ### 2026-11-12: the live worker asked for an L4 only, and a queued call sat through a redeploy (28 minutes, ~$0.13)
 
