@@ -352,10 +352,10 @@ def test_metrics_carry_the_phone_files_fine_tune_next_to_the_cut_down_score():
     job = evalrun.make_job("chapel", "chapel/high/job", "q6")
     m = evalrun.assemble(job, report, gpu=gpu, seconds={}, sizes={}, invocation=evalrun.invocation_record(1_800_000_000, 900.0, gpu, ["train", "export"], []))
     assert m["complete"] and m["viewer"]["phoneFinetune"] == report["export"]["liteFinetune"] and m["viewer"]["phone"]["psnr"] == 21.5
-    assert "phone file, 3000 fine-tune steps: PSNR 21.4 cut down, 23.1 fine-tuned; shipped the finetuned one" in evalrun.summary(m)
-    report["export"]["liteFinetune"] = {"steps": 3000, "shipped": "decimated", "why": "CUDA out of memory"}
+    assert "phone file, 3000 fine-tune steps: PSNR 21.4 before, 23.1 fine-tuned; shipped the finetuned one" in evalrun.summary(m)
+    report["export"]["liteFinetune"] = {"steps": 3000, "shipped": "untuned", "why": "CUDA out of memory"}
     m = evalrun.assemble(job, report, gpu=gpu, seconds={}, sizes={}, invocation=evalrun.invocation_record(1_800_000_000, 900.0, gpu, ["export"], []))
-    assert "shipped the decimated one (CUDA out of memory)" in evalrun.summary(m)
+    assert "shipped the untuned one (CUDA out of memory)" in evalrun.summary(m)
     assert not evalrun.savable(Path("train-lite/ckpts/ckpt_2999_rank0.pt")) and evalrun.savable(Path("eval/lite/val_stats.json"))
 
 

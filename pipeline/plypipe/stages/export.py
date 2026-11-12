@@ -12,8 +12,9 @@ voxel. The floater filter needs WebGPU; without it the stage logs a warning and 
 The phone file keeps SH bands up to LITE_SH and, above LITE_MAX Gaussians, is decimated (phones crash on
 multi-million-splat scenes). Both files get their SH back at SH_BITS (see plypipe.spz): splat-transform rounds it to
 4-5 bits, which cost Dr Johnson 1 dB on desktop; dropping SH entirely cost the phone file another 2.6 dB.
-With --lite-finetune N the cut-down phone model is trained on for N steps at its own splat count (plypipe.finetune)
-and shipped when the viewer shows it better than the cut-down one; --lite-max sets the phone file's splat count.
+With --lite-finetune N the phone model, cut down or not, is trained on for N steps at its own splat count and with
+the SH bands it ships (plypipe.finetune), and is shipped when the viewer shows it better than the one it started from:
+dropping the third band alone cost Dr Johnson's phone file 0.59 dB. --lite-max sets the phone file's splat count.
 
 Last, plypipe.topview renders the cleaned model from above (topview.webp, recorded as scene.json's `topview` block)
 for the viewer's minimap. Failing to do so is a warning, never a failed export.
@@ -362,11 +363,12 @@ def run_stage(ctx: Ctx) -> dict:
     sh = {"full": _restore_sh(ctx, full, cleaned)}
     n = ply_count(cleaned)
     lite_max = int(ctx.opt("lite_max") or LITE_MAX)
+    steps = int(ctx.opt("lite_finetune", 0) or 0)
     lite_n, tuned = n, None
-    if n > lite_max:  # decimation must end in a .ply: decimate, then convert
+    if n > lite_max or steps:  # the phone model as a .ply: decimation must end in one, and a fine-tune starts from one
         lite_ply = ctx.out / "scene_lite.ply"
-        run([*st, "-w", str(cleaned), "-H", str(LITE_SH), "-d", str(lite_max), str(lite_ply)], ctx, "export")
-        steps = int(ctx.opt("lite_finetune", 0) or 0)
+        cut = ["-d", str(lite_max)] if n > lite_max else []
+        run([*st, "-w", str(cleaned), "-H", str(LITE_SH), *cut, str(lite_ply)], ctx, "export")
         if steps:
             tuned = _finetune_lite(ctx, lite_ply, steps, holdout, aa)
         run([*st, "-w", "--spz-version", "3", str(lite_ply), str(lite)], ctx, "export")
@@ -413,11 +415,12 @@ def _restore_sh(ctx: Ctx, spz: Path, ply: Path) -> dict:
 
 
 def _finetune_lite(ctx: Ctx, lite_ply: Path, steps: int, holdout: int, aa: bool) -> dict:
-    """The phone model refitted: `steps` of training on from the cut-down model, at its own splat count (variant Q6).
+    """The phone model refitted: `steps` of training on from lite_ply (the twin with the phone's SH bands, cut down to
+    the phone's splat count when it is larger), at its own splat count (variant Q6).
 
     Both models are scored the way the viewer shows them, and the refit replaces lite_ply only when it is the better
-    one. A fine-tune that fails, or that cannot be measured, leaves the cut-down file: the export is what it was."""
-    out: dict = {"steps": steps, "shipped": "decimated"}
+    one. A fine-tune that fails, or that cannot be measured, leaves the file it started from: the export is what it was."""
+    out: dict = {"steps": steps, "shipped": "untuned"}
     t0 = time.time()
     try:
         from plypipe import viewer_eval
@@ -437,7 +440,7 @@ def _finetune_lite(ctx: Ctx, lite_ply: Path, steps: int, holdout: int, aa: bool)
         else:
             out["why"] = "measured: the fine-tuned model was not the better one"
             ctx.log.emit("export", "warn", f"phone file: {steps} steps of fine-tuning did not improve it "
-                         f"(PSNR {before['psnr']:.2f} -> {after['psnr'] if after else float('nan'):.2f}); shipping the cut-down model")
+                         f"(PSNR {before['psnr']:.2f} -> {after['psnr'] if after else float('nan'):.2f}); shipping the model it started from")
     except Exception as e:
         out["why"] = str(e)[-160:]
         ctx.log.emit("export", "warn", f"phone file fine-tune skipped: {str(e)[-160:]}")

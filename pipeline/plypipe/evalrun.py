@@ -430,7 +430,7 @@ def summary(m: dict) -> str:
                       f"  every-Nth hold-out: {row(m['scores']['every'])}", f"  block hold-out:     {row(m['scores']['block'])}",
                       f"  viewer PSNR desktop {(viewer.get('desktop') or {}).get('psnr')}, phone {(viewer.get('phone') or {}).get('psnr')}; "
                       f"splats shipped {m['splats']['shipped']} of {m['splats']['trained']} (kept {m['splats']['keptFraction']})",
-                      *([f"  phone file, {tune.get('steps')} fine-tune steps: PSNR {(tune.get('before') or {}).get('psnr')} cut down, "
+                      *([f"  phone file, {tune.get('steps')} fine-tune steps: PSNR {(tune.get('before') or {}).get('psnr')} before, "
                          f"{(tune.get('after') or {}).get('psnr')} fine-tuned; shipped the {tune.get('shipped')} one"
                          + (f" ({tune['why']})" if tune.get("why") else "")] if tune else []),
                       f"  {m['wallMinutes']} min wall, about ${m['costUsd']}"])

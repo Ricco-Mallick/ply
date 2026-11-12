@@ -141,8 +141,8 @@ def build_parser() -> argparse.ArgumentParser:
     g.add_argument("--no-crop", action="store_true")
     g.add_argument("--lite-max", type=int, help="splats in the phone file (default 800000); a larger twin is cut down to this many")
     g.add_argument("--lite-finetune", type=int, default=0, metavar="STEPS",
-                   help="export: train the cut-down phone file on for this many steps at its own splat count, and ship it "
-                        "when the viewer shows it better than the cut-down one (needs a GPU; 0 disables)")
+                   help="export: train the phone file on for this many steps at its own splat count and SH degree, and ship it "
+                        "when the viewer shows it better than the one it started from (needs a GPU; 0 disables)")
     return ap
 
 
