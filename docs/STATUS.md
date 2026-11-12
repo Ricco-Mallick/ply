@@ -19,7 +19,7 @@ session, so the next one starts here and not from an exported transcript.
 | Modal account | Holds | Used for |
 |---|---|---|
 | riccomarcelino (about $6 before 2026-11-12; $1.37 billed that day for two deploys and two smoke jobs) | the deployed worker, `ply-bench` (with `smoke/smoke-chapel-30s.mp4`) and `ply-handoff` Volumes, secrets `ply-hf` and `ply-worker` | live jobs |
-| opservemakesalt ($30 on 2026-11-11; $5.34 billed by the end of that day and $1.59 on 2026-11-12) | Volume `ply-bench` with `chapel/high/job` and `drjohnson/prep` (each the solve and photos only) and the smoke clip, secret `ply-hf` (read token), the worker image | experiments (`pipeline/modal/ply_eval.py`) |
+| opservemakesalt ($30 on 2026-11-11; $5.34 billed by the end of that day and $1.59 on 2026-11-12, plus about $2.30 by estimate for the evening's Q1b runs on both scenes and four export-only runs) | Volume `ply-bench` with `chapel/high/job` and `drjohnson/prep` (each the solve and photos only) and the smoke clip, secret `ply-hf` (read token), the worker image | experiments (`pipeline/modal/ply_eval.py`) |
 | ricco-mallick (about $1.70) | `ply-bench:drjohnson/prep` and the Dr Johnson benchmark twins | nothing at present |
 
 ## Running
@@ -70,9 +70,9 @@ Nothing. No Modal app is running on either account and no workflow is in progres
    `PLY_EVAL_SCENARIO=drjohnson PLY_EVAL_GPU=L4,L40S MODAL_PROFILE=opservemakesalt modal run --detach
    pipeline/modal/ply_eval.py --variant <name>` returns at once; `python pipeline/modal/ply_eval.py collect --scenario
    drjohnson --out /tmp/ply-eval` and `python scripts/eval_table.py /tmp/ply-eval` give the table.
-   Next run: `--variant q1b`. The estimate is 13 minutes and $0.49 on an L40S, 19 minutes and $0.35 on an L4. Its
-   grid runs in pure torch and has not been timed (it is budgeted at the full grid's pace), so read the pace of the
-   first steps in the log. What to read and what it decides is item 1 of the hand-off queue below.
+   No run is queued: `q1b` and the walking grid from depth ran on 2026-11-12 (hand-off queue, items 1 and 3), and
+   what follows from them waits on the owner (the list after the queue). An export-only rerun of a trained variant is
+   `--variant <new name> --export-from <variant> --args=<export options>`.
    Q6 (the phone file fine-tuned)
    is the default and deployed. To read from the first real Standard or High job: `report.export.liteFinetune`
    (its `seconds`, estimated at about five minutes for an 800k phone file on an L4, and that it did not fall back for
@@ -98,45 +98,55 @@ Nothing. No Modal app is running on either account and no workflow is in progres
 Work that is decided and specified, in order. Each item says what done means; none needs a design decision. A paid
 run needs the owner's go-ahead and follows plan section 13: one launch, its log read, then the next.
 
-1. **Run `q1b` on Dr Johnson** (command in Next, 2). It worked if `metrics.json` has `exposureFold.folded` and
-   `.settled` true with no `why`, and `viewer.desktop.brightness` and `viewer.phone.brightness` within 0.95 to 1.05.
-   Compare `scores.every`, `scores.block` and the viewer's PSNR with `q0a` and `q0b`. Dr Johnson's photos do not
-   differ in exposure, so `q1b` cannot win there: the run measures what the method costs where there is nothing to
-   correct. Within 0.1 dB of the baseline on all three: run it once on the chapel at 15k, where the windows are, and
-   apply the ship rule of plan section 8. More than 0.2 dB under on any: Q1 is closed and the twin keeps no
-   appearance model. In between: stop and report, with the score of the model as it left training, before the fold
-   (`q1` was 2.3 dB under the baseline there). Record the result in `EXPERIMENTS.md` and replace the one-cell grid's
-   budget in `evalrun.estimate` with the measured pace. (Thresholds set by the agent; the owner can overturn them.)
-2. **An export-only rerun in `ply_eval.py`** (`MISTAKES.md`, 2026-11-12): it takes the variant whose training is on
-   the Volume and extra export options, checks inside the function that the training is there, and runs `export`
-   alone. Tests beside the other launch tests in `test_evalrun.py`.
-3. **`--dense-occupancy` on a GPU**, using item 2: Dr Johnson first, then the saved chapel twin. Read
-   `report.export.denseOccupancy`: `used`, `why`, `views`, `walk` against `sparseWalk`, `seconds`. Report the
-   numbers; whether the depth grid becomes the default is a decision (below).
-4. **`scripts/eval_table.py`**: columns for the viewer's brightness, `exposureFold` and `denseOccupancy.used`.
-5. **`pipeline/README.md`**: `--exposure-fold`, `--exposure-affine` and `--dense-occupancy` in the `train` and
-   `export` rows.
-6. **Walk on the live site**: open a real twin (`chapel-high-2`) in a browser, walk into walls and through a door,
-   and write the plan's guided-route test (2.1).
-7. **Mesh (2.4) and layout (2.5)** from the dense points, as the plan specifies them, with `test_mesh_fusion.py` and
-   `test_layout.py`. After item 3 has shown the depth is usable on a real twin.
-8. **Rest of phase 0** (Next, 5) and the Hugging Face `.gitattributes` fix (Known and left alone).
+1. ~~Run `q1b` on Dr Johnson~~ Done 2026-11-12, then the owner's go-ahead for the diagnostic and the chapel
+   (`EXPERIMENTS.md`, Q1b). Trained with an affine map per photo, the chapel model is clearly better once each view's
+   colours are corrected (+0.75 dB, −0.010 LPIPS), but the file it ships is 1.42 dB under in the viewer, which scores
+   it against the photos as they were exposed. **Q1 does not ship; the twin keeps no appearance model.**
+2. ~~An export-only rerun in `ply_eval.py`~~ Done 2026-11-12: `--export-from VARIANT` with a new variant name and
+   `--args=` export options only. The function stops before restoring anything unless the variant's folder holds a
+   finished training with its table arguments, takes only what training left there, and never runs `train`.
+3. ~~The walking grid from depth on a GPU~~ Done 2026-11-12 on Dr Johnson and the chapel (`EXPERIMENTS.md`). It now
+   takes the sparse grid's floor where the depth saw nothing and keeps its walls; that grid is right on both twins
+   (the chapel's pews blocked, Dr Johnson's corridor kept), Walk and guided routes hold on it in the viewer, and it
+   is **on by default** in export (`--no-dense-occupancy` turns it off). Live jobs get it from the next worker deploy.
+4. ~~`scripts/eval_table.py`~~ Done 2026-11-12: a brightness column for both files, flagged outside ×0.95 to ×1.05,
+   and a second table with the exposure fold, the walking grid and an export-only run's origin.
+5. ~~`pipeline/README.md`~~ Done 2026-11-12.
+6. ~~Walk on the live site~~ Done 2026-11-12 on `chapel-high-2` in the dev build: 16 headings held into walls at
+   9.7 m/s for 5 s each never put the walker inside a wall, and Walk crossed the chapel along four routes without
+   stopping. The plan's guided-route test is in `app/test/walk.test.mts`; it found that "Take me there" routes ran
+   up to 12 cm inside the walker's width on the chapel (5 cm from a wall on a 5 cm grid), fixed in
+   `app/src/lab/places.ts`.
+7. **Get the two MuSHRoom rooms** (plan section 5, S3; phase 1's gate, never met): download from Zenodo, convert their
+   poses, seed `ply-bench`, and run both end to end at Quick (about $3). They are the only laser ground truth, and
+   phase 5 (scale) and the mesh and layout gates of phase 2 are scored on them. The plan's cap applies: if the download
+   or its pose format takes more than two hours, stop and score geometry on S5 and the chapel's plan only.
+8. **Phase 6, step 0** (plan section 10, free): inspect `lidar-office-1`'s E57 (scans, scanner poses, `images2D`).
+9. **Mesh (2.4) and layout (2.5)** from the dense points, as the plan specifies them, with `test_mesh_fusion.py` and
+   `test_layout.py`. The depth points are usable on both real twins (349k and 2.29M points); scored on item 7's rooms.
+10. **Rest of phase 0** (Next, 5) and the Hugging Face `.gitattributes` fix (Known and left alone).
 
 Not for hand-off, because each needs a judgement or the owner:
 
-- `q1b` landing between the two thresholds of item 1, and what goes into the combined run of phase 7 (Q6 is in; an
-  opacity regulariser of 0.005 only with see-through no higher than the baseline's, decision 10).
-- The depth grid as the default walking grid: the gate of plan section 6 on real twins, and whether a navmesh (5c)
-  is needed.
-- Phases 3, 5 and 6: nothing was done on them on 2026-11-12. The plan's cut order (section 3) applies once the date
-  of the final is known.
-- The worker runs `c5cccb3`. `main` has since gained options that are off by default (`--exposure-fold`,
-  `--exposure-affine`, `--dense-occupancy`); it is redeployed when one of them is wanted on live jobs.
+- Phase order and what each costs, now that phase 4 is down to Q3 (waits for the chapel's 4K frames) and Q4b (waits
+  for phase 5): phase 3 (camera solve, about $2.50, on the chapel; ready now), phase 5 (scale, about $0.60, after item
+  7), phase 6 (8a after item 8), then phase 7. The plan's cut order (section 3) applies once the date of the final is
+  known.
+- Q1: whether a twin with one consistent exposure looks better than one that reproduces the camera's exposure. The
+  scores reward the second; a side-by-side look at the two chapel twins on the Volume is the only way Q1 could still
+  ship. What goes into the combined run of phase 7 (Q6 and the depth walking grid are in; an opacity regulariser of
+  0.005 only with see-through no higher than the baseline's, decision 10).
+- Whether the navmesh (5c) is needed: the gate of plan section 6 on the MuSHRoom rooms.
+- The worker runs `c5cccb3`. `main` has gained the walking grid from depth, on by default, and two opt-in options
+  (`--exposure-fold`, `--exposure-affine`); a redeploy and the smoke test bring the grid to live jobs. Published
+  twins keep their grids unless they are exported again.
 - Owner: the date of the final, Walk as the default mode (decision 6), the `ci` checks required on `main`, and the
   go-ahead for each paid run.
 
 ## Known and left alone
 
+- The export reads a `no_clean` option and its docstring names `--no-clean`, but the CLI defines no such flag, so the
+  cleanup cannot be turned off from the command line (found 2026-11-12; `--export-from` does not offer it).
 - The capture app cannot ask for the global mapper on a long video: it sends `--mapper` only for `incremental`, and
   its "Global (fast, default)" label no longer describes what a 400-frame walk gets (`app/src/capture/lib/backend.ts`).
 - `chapel_e2e.py`, `sfm_cpu.py` and `ply_bench.py` wait on their run with `.remote()`: a killed client cancels them (`MISTAKES.md`, 2026-11-11).

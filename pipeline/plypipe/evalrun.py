@@ -71,6 +71,9 @@ OVERHEAD_MIN = 5   # restore, export and scoring for a 2M-splat model
 # end a first q1 run: a step with the grid also slices one grid per photo and regularises all of them, and the exposure
 # fold renders its views twice, rewrites the PLY and starts the trainer a second time.
 GRID_SLOWDOWN = 1.5
+# --exposure-affine's 1x1x1 grid runs on the pure-torch lib_bilagrid: q1b on Dr Johnson (L40S, 2026-11-12) took 464 s for
+# 15,000 steps against 159 s plain, x2.9, where the fused 16x16x8 grid of q1 took 255 s (x1.6)
+AFFINE_SLOWDOWN = 2.9
 FOLD_MIN = 2
 STOP_LOSS = 1.5    # IMPROVEMENT-PLAN rule 3: the timeout is 1.5 times the estimate
 GRACE_MIN = 2      # the Modal function outlives the in-code deadline by this much, to save what a stopped run has
@@ -110,6 +113,14 @@ STALE_REPORT_SECTIONS = ("train", "export", "mesh", "quality")      # what the o
 SAVE_SKIP_DIRS = ("data", "dense", "frames", "frames_raw", "colmap", "train", "train-lite", "train-snapshot")
 SAVE_SKIP_FILES = ("scene_clean.ply", "scene_lite.ply")
 
+# An export-only run (--export-from) takes the model another variant trained: what its train stage left in its folder.
+# eval/lite is not the train stage's: the export scores the phone file there
+TRAINED_FILES = ("scene.ply", ".done/train.json")
+TRAINED_TREE, EXPORTED_TREE = "eval", "eval/lite"
+# Its own options must be ones the export stage reads and training does not (tests/test_evalrun.py checks both stages'
+# source): an option that changes training would be recorded against a model trained without it
+EXPORT_ONLY_OPTIONS = ("--dense-occupancy", "--no-dense-occupancy", "--lite-finetune", "--lite-max", "--min-opacity", "--no-crop")
+
 INPUT = "saved-solve"  # the CLI wants an input path; train and export never read it
 NAME = re.compile(r"^[a-z0-9][a-z0-9_.-]{0,39}$")
 
@@ -133,6 +144,28 @@ def resolve(variant: str, extra: str = "", scenario: str = "chapel") -> dict:
         raise ValueError(f"unknown variant '{variant}' (available: {', '.join(VARIANTS)}); for an ad-hoc run pass --args")
     return {"name": variant, "args": SCENARIOS[scenario]["base"] + extra_args, "source": "--args", "role": None, "note": "baseline arguments plus --args",
             "timeoutMin": None}
+
+
+def resolve_export(variant: str, origin: str, extra: str = "", scenario: str = "chapel") -> dict:
+    """An export-only run: the model the table variant `origin` trained, exported again under a new name with `extra`,
+    which may hold export options only. A table variant, so its training arguments are known here and can be checked
+    against the ones its folder on the Volume was trained with."""
+    if scenario not in SCENARIOS:
+        raise ValueError(f"unknown scenario '{scenario}' (available: {', '.join(SCENARIOS)})")
+    if origin not in VARIANTS:
+        raise ValueError(f"--export-from {origin}: not a table variant (available: {', '.join(VARIANTS)})")
+    if not NAME.match(variant or "") or variant in VARIANTS:
+        raise ValueError(f"an export-only run needs a new variant name, not '{variant}' (e.g. {origin}-reexport): "
+                         f"its folder holds the new export beside {origin}'s")
+    extra_args = shlex.split(extra or "")
+    foreign = [a for a in extra_args if a.startswith("-") and a.split("=")[0] not in EXPORT_ONLY_OPTIONS]
+    if foreign:
+        raise ValueError(f"--export-from runs export alone: {', '.join(foreign)} would not reach the model "
+                         f"(export options: {', '.join(EXPORT_ONLY_OPTIONS)})")
+    train = variant_args(origin, scenario)
+    return {"name": variant, "args": train + extra_args, "source": f"--export-from {origin}", "role": None,
+            "note": f"export only, of the model {origin} trained" + (f", with {' '.join(extra_args)}" if extra_args else ""),
+            "timeoutMin": None, "exportFrom": origin, "trainArgs": train}
 
 
 def _int_option(args: list[str], flag: str) -> int | None:
@@ -160,8 +193,10 @@ def per_hour(gpu: str | None, cpu: float = CPU, memory_gib: float = MEMORY_GIB) 
     return round(GPU_PER_HOUR[key] + cpu * CPU_PER_CORE_HOUR + memory_gib * MEMORY_PER_GIB_HOUR, 4) if key in GPU_PER_HOUR else None
 
 
-def estimate(args: list[str], gpu: str = "L40S", timeout_min: int | None = None, scenario: str = "chapel") -> dict:
-    """Minutes and dollars for one run on `gpu`, and the stop-loss timeout (1.5x the estimate unless the variant sets one)."""
+def estimate(args: list[str], gpu: str = "L40S", timeout_min: int | None = None, scenario: str = "chapel",
+             export_only: bool = False) -> dict:
+    """Minutes and dollars for one run on `gpu`, and the stop-loss timeout (1.5x the estimate unless the variant sets one).
+    `export_only`: the model is another run's, so only the export's own training (the phone file) counts."""
     steps, s = steps_of(args), SCENARIOS[scenario]
     if steps is None or gpu_key(gpu) not in s["seconds_per_step"]:
         raise ValueError(f"cannot estimate '{' '.join(args)}' on {gpu}: needs --iterations and an L4 or L40S")
@@ -170,27 +205,33 @@ def estimate(args: list[str], gpu: str = "L40S", timeout_min: int | None = None,
     # second time and scoring both phone models
     tune = _int_option(args, "--lite-finetune")
     tune = LITE_FINETUNE_STEPS if tune is None else tune
-    # --exposure-fold trains the full model on, with no appearance model: its steps count at the plain pace. The 1x1x1
-    # grid slices in pure torch; until a q1b run times it, it is budgeted like the full grid rather than ended early
-    grid, fold = "--bilateral-grid" in args or "--exposure-affine" in args, _int_option(args, "--exposure-fold")
-    paced = steps * (GRID_SLOWDOWN if grid else 1) + max(fold or 0, 0) + tune
+    # --exposure-fold trains the full model on, with no appearance model: its steps count at the plain pace
+    affine = "--exposure-affine" in args and "--bilateral-grid" not in args
+    grid, fold = "--bilateral-grid" in args or affine, _int_option(args, "--exposure-fold")
+    if export_only:
+        steps, grid, fold = 0, False, None
+    slowdown = AFFINE_SLOWDOWN if affine else GRID_SLOWDOWN
+    paced = steps * (slowdown if grid else 1) + max(fold or 0, 0) + tune
     train_min = math.ceil(paced * s["seconds_per_step"][gpu_key(gpu)] / 60)
+    # the export's depth pass for the walking grid (on by default) took 4 s on Dr Johnson and 25 s on the chapel (L40S,
+    # 2026-11-12): inside the overhead
     overhead = s["overhead_min"] + (FOLD_MIN if fold is not None else 0)
     total_min = train_min + overhead
     timeout = timeout_min or math.ceil(STOP_LOSS * total_min)
     rate = per_hour(gpu, s["cpu"], s["memory_gib"])
-    return {"gpu": gpu, "steps": steps, **({"gridSlowdown": GRID_SLOWDOWN} if grid else {}), **({"exposureFoldSteps": max(fold, 0)} if fold is not None else {}),
-            **({"fineTuneSteps": tune} if tune else {}), "trainMin": train_min, "overheadMin": overhead,
+    return {"gpu": gpu, "steps": steps, **({"gridSlowdown": slowdown} if grid else {}), **({"exposureFoldSteps": max(fold, 0)} if fold is not None else {}),
+            **({"fineTuneSteps": tune} if tune else {}), **({"exportOnly": True} if export_only else {}),
+            "trainMin": train_min, "overheadMin": overhead,
             "totalMin": total_min,
             "timeoutMin": timeout, "usd": round(total_min / 60 * rate, 2), "maxUsd": round(timeout / 60 * rate, 2), "perHour": rate}
 
 
 def make_job(scenario: str, src: str, variant: str, args: str = "", force: bool = False, gpus: tuple[str, ...] = ("L40S",),
-             ceiling_min: int | None = None, revision: dict | None = None) -> dict:
+             ceiling_min: int | None = None, revision: dict | None = None, export_from: str = "") -> dict:
     """Everything the Modal function needs, decided locally. Refuses a run whose stop-loss would not fit the function's timeout."""
-    v = resolve(variant, args, scenario)
+    v = resolve_export(variant, export_from, args, scenario) if export_from else resolve(variant, args, scenario)
     s = SCENARIOS[scenario]
-    estimates = {gpu_key(g): estimate(v["args"], g, v["timeoutMin"], scenario) for g in gpus}
+    estimates = {gpu_key(g): estimate(v["args"], g, v["timeoutMin"], scenario, export_only=bool(export_from)) for g in gpus}
     ceiling = ceiling_min or default_ceiling_min(gpus, scenario)
     slowest = max(estimates.values(), key=lambda e: e["timeoutMin"])
     if slowest["timeoutMin"] > ceiling:
@@ -199,7 +240,8 @@ def make_job(scenario: str, src: str, variant: str, args: str = "", force: bool 
     return {"scenario": scenario, "src": (src or s["src"]).strip("/"), "variant": variant, "args": v["args"], "argsSource": v["source"],
             "role": v["role"], "note": v["note"], "force": force, "gpus": list(gpus), "ceilingMin": ceiling,
             "cpu": s["cpu"], "memoryGib": s["memory_gib"], "needsIndex": s.get("index", True),
-            "estimates": estimates, "revision": revision or {}}
+            "estimates": estimates, "revision": revision or {},
+            **({"exportFrom": v["exportFrom"], "trainArgs": v["trainArgs"]} if export_from else {})}
 
 
 def stop_loss_min(job: dict, gpu: dict) -> int:
@@ -224,9 +266,12 @@ def describe(job: dict, job_dir: str = "/tmp/work/job") -> str:
     out = [f"variant {job['variant']} ({job['argsSource']}{', ' + job['note'] if job.get('note') else ''})",
            f"scenario {job['scenario']}, saved solve /vol/{job['src']}, results /vol/{variant_dir(job['scenario'], job['variant'])}/",
            f"{job.get('cpu', CPU)} cores, {job.get('memoryGib', MEMORY_GIB)} GiB; GPU {' then '.join(job['gpus'])}" + (" (a fallback: timings differ)" if len(job["gpus"]) > 1 else "")]
+    origin = job.get("exportFrom")
     for e in job["estimates"].values():
-        out.append(f"  {e['gpu']}: {e['steps']} steps{' at x' + str(e['gridSlowdown']) + ' for the bilateral grid (an estimate)' if e.get('gridSlowdown') else ''}"
-                   f"{' + ' + str(e['exposureFoldSteps']) + ' after the exposure fold' if 'exposureFoldSteps' in e else ''}"
+        trained = (f"no training (the model {origin} trained)" if e.get("exportOnly") else
+                   f"{e['steps']} steps{' at x' + str(e['gridSlowdown']) + ' for the bilateral grid (an estimate)' if e.get('gridSlowdown') else ''}"
+                   f"{' + ' + str(e['exposureFoldSteps']) + ' after the exposure fold' if 'exposureFoldSteps' in e else ''}")
+        out.append(f"  {e['gpu']}: {trained}"
                    f"{' + ' + str(e['fineTuneSteps']) + ' for the phone file' if e.get('fineTuneSteps') else ''}"
                    f" = {e['trainMin']} min training + {e['overheadMin']} min restore/export/scoring{' and the fold' if 'exposureFoldSteps' in e else ''} = "
                    f"{e['totalMin']} min, about ${e['usd']:.2f} at ${e['perHour']:.2f}/h; stop-loss {e['timeoutMin']} min, at most ${e['maxUsd']:.2f}")
@@ -238,9 +283,13 @@ def describe(job: dict, job_dir: str = "/tmp/work/job") -> str:
             "left out: frames/, frames_raw/, colmap/, the rest of dense/, the old scene*.ply and *.spz, eval/, logs/, log.jsonl, job.json, "
             ".done/{train,export,mesh}.json",
             f"a relaunch layers /vol/{variant_dir(job['scenario'], job['variant'])}/ over that and runs only the stages not finished"
-            f"{' (--force ignores it)' if job['force'] else ''}",
-            "commands:"]
-    out += ["  " + " ".join(plypipe_command(s, job_dir, job["args"])) for s in ("train", "export")]
+            f"{' (--force ignores it)' if job['force'] else ''}"]
+    if origin:
+        out.append(f"export only: before anything is restored, /vol/{variant_dir(job['scenario'], origin)}/ must hold a finished training "
+                   f"with {origin}'s arguments, or the run stops there; then its {', '.join(TRAINED_FILES)}, {TRAINED_TREE}/ "
+                   f"(not {EXPORTED_TREE}/) and report.json's train section go into the job, nothing its export made")
+    out.append("commands:")
+    out += ["  " + " ".join(plypipe_command(s, job_dir, job["args"])) for s in (("export",) if origin else ("train", "export"))]
     out += [f"each stage is saved (report and markers last) without {', '.join(SAVE_SKIP_DIRS)}/, {', '.join(SAVE_SKIP_FILES)}; "
             "the newest training snapshot is kept every 3 min",
             "then verify.check gives the quality gate, and metrics.json is written and saved the same way"]
@@ -342,6 +391,46 @@ def layer(saved: Path, job: Path) -> int:
     return count
 
 
+def _trained(rel: str) -> bool:
+    return rel in TRAINED_FILES or (rel.startswith(TRAINED_TREE + "/") and not rel.startswith(EXPORTED_TREE + "/"))
+
+
+def check_training(origin: Path, train_args: list[str]) -> list[str]:
+    """Why another variant's folder cannot give an export-only run its model (empty when it can): the train stage
+    finished there, and with the arguments the run will record. A launch once ran a full training when the copy of a
+    model it should have exported had failed (docs/MISTAKES.md, 2026-11-12)."""
+    problems = [rel for rel in TRAINED_FILES if not (origin / rel).is_file()]
+    try:
+        train = json.loads((origin / "report.json").read_text()).get("train")
+    except (OSError, ValueError):
+        train = None
+    if not train:
+        problems.append("report.json with a train section")
+    m = read_metrics(origin / "metrics.json")
+    if m is None:
+        problems.append("metrics.json (which arguments trained the model)")
+    elif m.get("args") != train_args:
+        problems.append(f"a model trained with other arguments ({' '.join(m.get('args') or [])})")
+    return problems
+
+
+def take_training(origin: Path, job: Path) -> int:
+    """Put the model another variant trained into a restored job: what its train stage left (the PLY, its marker, the
+    hold-out scores and the report's train section), nothing its export made. Returns the files copied."""
+    count = 0
+    for p in sorted(origin.rglob("*")):
+        rel = p.relative_to(origin).as_posix()
+        if p.is_file() and not p.is_symlink() and _trained(rel) and p.suffix != ".part":
+            (job / rel).parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(p, job / rel)
+            count += 1
+    report = job / "report.json"
+    merged = json.loads(report.read_text()) if report.exists() else {}
+    merged["train"] = json.loads((origin / "report.json").read_text())["train"]
+    report.write_text(json.dumps(merged, indent=2))
+    return count
+
+
 def clear_stale(job: Path, stages: list[str]) -> None:
     """Forget a stage that has to run again, and everything after it, so a half-saved folder cannot pass for a finished one."""
     for s in ("train", "export"):
@@ -408,12 +497,14 @@ def assemble(job: dict, report: dict, *, gpu: dict, seconds: dict, sizes: dict, 
     return {
         "schema": SCHEMA, "variant": job["variant"], "role": job.get("role"), "scenario": job["scenario"], "src": job["src"],
         "args": job["args"], "argsSource": job["argsSource"], "note": job.get("note"), "revision": job.get("revision") or {},
+        **({"exportFrom": job["exportFrom"]} if job.get("exportFrom") else {}),
         "gpu": gpu, "steps": train.get("maxSteps") or steps_of(job["args"]), "capMax": train.get("capMax"),
         "complete": not missing, "missing": missing,
         "scores": {"every": every, "block": block},
         "viewer": {"desktop": shipped.get("full"), "phone": shipped.get("lite"), "cleaned": export.get("viewerEval"),
                    **({"phoneFinetune": export["liteFinetune"]} if export.get("liteFinetune") else {})},
         **({"exposureFold": train["exposureFold"]} if train.get("exposureFold") else {}),
+        **({"denseOccupancy": export["denseOccupancy"]} if export.get("denseOccupancy") else {}),
         "splats": {"atEval": (train.get("eval") or {}).get("gaussians"), "trained": export.get("gaussiansIn"),
                    "shipped": export.get("gaussiansOut"), "keptFraction": export.get("keptFraction"), "phone": export.get("liteGaussians")},
         "files": sizes, "seconds": {**seconds, "train": train.get("seconds"), "export": export.get("seconds")},
@@ -446,6 +537,20 @@ def check_resume(previous: dict | None, job: dict) -> None:
                          "pick a new variant name or relaunch with --force")
 
 
+def dense_cell(d: dict) -> str:
+    """--dense-occupancy's outcome in a line: which grid the twin got, and both grids' walk check."""
+    def walk(w: dict | None) -> str:
+        w = w or {}
+        cams = w.get("cameras")
+        return f"{'–' if cams is None else f'{cams:.0%}'} of capture positions walkable, {w.get('standableM2')} m2 to stand on"
+    if d.get("used") == "depth":
+        head = f"from depth ({d.get('views')} views)"
+    else:
+        head = f"sparse kept: {d.get('why') or 'no reason given'}"
+    tail = f"; depth {walk(d['walk'])}, sparse {walk(d.get('sparseWalk'))}" if d.get("walk") and d.get("used") == "depth" else ""
+    return head + tail + (f"; {d['seconds']} s" if d.get("seconds") is not None else "")
+
+
 def summary(m: dict) -> str:
     def row(s: dict | None) -> str:
         return "n/a" if not s else f"cc-PSNR {s.get('ccPsnr')} cc-SSIM {s.get('ccSsim')} cc-LPIPS {s.get('ccLpips')} ({s.get('views')} views)"
@@ -455,7 +560,8 @@ def summary(m: dict) -> str:
     folded = (f"gains {'/'.join(str(g) for g in fold.get('gains') or [])} fitted on {fold.get('views')} training views, brightness there "
               f"x{fold.get('brightnessBefore')} -> x{fold.get('brightnessAfter')} of the photos, "
               + (f"then {fold.get('steps')} steps without the appearance model" if fold.get("settled") else "no steps after it")) if fold.get("folded") else "NOT folded"
-    return "\n".join([f"{m['variant']}: {'complete' if m['complete'] else 'INCOMPLETE, missing ' + ', '.join(m['missing'])}",
+    return "\n".join([f"{m['variant']}: {'complete' if m['complete'] else 'INCOMPLETE, missing ' + ', '.join(m['missing'])}"
+                      + (f" (export only: the hold-out scores are those of the model {m['exportFrom']} trained)" if m.get("exportFrom") else ""),
                       f"  every-Nth hold-out: {row(m['scores']['every'])}", f"  block hold-out:     {row(m['scores']['block'])}",
                       f"  viewer PSNR desktop {(viewer.get('desktop') or {}).get('psnr')}, phone {(viewer.get('phone') or {}).get('psnr')}; "
                       f"splats shipped {m['splats']['shipped']} of {m['splats']['trained']} (kept {m['splats']['keptFraction']})",
@@ -464,6 +570,7 @@ def summary(m: dict) -> str:
                          + (f" ({tune['why']})" if tune.get("why") else "")] if tune else []),
                       *([f"  exposure fold: {folded}" + (f" ({fold['why']})" if fold.get("why") else "")
                          + f"; viewer brightness desktop x{(viewer.get('desktop') or {}).get('brightness')}"] if fold else []),
+                      *([f"  walking grid: {dense_cell(m['denseOccupancy'])}"] if m.get("denseOccupancy") else []),
                       f"  {m['wallMinutes']} min wall, about ${m['costUsd']}"])
 
 
@@ -504,6 +611,7 @@ def main(argv: list[str] | None = None) -> int:
     p = sub.add_parser("plan")
     p.add_argument("--variant", required=True)
     p.add_argument("--args", default="")
+    p.add_argument("--export-from", default="", metavar="VARIANT", help="export again the model this table variant trained; --args: export options only")
     # PLY_EVAL_SCENARIO is what sizes the container at launch (ply_eval.py): the plan follows it, as it follows PLY_EVAL_GPU
     p.add_argument("--scenario", default=os.environ.get("PLY_EVAL_SCENARIO", "chapel"), choices=sorted(SCENARIOS))
     p.add_argument("--src", default="", help="the saved job on the Volume (default: the scenario's)")
@@ -514,7 +622,7 @@ def main(argv: list[str] | None = None) -> int:
     repo = Path(__file__).resolve().parents[2]
     ceiling = int(os.environ["PLY_EVAL_TIMEOUT_MIN"]) if os.environ.get("PLY_EVAL_TIMEOUT_MIN") else None
     try:
-        job = make_job(a.scenario, a.src, a.variant, a.args, a.force, gpus, ceiling, code_revision(repo))
+        job = make_job(a.scenario, a.src, a.variant, a.args, a.force, gpus, ceiling, code_revision(repo), export_from=a.export_from)
     except ValueError as e:
         print(f"error: {e}", file=sys.stderr)
         return 2

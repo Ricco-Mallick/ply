@@ -34,8 +34,8 @@ def test_one_row_per_variant_with_both_hold_outs_viewer_scores_splats_minutes_an
     out = eval_table.render(eval_table.load_runs(tmp_path))
     first = rows(out)[:4]
     assert first[0].startswith("| variant | steps | every cc-PSNR | every cc-SSIM | every cc-LPIPS | block cc-PSNR | block cc-SSIM | block cc-LPIPS | "
-                               "viewer PSNR desktop | viewer PSNR phone | splats kept | minutes | cost |")
-    assert first[2] == "| q0a | 15000 | 24.50 | 0.8600 | 0.2400 | 22.00 | 0.8000 | 0.3000 | 23.50 | 21.40 | 75% (1.50M) | 14.0 | $0.60 |"
+                               "viewer PSNR desktop | viewer PSNR phone | brightness desktop / phone | splats kept | minutes | cost |")
+    assert first[2] == "| q0a | 15000 | 24.50 | 0.8600 | 0.2400 | 22.00 | 0.8000 | 0.3000 | 23.50 | 21.40 | – / – | 75% (1.50M) | 14.0 | $0.60 |"
     assert first[3].startswith("| q2 | 15000 | 24.90 | 0.8620 | 0.2360 |")
     assert "Noise floor: needs two complete baselines (found: q0a)" in out
 
@@ -95,3 +95,42 @@ def test_unreadable_files_are_skipped(tmp_path):
     (tmp_path / "broken").mkdir()
     (tmp_path / "broken" / "metrics.json").write_text("{not json")
     assert list(eval_table.load_runs(tmp_path)) == ["q0a"]
+
+
+def test_brightness_is_shown_for_both_files_and_flagged_outside_the_ship_rule(tmp_path):
+    run = metrics("q1b")
+    run["viewer"]["desktop"]["brightness"], run["viewer"]["phone"]["brightness"] = 1.006, 1.21
+    write(tmp_path, run)
+    row = rows(eval_table.render(eval_table.load_runs(tmp_path)))[2]
+    assert "| x1.006 / x1.210 (!) |" in row                                          # the phone file is outside x0.95 to x1.05
+
+
+def test_the_fold_the_walking_grid_and_an_export_only_origin_get_their_own_table(tmp_path):
+    folded = metrics("q1b")
+    folded["exposureFold"] = {"folded": True, "settled": True, "steps": 2000, "views": 73, "brightnessBefore": 1.2, "brightnessAfter": 1.0}
+    failed = metrics("q1c")
+    failed["exposureFold"] = {"folded": False, "why": "not fitted: needs a GPU with gsplat"}
+    dense = metrics("q0a-dense")
+    dense["exportFrom"] = "q0a"
+    dense["denseOccupancy"] = {"used": "depth", "views": 52, "seconds": 41.5, "walk": {"cameras": 1.0, "standableM2": 61.2},
+                               "sparseWalk": {"cameras": 0.97, "standableM2": 48.0}}
+    rejected = metrics("q0a-dense2")
+    rejected["denseOccupancy"] = {"used": "sparse", "why": "it walks worse than the sparse grid"}
+    write(tmp_path, metrics("q0a", role="baseline"), folded, failed, dense, rejected)
+    out = eval_table.render(eval_table.load_runs(tmp_path))
+    table = {line.split(" | ")[0][2:]: line for line in rows(out.split("## Exposure fold, walking grid, origin")[1])[2:]}
+    assert set(table) == {"q1b", "q1c", "q0a-dense", "q0a-dense2"}                   # q0a has none of the three
+    assert "| its own training | x1.2 -> x1.0 on 73 views, 2000 steps after | – |" in table["q1b"]
+    assert "not folded: not fitted: needs a GPU with gsplat" in table["q1c"]
+    assert table["q0a-dense"].endswith("| q0a | – | from depth (52 views); depth 100% of capture positions walkable, 61.2 m2 to stand on, "
+                                       "sparse 97% of capture positions walkable, 48.0 m2 to stand on; 41.5 s |")
+    assert "sparse kept: it walks worse than the sparse grid |" in table["q0a-dense2"]
+    write(tmp_path / "plain", metrics("q0a"))
+    assert "Exposure fold" not in eval_table.render(eval_table.load_runs(tmp_path / "plain"))
+
+
+def test_the_walking_grid_reads_the_same_here_and_in_the_runs_summary():
+    from plypipe import evalrun
+    for d in ({"used": "depth", "views": 52, "seconds": 41.5, "walk": {"cameras": 1.0, "standableM2": 61.2}, "sparseWalk": {"cameras": None, "standableM2": 0.0}},
+              {"used": "sparse", "why": "failed: x"}, {"used": "sparse"}):
+        assert eval_table.dense_cell(d) == evalrun.dense_cell(d)

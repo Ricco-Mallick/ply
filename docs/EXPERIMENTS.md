@@ -381,3 +381,101 @@ $0.33), against the mean of `q0a` and `q0b`:
   one affine map of its input to 2e-7, where the default grid leaves a residual of 0.23. It can absorb a photo's
   exposure and white balance and nothing else, so the fold should return the model to the photos' colours with
   little left for the extra steps to repair.
+
+### Q1b on Dr Johnson: the one-cell grid trains well, and the fold and its steps still cost 0.3 dB (2026-11-12)
+
+One run (`q1b`: `--exposure-affine --exposure-fold 2000`, L40S, 11.4 minutes, $0.43), against the two baselines
+(`q0a`, `q0b`; mean, and twice the noise floor in brackets):
+
+| | every-8th cc-PSNR | block cc-PSNR | every-8th cc-LPIPS | viewer PSNR desktop | viewer brightness |
+|---|---:|---:|---:|---:|---:|
+| baselines | 29.25 (±0.04) | 27.58 (±0.10) | 0.2412 (±0.0008) | 29.38 (±0.02) | ×1.011 to ×1.016 |
+| q1b as it left training, before the fold | 29.29 | 27.73 | 0.2387 | – | – |
+| q1b shipped (folded, 2,000 steps after) | 29.13 | 27.28 | 0.2356 | 29.09 | ×1.007 |
+| q1 (the 16×16×8 grid), for comparison | 28.75 | 27.45 | 0.2427 | 28.47 | ×1.006 |
+
+- **The one-cell grid is not what costs.** Trained with it, the model scores as well as the baseline or better on
+  both hold-outs before the fold. The full grid of `q1` left its model 2.3 dB under there.
+- **The fold had almost nothing to do.** The fitted map is close to the identity (gains 0.99, 1.00, 0.99), the
+  model's brightness on the training views went from ×0.974 to ×1.006 of the photos, and the error on the fitted
+  pixels from 0.0194 to 0.0173. Dr Johnson's photos do not differ in exposure.
+- **The shipped model is 0.12 dB under on the every-8th views, 0.30 on the block and 0.28 in the viewer**, with
+  LPIPS 0.0056 better. Between the model before the fold and the shipped one, what happened is the fold and the
+  2,000 steps without an appearance model; this run cannot tell which of the two costs. A run with the fold and no
+  steps after it (`--exposure-affine --exposure-fold 0`) would.
+- **Under the rule set for this run (`STATUS.md`), more than 0.2 dB under on any score closes Q1.** The owner then
+  approved the diagnostic and the chapel run (below), which settle it.
+- The phone file's +0.5 dB against the baselines is the phone fine-tune, which became the default after `q0a` and
+  `q0b` ran: `q0a`'s own model exported again today scores 29.30 on the phone, `q1b` 29.31.
+- **Time:** the one-cell grid runs on the pure-torch `lib_bilagrid` at 2.9 times a plain step (464 s for 15,000
+  steps against 159 s; the fused 16×16×8 grid was 1.6). `evalrun.AFFINE_SLOWDOWN` holds it.
+
+### Q1b with the fold and no steps after it, on both scenes (2026-11-12)
+
+`--exposure-affine --exposure-fold 0` (`q1b-nosettle`): the same training, the fitted map folded into the splats,
+shipped as it is. Changes against each scene's two baselines (twice the noise floor in brackets). The hold-out scores
+are those of the model as it left training; the viewer scores the shipped, folded file against the held-out photos as
+they are, with no colour correction:
+
+| | every-Nth cc-PSNR | block cc-PSNR | every-Nth cc-LPIPS | viewer PSNR desktop | viewer SSIM desktop | viewer brightness |
+|---|---:|---:|---:|---:|---:|---:|
+| Dr Johnson (L40S, $0.40) | +0.09 (±0.04) | +0.16 (±0.10) | −0.0010 (±0.0008) | −0.11 (±0.02) | −0.000 | ×1.011 |
+| Chapel (L4, $0.92) | **+0.75** (±0.28) | **+1.30** (±1.09) | **−0.0102** (±0.0022) | **−1.42** (±0.74) | −0.008 | ×1.028 |
+
+- **The 2,000 steps after the fold were most of `q1b`'s cost on Dr Johnson:** without them the shipped file is 0.11 dB
+  under the baseline in the viewer instead of 0.28.
+- **On the chapel the model trained with an affine map per photo is clearly better** once each view's colours are
+  corrected: +0.75 dB and −0.010 LPIPS on the every-30th views, both well past the ship rule. The chapel's photos do
+  differ in exposure: the fitted gains are 0.96, 0.96 and 0.98, against 0.99 to 1.00 on Dr Johnson.
+- **But the file it ships is 1.42 dB under in the viewer**, with SSIM 0.008 lower. The baseline bakes each photo's
+  exposure into its colours, so its render of a held-out view matches that photo as it was shot; the affine model's
+  colours are the photos' average, and one fold cannot give each view back its own exposure. The viewer score is the
+  plan's ship rule, so **Q1 does not ship, and the twin keeps no appearance model.**
+- Whether a twin with one consistent exposure is better to look at than one that reproduces the camera's exposure
+  changes is not something these scores can say: they reward the second. That is a judgement for the owner (a side by
+  side look at both chapel twins: `chapel/eval/q1b-nosettle` and `chapel/eval/q0a-merged` on the Volume), and the
+  only way Q1 could still ship.
+
+### The walking grid from depth on two real twins (2026-11-12)
+
+`--dense-occupancy`, exported again from `q0a`'s trained model on each scene (`--export-from q0a`, L40S):
+
+| | views rendered | surface points | seconds | camera positions walkable, depth / sparse | floor to stand on, depth / sparse |
+|---|---:|---:|---:|---:|---:|
+| Dr Johnson | 46 | 349k (2 cm voxels) | 4.0 | 99.6% / 99.6% | 26.8 / 27.4 m² |
+| Chapel | 237 | 2.29M (4 cm voxels) | 24.7 | 100% / 100% | 17.4 / 28.1 m² |
+
+- The depth pass runs on a GPU in seconds, and the depth grid keeps every place the camera stood walkable on both.
+- It has less floor to stand on: 2% less on Dr Johnson and 38% less on the chapel. The rule (no less floor, no fewer
+  camera positions) kept the sparse grid both times, so neither twin changed.
+- **On the chapel the depth grid is the right one.** Side by side, the sparse grid's pew blocks are speckled with
+  walkable cells, gaps between the few SfM points on each pew, while the depth grid has every pew block solid and
+  the aisles clear. Its 38% less floor is the pews. The rule counts any floor as better, so it kept the grid a
+  walker can cross the pews on. Whether to change the rule (for example: camera positions as walkable, and no
+  walkable cell the depth saw blocked) is a decision for the owner; nothing ships until then.
+- Each export wrote `occupancy_depth.png` beside the sparse `occupancy.png` in `<scenario>/eval/q0a-dense/` on the
+  Volume. The two runs cost $0.30.
+
+### The merged walking grid, and on by default (2026-11-12)
+
+Looked at side by side, neither grid is right everywhere. On Dr Johnson the depth grid left a corridor's floor
+undecided that the sparse grid has, and looked through a gap in a wall the sparse points close, so free space ran
+out of the room. On the chapel it is the only one with the pews. So the depth grid now takes the sparse grid's floor
+where it decided nothing (unless a view saw something there or it lies within 10 cm of a cell it blocked: the inside
+of a wall), keeps the sparse grid's blocked cells, and is used unless fewer capture positions are walkable on it.
+Exported again from `q0a` (`q0a-merged`, $0.30 for both):
+
+| | used | camera positions walkable | floor to stand on, merged / sparse | sparse cells taken, floor / blocked | seconds |
+|---|---|---:|---:|---:|---:|
+| Dr Johnson (L4) | depth | 99.6% | 26.8 / 27.4 m² | 1,285 / 1,104 | 3.7 |
+| Chapel (L40S) | depth | 100% | 16.4 / 28.1 m² | 77 / 4,351 | 21.5 |
+
+- Dr Johnson's merged grid has the corridor back and the wall closed: it is the sparse grid's shape with thicker
+  walls where the depth saw them. The chapel's has the pews solid and the aisles and side walkways clear.
+- **Walk on `chapel-high-2` with the merged grid swapped in** (dev build, the engine's own frame step): 16 headings
+  held into walls at 9.7 m/s for 5 s each never put the walker more than 1 cm inside its radius; routes from the
+  spawn point to 20 places along the aisles were all found and Walk followed every one to its end without
+  stopping. 16 of them pass within 1.3 cm of the walker's radius somewhere, in aisles the pews leave narrow at 5 cm
+  cells; on the published sparse grid the same check finds roomier routes because they cross the pews.
+- **On by default** (`--no-dense-occupancy` turns it off): it adds 4 to 25 s to an export on a GPU. The live worker
+  runs it from its next deploy; published twins keep their grids until they are exported again.

@@ -44,8 +44,9 @@ def test_each_variant_changes_one_thing_against_the_baseline():
     assert evalrun.VARIANTS["q1"]["args"][-3:] == ["--bilateral-grid", "--exposure-fold", "2000"]
     assert diff("q1b") == {"exposure_affine": True, "exposure_fold": 2000}     # q1 with the grid cut to what the fold undoes exactly
     assert evalrun.VARIANTS["q1b"]["args"][-3:] == ["--exposure-affine", "--exposure-fold", "2000"]
-    # the one-cell grid is budgeted like the full one until a run times it, so q1b fits the same function timeout as q1
-    assert evalrun.estimate(evalrun.VARIANTS["q1b"]["args"], "L40S") == evalrun.estimate(evalrun.VARIANTS["q1"]["args"], "L40S")
+    # the one-cell grid runs in pure torch, measured at x2.9 a plain step on q1b's first run: the longest table variant
+    q1b, q1 = evalrun.estimate(evalrun.VARIANTS["q1b"]["args"], "L40S"), evalrun.estimate(evalrun.VARIANTS["q1"]["args"], "L40S")
+    assert (q1b["gridSlowdown"], q1["gridSlowdown"], q1b["totalMin"], q1b["timeoutMin"]) == (2.9, 1.5, 31, 47)
 
 
 def test_resolve_names_and_the_args_escape_hatch():
@@ -89,7 +90,7 @@ def test_the_small_scenario_has_its_own_saved_solve_container_and_estimate():
     job = evalrun.make_job("drjohnson", "", "q5b", gpus=("L4", "L40S"))
     assert job["src"] == "drjohnson/prep" and (job["cpu"], job["memoryGib"], job["needsIndex"]) == (4, 16, False)
     # every export trains the phone file on for 3k steps, so every estimate counts them; --lite-finetune 0 is the run without
-    assert job["args"] == evalrun.SMALL + ["--opacity-reg", "0.002"] and job["ceilingMin"] == 29   # the function's timeout is q1's
+    assert job["args"] == evalrun.SMALL + ["--opacity-reg", "0.002"] and job["ceilingMin"] == 44   # the function's timeout is q1b's
     l4, l40s = job["estimates"]["L4"], job["estimates"]["L40S"]
     assert (l4["fineTuneSteps"], l4["trainMin"], l4["totalMin"], l4["timeoutMin"]) == (3000, 9, 13, 20)
     assert (l40s["trainMin"], l40s["totalMin"], l40s["timeoutMin"]) == (5, 9, 14)
@@ -138,7 +139,7 @@ def test_q1_counts_the_grids_slower_steps_the_fold_and_the_steps_after_it():
     job = evalrun.make_job("drjohnson", "", "q1", gpus=("L4", "L40S"))
     l4, l40s = job["estimates"]["L4"], job["estimates"]["L40S"]
     assert (l4["trainMin"], l4["overheadMin"], l4["totalMin"], l4["timeoutMin"], l4["usd"]) == (13, 6, 19, 29, 0.35)
-    assert (l40s["trainMin"], l40s["totalMin"], l40s["timeoutMin"], l40s["usd"]) == (7, 13, 20, 0.49) and job["ceilingMin"] == 29
+    assert (l40s["trainMin"], l40s["totalMin"], l40s["timeoutMin"], l40s["usd"]) == (7, 13, 20, 0.49) and job["ceilingMin"] == 44
     text = evalrun.describe(job)
     assert "15000 steps at x1.5 for the bilateral grid (an estimate) + 2000 after the exposure fold + 3000 for the phone file" in text
     assert "6 min restore/export/scoring and the fold" in text and "--bilateral-grid --exposure-fold 2000" in text
@@ -150,9 +151,9 @@ def test_q1_counts_the_grids_slower_steps_the_fold_and_the_steps_after_it():
 
 
 def test_the_function_timeout_follows_the_slowest_allowed_gpu():
-    assert evalrun.default_ceiling_min(("L40S",)) == 32 and evalrun.default_ceiling_min(("L40S", "L4")) == 51     # q1 is the longest variant
+    assert evalrun.default_ceiling_min(("L40S",)) == 47 and evalrun.default_ceiling_min(("L40S", "L4")) == 81     # q1b is the longest variant
     job = evalrun.make_job("chapel", "/chapel/high/job/", "q0a")
-    assert job["src"] == "chapel/high/job" and job["ceilingMin"] == 32 and set(job["estimates"]) == {"L40S"}
+    assert job["src"] == "chapel/high/job" and job["ceilingMin"] == 47 and set(job["estimates"]) == {"L40S"}
     assert job["estimates"]["L40S"]["timeoutMin"] == 21                              # its own stop-loss is what it was
     with pytest.raises(ValueError, match="PLY_EVAL_TIMEOUT_MIN"):
         evalrun.make_job("chapel", "chapel/high/job", "q0a", gpus=("L40S", "L4"), ceiling_min=20)
@@ -326,6 +327,75 @@ def test_a_relaunch_layers_the_saved_variant_over_the_restore_but_not_snapshots(
     assert evalrun.stages_to_run(job) == ["export"]
 
 
+# ------------------------------------------------------------------ export only (--export-from)
+
+def test_an_export_only_run_takes_a_table_variants_model_and_export_options_only():
+    job = evalrun.make_job("drjohnson", "", "q0a-dense", "--dense-occupancy", gpus=("L4", "L40S"), export_from="q0a")
+    assert job["exportFrom"] == "q0a" and job["trainArgs"] == evalrun.variant_args("q0a", "drjohnson")
+    assert job["args"] == evalrun.variant_args("q0a", "drjohnson") + ["--dense-occupancy"] and job["argsSource"] == "--export-from q0a"
+    l40s = job["estimates"]["L40S"]
+    # no training steps: the phone file's 3k at Dr Johnson's 13.8 ms (1 min) and the 4 min overhead
+    assert (l40s["steps"], l40s["exportOnly"], l40s["trainMin"], l40s["overheadMin"], l40s["timeoutMin"]) == (0, True, 1, 4, 8)
+    assert "gridSlowdown" not in evalrun.make_job("drjohnson", "", "q1-again", export_from="q1")["estimates"]["L40S"]   # q1's grid trained already
+    with pytest.raises(ValueError, match="not a table variant"):
+        evalrun.make_job("drjohnson", "", "x-dense", export_from="q0a-30k-b")
+    for name in ("q0a", "q5a", "Bad Name"):                                          # its folder must not be one a training run owns
+        with pytest.raises(ValueError, match="new variant name"):
+            evalrun.make_job("drjohnson", "", name, export_from="q0a")
+    for extra in ("--iterations 30000", "--dense-occupancy --opacity-reg 0.005", "--exposure-fold=2000"):
+        with pytest.raises(ValueError, match="would not reach the model"):
+            evalrun.make_job("drjohnson", "", "q0a-x", extra, export_from="q0a")
+    tuned = evalrun.make_job("drjohnson", "", "q0a-x", "--min-opacity=0.02 --lite-max 300000", export_from="q0a")
+    assert tuned["args"][-3:] == ["--min-opacity=0.02", "--lite-max", "300000"]
+
+
+def test_export_only_options_are_read_by_the_export_and_not_by_training():
+    root = Path(evalrun.__file__).resolve().parent
+    export, train = (root / "stages" / "export.py").read_text(), (root / "stages" / "train.py").read_text()
+    dests = {s: a.dest for a in cli.build_parser()._subparsers._group_actions[0].choices["run"]._actions for s in a.option_strings}
+    for flag in evalrun.EXPORT_ONLY_OPTIONS:
+        dest = dests[flag]
+        assert f'opt("{dest}"' in export and f'opt("{dest}"' not in train, flag
+
+
+def test_an_export_only_run_checks_the_model_it_takes_and_takes_nothing_its_export_made(tmp_path):
+    origin = tmp_path / "eval" / "q0a"
+    args = evalrun.variant_args("q0a", "drjohnson")
+    for rel, data in ((".done/train.json", "{}"), (".done/export.json", "{}"), ("scene.ply", "ply"), ("scene.spz", "x"), ("scene_lite.spz", "x"),
+                      ("eval/per_view.json", "{}"), ("eval/trained/stats.json", "{}"), ("eval/lite/stats.json", "{}"), ("eval/x.json.part", "x"),
+                      ("occupancy.json", '{"from": "depth"}'), ("topview.webp", "w"), ("scene.json", '{"splat": {}}'),
+                      ("metrics.json", json.dumps({"schema": evalrun.SCHEMA, "args": args})),
+                      ("report.json", json.dumps({"train": {"eval": {"psnr": 29.2}}, "export": {"x": 1}, "quality": {"ok": True}}))):
+        (origin / rel).parent.mkdir(parents=True, exist_ok=True)
+        (origin / rel).write_text(data)
+    assert evalrun.check_training(origin, args) == []
+    assert any("other arguments" in p for p in evalrun.check_training(origin, args + ["--pose-opt"]))
+    job = tmp_path / "job"
+    job.mkdir()
+    (job / "report.json").write_text('{"frames": {"kept": 3}}')
+    (job / "occupancy.json").write_text('{"from": "sparse"}')
+    assert evalrun.take_training(origin, job) == 4
+    assert files_under(job) == {"report.json", "occupancy.json", "scene.ply", ".done/train.json", "eval/per_view.json", "eval/trained/stats.json"}
+    assert json.loads((job / "report.json").read_text()) == {"frames": {"kept": 3}, "train": {"eval": {"psnr": 29.2}}}
+    assert json.loads((job / "occupancy.json").read_text()) == {"from": "sparse"}       # the solve's grid, not the one origin's export wrote
+    assert evalrun.stages_to_run(job) == ["export"]
+    (origin / "scene.ply").unlink()
+    (origin / "metrics.json").unlink()
+    (origin / "report.json").write_text('{"export": {}}')
+    assert evalrun.check_training(origin, args) == ["scene.ply", "report.json with a train section", "metrics.json (which arguments trained the model)"]
+    assert evalrun.check_training(tmp_path / "eval" / "missing", args)[:2] == ["scene.ply", ".done/train.json"]
+
+
+def test_the_plan_of_an_export_only_run_shows_one_export_and_no_training(capsys):
+    assert evalrun.main(["plan", "--variant", "q0a-dense", "--export-from", "q0a", "--args=--dense-occupancy", "--scenario", "drjohnson"]) == 0
+    text = capsys.readouterr().out
+    for needle in ("--export-from q0a, export only, of the model q0a trained, with --dense-occupancy", "no training (the model q0a trained) + 3000 for the phone file",
+                   "/vol/drjohnson/eval/q0a/ must hold a finished training", "--only export"):
+        assert needle in text, needle
+    assert "--only train" not in text
+    assert evalrun.main(["plan", "--variant", "q0a", "--export-from", "q0a", "--scenario", "drjohnson"]) == 2
+
+
 def test_save_skips_the_shared_inputs_and_bulk_and_writes_markers_last(tmp_path, monkeypatch):
     job = saved_job(tmp_path / "job")
     (job / "metrics.json").write_text("{}")
@@ -419,6 +489,17 @@ def test_metrics_carry_the_exposure_folds_fit_and_the_summary_shows_it_with_the_
     assert "no steps after it (the 2000 steps after the fold failed: CUDA out of memory)" in evalrun.summary(m)
     assert not evalrun.savable(Path("train/settle/ckpts/ckpt_1999_rank0.pt")) and not evalrun.savable(Path("train/folded.ply"))
     assert evalrun.savable(Path("eval/trained/val_stats.json"))                    # the scores of the model before the fold are kept
+
+
+def test_metrics_carry_the_walking_grid_from_depth_and_the_summary_names_the_grid_used():
+    report = finished_report()
+    report["export"]["denseOccupancy"] = {"used": "depth", "views": 52, "seconds": 41.5, "walk": {"cameras": 1.0, "standableM2": 61.2},
+                                          "sparseWalk": {"cameras": 0.97, "standableM2": 48.0}}
+    gpu = {"name": "NVIDIA L40S", "priced": "L40S"}
+    m = evalrun.assemble(job_for(), report, gpu=gpu, seconds={}, sizes={}, invocation={"costUsd": 0.1, "wallSeconds": 60})
+    assert m["denseOccupancy"]["used"] == "depth" and "walking grid: from depth (52 views); depth 100%" in evalrun.summary(m)
+    plain = evalrun.assemble(job_for(), finished_report(), gpu=gpu, seconds={}, sizes={}, invocation={"costUsd": 0.1, "wallSeconds": 60})
+    assert "denseOccupancy" not in plain and "walking grid" not in evalrun.summary(plain)
 
 
 def test_a_stopped_run_still_gets_metrics_that_say_what_is_missing():

@@ -156,6 +156,34 @@ def test_a_hole_is_not_filled_over_a_cell_that_was_seen_blocked():
     assert (grid[2:4, 2:4] == FREE).all() and (grid[5:7, 5:7] == UNKNOWN).all()
 
 
+def test_the_sparse_grid_fills_only_what_the_depth_left_undecided_and_keeps_its_walls(rooms):
+    """Each grid where it has evidence: the depth's obstacles stay (the chapel's pews), the sparse grid's walls stay
+    (a gap the depth looked through), and floor the depth did not decide on comes from the sparse grid unless a view
+    saw something there. A sparse grid that calls the whole footprint free, partition and all (it has no point on
+    it), changes nothing outside the rooms and does not open the partition."""
+    centers, scans, grid, meta, votes = rooms
+    sx = LO[0] + (np.arange(SHAPE[1] // 2) + 0.5) * 0.1
+    sz = LO[1] + (np.arange(SHAPE[0] // 2) + 0.5) * 0.1
+    sparse = np.full((SHAPE[0] // 2, SHAPE[1] // 2), UNKNOWN, np.uint8)        # 10 cm cells over the same area
+    sparse[np.ix_((sz > 0) & (sz < NAV_ROOMS[1]), (sx > 0) & (sx < NAV_ROOMS[0]))] = FREE
+    inside = (slice(28, 30), slice(36, 38))                                     # a post in the second room
+    sparse[inside] = BLOCKED
+    merged, mmeta = occupancy.grid_from_depth(iter(scans), centers, LO, SHAPE, max_rays=RAYS, sparse=sparse)
+    fine = cv2.resize(sparse, (SHAPE[1], SHAPE[0]), interpolation=cv2.INTER_NEAREST)
+    walked, _ = occupancy.walked_corridor(centers, LO, CELL, SHAPE, 0.2)
+    assert (merged[(grid == BLOCKED)] == BLOCKED).all() and standable_in_partition(merged, mmeta) == 0
+    kept = (fine == BLOCKED) & ~walked                                          # the walk wins where it crosses the post
+    assert kept.sum() >= 1 and (merged[kept] == BLOCKED).all() and mmeta["depth"]["sparseBlocked"] > 0
+    took = (grid == UNKNOWN) & (votes["blocked"] == 0) & (merged == FREE)
+    assert mmeta["depth"]["sparseFree"] > 0 and took.sum() > 0
+    assert (merged[(grid == UNKNOWN) & (votes["blocked"] > 0) & ~walked] != FREE).all()  # a view saw something there
+    footprint = ((ZS > -0.1) & (ZS < NAV_ROOMS[1] + 0.1))[:, None] & ((XS > -0.1) & (XS < NAV_ROOMS[0] + 0.1))[None, :]
+    assert np.array_equal(merged[~footprint], grid[~footprint])                 # a sparse cell beyond the rooms changes nothing
+    assert mmeta["source"] == "depth" and set(meta) <= set(mmeta)
+    plain, _ = occupancy.grid_from_depth(iter(scans), centers, LO, SHAPE, max_rays=RAYS)
+    assert np.array_equal(plain, grid)                                          # without a sparse grid, as before
+
+
 # ------------------------------------------------------------------ export's step, around a stand-in for the GPU
 
 RENDERED = {}
@@ -198,14 +226,35 @@ def test_export_swaps_in_the_grid_from_depth_when_it_walks_at_least_as_well(tmp_
     assert meta["depth"]["pixels"]["kept"] > 0.7 * meta["depth"]["pixels"]["usable"]
 
 
-def test_export_keeps_the_sparse_grid_when_the_grid_from_depth_walks_worse(tmp_path, monkeypatch):
-    """A floor with a point in every cell: the sparse grid has all of it, the depth grid only what three views saw."""
+def test_export_takes_the_sparse_floor_the_depth_did_not_decide_on(tmp_path, monkeypatch):
+    """A floor with a point in every cell: the sparse grid has all of it, the depth only what three views saw. The
+    grid written has the depth's partition and the sparse grid's floor."""
     ctx = job(tmp_path, floor_points=5000)
-    before = (tmp_path / "occupancy.png").read_bytes()
+    sparse = json.loads((tmp_path / "occupancy.json").read_text())
     monkeypatch.setattr(dense, "render_views", ray_cast)
     rep = export._dense_occupancy(ctx, tmp_path / "scene_clean.ply", 30, True)
     meta = json.loads((tmp_path / "occupancy.json").read_text())
-    assert rep["used"] == "sparse" and "walks worse" in rep["why"] and rep["walk"]["standableM2"] < rep["sparseWalk"]["standableM2"]
+    grid = cv2.imread(str(tmp_path / "occupancy.png"), cv2.IMREAD_GRAYSCALE)
+    assert rep["used"] == "depth" and meta["source"] == "depth" and meta["depth"]["sparseFree"] > 0
+    assert rep["walk"]["cameras"] == rep["sparseWalk"]["cameras"] == 1.0 and standable_in_partition(grid, meta) == 0
+    assert rep["walk"]["standableM2"] > 0.95 * sparse["walk"]["standableM2"]    # without the sparse floor it stood less (the test before)
+    assert not (tmp_path / "occupancy_depth.png").exists()
+
+
+def test_export_keeps_the_sparse_grid_when_fewer_capture_positions_are_walkable(tmp_path, monkeypatch):
+    ctx = job(tmp_path, floor_points=5000)
+    before = (tmp_path / "occupancy.png").read_bytes()
+    monkeypatch.setattr(dense, "render_views", ray_cast)
+    real = walkcheck.check
+
+    def strict(grid, meta, spawn, cams=None, places=None):                      # as if a capture position were cut off
+        out = real(grid, meta, spawn, cams, places)
+        return {**out, "cameras": out["cameras"] - 0.01} if meta.get("source") == "depth" else out
+
+    monkeypatch.setattr(occupancy.walkcheck, "check", strict)
+    rep = export._dense_occupancy(ctx, tmp_path / "scene_clean.ply", 30, True)
+    meta = json.loads((tmp_path / "occupancy.json").read_text())
+    assert rep["used"] == "sparse" and rep["why"].startswith("fewer capture positions are walkable on it")
     assert (tmp_path / "occupancy.png").read_bytes() == before and meta["source"] == "sparse" and meta["cellSize"] == 0.1
     assert meta["depth"]["rejected"] == rep["why"] and meta["depth"]["walk"] == rep["walk"]
     lost = cv2.imread(str(tmp_path / "occupancy_depth.png"), cv2.IMREAD_GRAYSCALE)   # kept beside it, to look at
@@ -228,10 +277,11 @@ def test_a_failing_dense_pass_does_not_fail_the_export(tmp_path, monkeypatch):
     assert [e["event"] for e in logged if "CUDA out of memory" in e["msg"]] == ["warn"]
 
 
-def test_the_grid_from_depth_is_off_unless_asked_for():
+def test_the_grid_from_depth_is_on_unless_turned_off():
     from plypipe import cli
     run = ["run", "walk.mp4", "--out", "o"]
-    assert cli.build_parser().parse_args(run).dense_occupancy is False
+    assert cli.build_parser().parse_args(run).dense_occupancy is True
+    assert cli.build_parser().parse_args([*run, "--no-dense-occupancy"]).dense_occupancy is False
     assert cli.build_parser().parse_args([*run, "--dense-occupancy"]).dense_occupancy is True
 
 
