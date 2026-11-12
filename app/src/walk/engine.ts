@@ -1,9 +1,12 @@
 // Copyright (c) 2026 Ricco Marcelino. All rights reserved. Proprietary and confidential — see LICENSE.
 /* Walkthrough engine: three.js + Spark splat renderer, a walk/fly controller with WASD, mouse look, touch joystick,
-   and collision against the pipeline's occupancy grid. The React HUD reads `state` and calls the methods. */
+   and collision through a Collider (collider.ts: the pipeline's occupancy grid today). The React HUD reads `state`
+   and calls the methods. */
 import * as THREE from 'three';
 import { SparkRenderer, SplatMesh } from '@sparkjsdev/spark';
 import { OccupancyGrid, type SceneManifest } from './scene';
+import { GridCollider, type Collider, type Point } from './collider';
+import { RADIUS, REACH, SPEED, WHEEL, WHEEL_MIN, WHEEL_WALK, ease, pace, recover, walkFrame, type Walker } from './walker';
 import { glassFrame, setGlassSource } from '../shared/glass';
 import { PROFILES, deviceProfile, loadMode, saveLearned, saveMode, type PerfProfile, type QualityMode } from './perf';
 
@@ -12,13 +15,16 @@ export type Mode = 'walk' | 'fly';
 export interface PerfStats { fps: number; ms: number; worstMs: number; splats: number; dpr: number; }
 export interface EngineState { progress: number; loaded: boolean; error: string | null; mode: Mode; locked: boolean; moved: boolean; pos: THREE.Vector3; yaw: number; speed: number; }
 
-const RADIUS = .22, WALK = 1.4, RUN = 2.6, FLY = 2.2;
 const RM = matchMedia('(prefers-reduced-motion: reduce)').matches;
 const FW = new THREE.Vector3(), RT = new THREE.Vector3();
 
 export class WalkEngine {
   renderer: THREE.WebGLRenderer; scene = new THREE.Scene(); camera: THREE.PerspectiveCamera; spark: SparkRenderer; splat: SplatMesh | null = null;
   grid: OccupancyGrid | null = null; floorY = 0; eye = 1.55;
+  /** Every question about walls goes through this; `grid` is kept for the map, the tours and the routes. */
+  collider: Collider | null = null;
+  /** Where the twin opened: a walker with no place near it goes back here. */
+  spawn: Point = { x: 0, z: 0 }; private body: Walker = { x: 0, z: 0, vx: 0, vz: 0 };
   state: EngineState = { progress: 0, loaded: false, error: null, mode: 'fly', locked: false, moved: false, pos: new THREE.Vector3(), yaw: 0, speed: 1 };
   pitch = 0; vel = new THREE.Vector3(); keys = new Set<string>(); joy = { x: 0, y: 0 }; bob = 0; flyUp = 0;
   listeners = new Set<() => void>(); raf = 0; last = performance.now(); drag: { x: number; y: number; id: number } | null = null;
@@ -95,9 +101,12 @@ export class WalkEngine {
     this.scene.add(this.splat);
     try { await this.splat.initialized; this.state.loaded = true; this.state.progress = 1; } catch (e) { console.error('[ply] splat failed to load', url, e); this.state.error = (e as Error)?.message || String(e) || 'The scene failed to load'; this.emit(); return; }
     if (!this.grid || m.floorY === undefined) this.deriveFromSplat(m);
+    this.collider = this.grid && new GridCollider(this.grid);
     // no start in the manifest: begin in the middle of the walkable floor
-    if (!m.start && this.grid) this.openSpawn();
-    if (this.grid && !this.grid.clear(this.state.pos.x, this.state.pos.z, RADIUS)) this.unstick();
+    if (!m.start && this.collider) this.openSpawn();
+    // a start inside a wall moves to the nearest place the walker fits, when one is near
+    const at = this.state.pos, q = this.collider?.nearestFree(at.x, at.z, RADIUS, REACH); if (q) { at.x = q.x; at.z = q.z; }
+    this.spawn = { x: at.x, z: at.z };
     this.emit();
   }
 
@@ -114,33 +123,23 @@ export class WalkEngine {
   }
   /** Spawn where the floor is most open (largest distance to any obstacle), facing the longest clear sightline. */
   openSpawn() {
-    const g = this.grid!, { width: w, height: h, cell, origin } = g.meta, d = new Float32Array(w * h);
-    // two-pass chamfer distance transform over the blocked cells
-    for (let i = 0; i < w * h; i++) d[i] = g.data[i] ? 0 : 1e6;
-    const pass = (y0: number, y1: number, dy: number, x0: number, x1: number, dx: number) => {
-      for (let y = y0; y !== y1; y += dy) for (let x = x0; x !== x1; x += dx) {
-        const i = y * w + x; if (!d[i]) continue;
-        const nb = [[-dx, 0, 1], [0, -dy, 1], [-dx, -dy, 1.414], [dx, -dy, 1.414]];
-        for (const [ox, oy, c] of nb) { const X = x + ox, Y = y + oy; if (X >= 0 && Y >= 0 && X < w && Y < h) d[i] = Math.min(d[i], d[Y * w + X] + c); }
-      }
-    };
-    pass(0, h, 1, 0, w, 1); pass(h - 1, -1, -1, w - 1, -1, -1);
-    let best = -1, bi = 0; for (let i = 0; i < w * h; i++) if (d[i] < 1e6 && d[i] > best) { best = d[i]; bi = i; }
-    const x = origin[0] + (bi % w + .5) * cell, z = origin[1] + (Math.floor(bi / w) + .5) * cell;
+    const c = this.collider!, o = c.openSpot(); if (!o) return;
     let yaw = 0, far = 0;
-    for (let k = 0; k < 24; k++) { const a = k / 24 * Math.PI * 2, sx = -Math.sin(a), sz = -Math.cos(a); let r = 0; while (r < 30 && !g.blocked(x + sx * r, z + sz * r)) r += cell; if (r > far) { far = r; yaw = a; } }
-    this.state.pos.x = x; this.state.pos.z = z; this.state.yaw = yaw;
+    // a sightline 10 cm wide, its samples touching, so no wall is thin enough to pass between two of them
+    for (let k = 0; k < 24; k++) { const a = k / 24 * Math.PI * 2, sx = -Math.sin(a), sz = -Math.cos(a); let r = 0; while (r < 30 && c.free(o.x + sx * r, o.z + sz * r, .05)) r += .1; if (r > far) { far = r; yaw = a; } }
+    this.state.pos.x = o.x; this.state.pos.z = o.z; this.state.yaw = yaw;
   }
   setMode(mode: Mode) {
-    this.state.mode = mode;
-    if (mode === 'walk') { this.state.pos.y = this.floorY; if (this.grid && !this.grid.clear(this.state.pos.x, this.state.pos.z, RADIUS)) this.unstick(); }
-    else this.state.pos.y = this.floorY + Math.max(0, this.camera.position.y - this.floorY - this.eye);
+    const s = this.state; s.mode = mode;
+    if (mode === 'walk') { s.pos.y = this.floorY; s.speed = Math.min(s.speed, WHEEL_WALK); this.unstick(); }
+    else s.pos.y = this.floorY + Math.max(0, this.camera.position.y - this.floorY - this.eye);
     this.emit();
   }
-  /** Nearest free cell, if a mode switch or a bad start put us inside a wall. */
+  /** If a mode switch or a jump put the walker inside a wall: to the nearest place it fits, or back to the spawn
+      point when there is none near. */
   unstick() {
-    const g = this.grid!, p = this.state.pos;
-    for (let r = .1; r < 6; r += .1) for (let k = 0; k < 16; k++) { const a = k * Math.PI / 8, x = p.x + Math.cos(a) * r, z = p.z + Math.sin(a) * r; if (g.clear(x, z, RADIUS)) { p.x = x; p.z = z; return; } }
+    const c = this.collider, p = this.state.pos; if (!c || c.free(p.x, p.z, RADIUS)) return;
+    const q = recover(c, p.x, p.z, this.spawn); if (q) { p.x = q.x; p.z = q.z; }
   }
   lock() { if (matchMedia('(pointer: fine)').matches) this.canvas.requestPointerLock?.(); }
 
@@ -160,7 +159,7 @@ export class WalkEngine {
     this.canvas.addEventListener('pointermove', e => { if (!this.drag || e.pointerId !== this.drag.id) return; this.look(e.clientX - this.drag.x, e.clientY - this.drag.y, e.pointerType === 'touch' ? .005 : .004); this.drag.x = e.clientX; this.drag.y = e.clientY; });
     const end = (e: PointerEvent) => { if (this.drag && e.pointerId === this.drag.id) this.drag = null; };
     this.canvas.addEventListener('pointerup', end); this.canvas.addEventListener('pointercancel', end);
-    this.canvas.addEventListener('wheel', e => { e.preventDefault(); this.state.speed = Math.min(4, Math.max(.25, this.state.speed * (e.deltaY < 0 ? 1.12 : 1 / 1.12))); this.emit(); }, { passive: false });
+    this.canvas.addEventListener('wheel', e => { e.preventDefault(); const s = this.state; s.speed = Math.min(s.mode === 'walk' ? WHEEL_WALK : WHEEL, Math.max(WHEEL_MIN, s.speed * (e.deltaY < 0 ? 1.12 : 1 / 1.12))); this.emit(); }, { passive: false });
     addEventListener('resize', () => { this.renderer.setSize(innerWidth, innerHeight, false); this.camera.aspect = innerWidth / innerHeight; this.camera.updateProjectionMatrix(); });
   }
   look(dx: number, dy: number, s: number) { this.state.yaw -= dx * s; this.pitch = Math.max(-1.45, Math.min(1.45, this.pitch - dy * s)); this.touched(); }
@@ -172,21 +171,21 @@ export class WalkEngine {
     const r = (k.has('KeyD') || k.has('ArrowRight') ? 1 : 0) - (k.has('KeyA') || k.has('ArrowLeft') ? 1 : 0) + this.joy.x;
     const run = k.has('ShiftLeft') || k.has('ShiftRight');
     const up = s.mode === 'fly' ? (k.has('Space') || k.has('KeyE') ? 1 : 0) - (k.has('KeyC') || k.has('KeyQ') ? 1 : 0) : 0;
-    const base = (s.mode === 'walk' ? (run ? RUN : WALK) : FLY * (run ? 2.2 : 1)) * s.speed;
+    const base = pace(s.mode === 'walk', run, s.speed);
     // move relative to where we look (fly follows pitch; walk stays on the floor)
     const fw = FW.set(-Math.sin(s.yaw), 0, -Math.cos(s.yaw)), rt = RT.set(Math.cos(s.yaw), 0, -Math.sin(s.yaw));
     if (s.mode === 'fly') fw.set(-Math.sin(s.yaw) * Math.cos(this.pitch), Math.sin(this.pitch), -Math.cos(s.yaw) * Math.cos(this.pitch));
     const want = fw.multiplyScalar(f).add(rt.multiplyScalar(r)); if (want.lengthSq() > 1) want.normalize(); want.multiplyScalar(base); want.y += up * base;
     if (f || r || up) this.touched();
-    const a = 1 - Math.exp(-dt * (want.lengthSq() > 0 ? 10 : 7)); this.vel.lerp(want, a);
-    const p = s.pos, dx = this.vel.x * dt, dz = this.vel.z * dt;
-    if (s.mode === 'walk' && this.grid) { // axis-separated so we slide along walls
-      if (this.grid.clear(p.x + dx, p.z, RADIUS)) p.x += dx; else this.vel.x = 0;
-      if (this.grid.clear(p.x, p.z + dz, RADIUS)) p.z += dz; else this.vel.z = 0;
-    } else { p.x += dx; p.z += dz; }
+    const p = s.pos, c = s.mode === 'walk' ? this.collider : null;
+    if (c) {
+      const b = this.body; b.x = p.x; b.z = p.z; b.vx = this.vel.x; b.vz = this.vel.z;
+      walkFrame(c, b, want.x, want.z, dt, this.spawn); p.x = b.x; p.z = b.z; this.vel.set(b.vx, 0, b.vz);
+    } else { this.vel.lerp(want, ease(dt, want.lengthSq() > 0)); p.x += this.vel.x * dt; p.z += this.vel.z * dt; }
     if (s.mode === 'fly') p.y += this.vel.y * dt; else p.y = this.floorY;
-    const spd = Math.hypot(this.vel.x, this.vel.z); this.bob += spd * dt * 6.5;
-    const bobY = s.mode === 'walk' && !RM ? Math.sin(this.bob) * .018 * Math.min(1, spd / WALK) : 0;
+    // one bob every metre and a half: the cadence the walk had at its old 1.4 m/s
+    const spd = Math.hypot(this.vel.x, this.vel.z); this.bob += spd * dt * 4.1;
+    const bobY = s.mode === 'walk' && !RM ? Math.sin(this.bob) * .018 * Math.min(1, spd / SPEED) : 0;
     this.camera.position.set(p.x, (s.mode === 'walk' ? this.floorY + this.eye : p.y + this.eye) + bobY, p.z);
     this.camera.rotation.set(this.pitch, s.yaw, 0);
   }
