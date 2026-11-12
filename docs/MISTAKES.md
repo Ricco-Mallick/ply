@@ -28,6 +28,18 @@ Read the checklist before any paid GPU run. Add an entry when something costs cr
 
 ## Log
 
+### 2026-11-12: the live worker asked for an L4 only, and a queued call sat through a redeploy (28 minutes, ~$0.13)
+
+The checklist has said "GPU fallback" since 2026-11-04, and `ply_eval.py` has one; the deployed worker did not. The
+first job after the redeploy waited 17 minutes with no container and nothing in the log (`work` backlog 1, no
+runners): Modal had no L4. The worker was deployed again with an L4-then-L40S list, and the call that was already
+queued still did not start for 11 minutes, while a fresh function got an L40S within a minute. A call started by
+hand (`scripts/spawn_worker.py`) ran at once. The old call then ran in the same container after the job, found the
+queue empty and idled its three minutes on an L40S.
+**Rule:** the worker falls back to an L40S (`PLY_MODAL_GPU`, default `L4,L40S`). After a deploy, read the `work`
+function's backlog; if a call was queued before the deploy, start a new one. Why the old call did not move was not
+established.
+
 ### 2026-11-11: four launches at once, again ($0, about two minutes)
 
 The entry below already says to start parallel runs a few seconds apart. The first wave on the small scenario was

@@ -1,6 +1,6 @@
 # Status
 
-Updated 2026-11-11 (night). What is deployed, what is running and what is next. Update this file at the end of every
+Updated 2026-11-12 (morning). What is deployed, what is running and what is next. Update this file at the end of every
 session, so the next one starts here and not from an exported transcript.
 
 ## Deployed
@@ -9,7 +9,7 @@ session, so the next one starts here and not from an exported transcript.
 |---|---|---|
 | Site (https://ricco.codes/ply/) | `main` at `0597c98` (PR #23), 2026-11-11 | every twin opens in Free and the minimap shows the twin's top view. The deploy succeeded and the pages answer; not looked at in a browser since |
 | API (`ply-api`, Cloudflare) | `35c9c1d`, 2026-11-05 | read from `GET /` |
-| GPU worker (Modal app `ply`, riccomarcelino) | not redeployed since before PR #21 | the mapper choice, one-commit evidence upload, job limits, top view and the export filter fix reach jobs only after a redeploy |
+| GPU worker (Modal app `ply`, riccomarcelino) | v18, `4a45de8`, 2026-11-12 (`main` at `3ae4be7` plus the GPU fallback) | an L4, or an L40S when Modal has no L4 free. Smoke test passed after the deploy (job `5265343b…`, on an L40S): every stage, the gate, the top view and the new export rule ran on a real job |
 | Twins on Hugging Face (`ply-data`) | `4c46886`, 2026-11-11 | 13 twins have `topview.webp` and a `topview` block in `scene.json`; `4c09354` is the commit before. `chapel-high-2` has the rebuilt walking grid (`4c09354`; `e063f08` before it) |
 | CUDA wheels | `wheels/cp312-cu128-sm89` at `e063f08` | L4 and L40S; what `pipeline/wheels.lock.json` pins and every image built so far uses |
 | CUDA wheels, rebuilt | `wheels/cp312-cu128-sm80-89-90-r2` at `73b576a` | for A100, L4/L40S and H100. An image built from it passed a GPU check on an L40S, an A100 and an H100 request (served by an H200): gsplat render, `fused_ssim` and a bilateral-grid kernel forward and backward, the trainer's imports. No training run has used it. Its lock is `pipeline/wheels.lock.sm80-89-90.json`; the default lock is unchanged. (`…sm80-89-90` without `-r2` is the first rebuild, whose `fused-ssim` failed on the H100) |
@@ -18,8 +18,8 @@ session, so the next one starts here and not from an exported transcript.
 
 | Modal account | Holds | Used for |
 |---|---|---|
-| riccomarcelino (about $6) | the deployed worker, `ply-bench` and `ply-handoff` Volumes, secrets `ply-hf` and `ply-worker` | live jobs |
-| opservemakesalt ($30 on 2026-11-11; $5.34 billed by the end of that day) | Volume `ply-bench` with `chapel/high/job` and `drjohnson/prep` (each the solve and photos only), secret `ply-hf` (read token), the worker image | experiments (`pipeline/modal/ply_eval.py`) |
+| riccomarcelino (about $6 before 2026-11-12, when the deploy checks and the smoke job used about $0.60 by estimate) | the deployed worker, `ply-bench` (with `smoke/smoke-chapel-30s.mp4`) and `ply-handoff` Volumes, secrets `ply-hf` and `ply-worker` | live jobs |
+| opservemakesalt ($30 on 2026-11-11; $5.34 billed by the end of that day) | Volume `ply-bench` with `chapel/high/job` and `drjohnson/prep` (each the solve and photos only) and the smoke clip, secret `ply-hf` (read token), the worker image | experiments (`pipeline/modal/ply_eval.py`) |
 | ricco-mallick (about $1.70) | `ply-bench:drjohnson/prep` and the Dr Johnson benchmark twins | nothing at present |
 
 ## Running
@@ -58,11 +58,15 @@ Nothing. No Modal app is running on either account and no workflow is in progres
    back). Q3 (higher resolution) needs the chapel's 4K frames and waits.
    On the chapel, before any training run there: export `q5a` and `q5b` again under the new filter rule (export only)
    to see whether their see-through pixels go. No full-length run before the rest is in (decision 8).
-3. **Redeploy the worker** (riccomarcelino) and run the smoke capture (0.6) before any long job. The first long
-   ordered capture after that shows whether skipping the global mapper saves the expected 32 minutes.
+3. **After every worker deploy:** `python3 scripts/plyctl.py smoke --clip smoke-chapel-30s.mp4` (the clip is on both
+   accounts' `ply-bench` Volume under `smoke/`; the team code in `PLY_TEAM_KEY` or `--key-file`). It takes about six
+   minutes of GPU. If a job was queued before the deploy, start a worker by hand (`scripts/spawn_worker.py`):
+   the call that was already waiting did not start under the new settings (`MISTAKES.md`, 2026-11-12).
+   Still open from the deploy: the first long ordered capture shows whether skipping the global mapper saves the
+   expected 32 minutes, and the hand-off to the CPU solver has not run since (a capture under 400 frames skips it).
 4. **Make the `ci` checks required** on `main` (repository settings, owner).
-5. **Rest of phase 0**: the API side of 0.3 and 0.4 (it needs a D1 migration and deploys on merge), the smoke capture
-   and `plyctl` (0.6, 0.7; they need the team code as a project variable).
+5. **Rest of phase 0**: the API side of 0.3 and 0.4 (it needs a D1 migration and deploys on merge); `plyctl` has
+   `status` and `smoke`, and `logs`, `stop` and `cost` are not built (0.7).
 6. **Walk** (2.1): walking speed and sliding along edges first. Free is the default until the owner says otherwise.
 
 ## Known and left alone
@@ -74,3 +78,10 @@ Nothing. No Modal app is running on either account and no workflow is in progres
   security policy, and `?scene=` accepts any origin by design.
 - Two old twins (`c09a4c82…`, `0ffc07fb…`) live on the bucket, not on Hugging Face, and have no top view.
 - Capture and upload findings C1 to C5 of `PROJECT-REVIEW.md` are open.
+- Hugging Face refuses a small model file: `scene.ply` and `scene_clean.ply` under about 10 MB are sent as plain
+  files and rejected as binary ("use Xet"), and one `live-sparse.bin` was refused over a missing LFS pointer. The
+  worker stores them on the bucket and the API serves them from there, so no job fails. Seen on the smoke job
+  (3.6 MB model); a twin of normal size goes through LFS. The likely fix is to track `*.ply` and `*.bin` in the
+  dataset's `.gitattributes`; not done.
+- The smoke job (`5265343b…`, "Smoke test 20261112-100140") waits in review, with a failed gate as expected for
+  2,000 steps. Rejecting it would queue it again.
