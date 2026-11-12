@@ -156,8 +156,8 @@ wherever a GPU pass exists.
 rebuilt chapel grid: it moves too slowly and catches on things). The pipeline still writes its walk check into
 `occupancy.json` (`walk.pass`); the viewer no longer reads it. Both complaints are in the engine: Walk moves at
 1.4 m/s against 2.2 m/s in Free, and a blocked axis has its speed set to zero, so every 10 cm step in a grid edge
-stops the walker dead where it should slide. Still to do, in this order: walking speed and sliding along edges,
-then sub-step movement
+stops the walker dead where it should slide. Done 2026-11-12 (PR #30) except the guided-route test (`STATUS.md`);
+the list was: walking speed and sliding along edges, then sub-step movement
 so no step exceeds half a cell, and cap wheel speed in Walk. A failed `unstick()` returns to the spawn point. Put the
 grid behind one collider interface (the engine calls it directly in four places today), so a mesh collider or a
 navmesh can replace it later. Files: `app/src/walk/engine.ts:22,136-144,163,183-187`, `app/src/walk/scene.ts`. Tests
@@ -175,6 +175,8 @@ are removed by the consistency check.
 views to decide. The camera path still wins. Unknown stays blocked. Free space is never closed across a cell that any
 view saw blocked. Cells of 5 cm, written in the same `occupancy.png` and `occupancy.json`, so the viewer needs no
 change. Without a GPU the sparse grid is used as today.
+Built 2026-11-12 with 2.2 as the opt-in `--dense-occupancy`, which keeps the depth grid only when it walks at least
+as well as the sparse one. Tested on a CPU; not yet run on a GPU (`STATUS.md`, hand-off queue).
 
 **2.4 Mesh** (`stages/mesh.py`). TSDF fusion of the same filtered depth, 2 to 4 cm voxels. Outputs `mesh.glb` (about
 300k triangles, vertex colours) and `collision.glb` (about 20k triangles).
@@ -245,7 +247,7 @@ repeats only what wins there (decision 8).
 | Variant | Change | Why |
 |---|---|---|
 | Q0 | baseline, twice | noise floor (phase 1) |
-| Q1 | **Exposure correction, folded back.** Train with the bilateral grid, then fine-tune 2k steps with the grid replaced by its mean and fold that mean into the colours at export | 10–12% of the chapel is glare at the windows; correction is off today only because the viewer showed ×1.2 brightness |
+| Q1 | **Exposure correction, folded back.** Train with the bilateral grid, then fine-tune 2k steps with the grid replaced by its mean and fold that mean into the colours at export. Measured 2026-11-12 (`q1`): the fold works and the grid costs 0.50 dB on Dr Johnson, so it is not shipped; `q1b` trains with one affine transform per photo instead (`--exposure-affine`) and has not run | 10–12% of the chapel is glare at the windows; correction is off today only because the viewer showed ×1.2 brightness |
 | Q2 | pose refinement (`--pose-opt`, exists) | small solve errors blur detail |
 | Q3 | **higher resolution**: re-extract the same frames at 2560 px, scale the intrinsics, keep the poses | the source is 4K and we train at 1728 px |
 | Q4a | sparse depth loss (`--depth-loss`, exists) | free to try; fewer floaters |
