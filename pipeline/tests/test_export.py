@@ -119,14 +119,16 @@ def test_training_weights_need_a_gpu(tmp_path):
     assert viewer_eval.training_weights(tmp_path / "missing.ply", tmp_path) is None
 
 
-def test_the_phone_file_is_packed_from_the_fine_tuned_model(tmp_path, monkeypatch):
-    """The real splat-transform around stand-ins for the GPU work: the twin is cut to the phone size, the 'trainer'
-    lifts those splats 1 m, and scene_lite.spz holds the lifted ones with their SH restored."""
+@pytest.mark.parametrize("lite_max", [1000, None])
+def test_the_phone_file_is_packed_from_the_fine_tuned_model(tmp_path, monkeypatch, lite_max):
+    """The real splat-transform around stand-ins for the GPU work: the twin is cut to the phone size (or, under it,
+    only to the phone's SH bands), the 'trainer' lifts those splats 1 m, and scene_lite.spz holds the lifted ones
+    with their SH restored."""
     from plypipe import clean, viewer_eval
     from plypipe.stages import train as train_stage
     rng = np.random.default_rng(0)
     write_gs_ply(tmp_path / "scene.ply", rng.normal(size=(3000, 3)) * .5 + [0, 1, 0], rng)
-    ctx = Ctx(out=tmp_path, log=Log(tmp_path, quiet=True), opts={"no_clean": True, "lite_max": 1000, "lite_finetune": 300})
+    ctx = Ctx(out=tmp_path, log=Log(tmp_path, quiet=True), opts={"no_clean": True, "lite_max": lite_max, "lite_finetune": 300})
     update_scene(ctx, {"bounds": {"min": [-3, -1, -3], "max": [3, 3, 3]}})
     scores = {"scene_lite.ply": 24.0, "point_cloud_299.ply": 25.5}
     monkeypatch.setattr(viewer_eval, "evaluate", lambda ply, *a, **k: {"views": 4, "psnr": scores[ply.name], "ssim": 0.8, "brightness": 1.0,
@@ -144,14 +146,15 @@ def test_the_phone_file_is_packed_from_the_fine_tuned_model(tmp_path, monkeypatc
 
     monkeypatch.setattr(train_stage, "finetune", trained)
     rep = export.run_stage(ctx)
-    assert seen == {"steps": 300, "sh": export.LITE_SH, "splats": 1000, "coefficients": 8}       # it trains the phone model: 1000 splats, SH 2
+    phone = lite_max or rep["gaussiansOut"]                                                       # a twin under the phone size keeps its splats
+    assert seen == {"steps": 300, "sh": export.LITE_SH, "splats": phone, "coefficients": 8}       # it trains the phone model, at SH 2
     tuned = rep["liteFinetune"]
     assert tuned["shipped"] == "finetuned" and (tuned["before"]["psnr"], tuned["after"]["psnr"]) == (24.0, 25.5) and tuned["eval"]["views"] == 33
-    assert rep["gaussiansOut"] > 1000 and rep["liteGaussians"] == 1000 and rep["liteMB"] < rep["spzMB"]
+    assert rep["gaussiansOut"] > 1000 and rep["liteGaussians"] == phone and rep["liteMB"] < rep["spzMB"]
     assert rep["shRestore"]["lite"]["restored"] and rep["shRestore"]["lite"]["shDegree"] == export.LITE_SH
     assert not (tmp_path / "train-lite").exists() and not (tmp_path / "scene_lite.ply").exists()
     back = {}
     for name in ("scene.spz", "scene_lite.spz"):
         subprocess.run(["npx", "-y", export.SPLAT_TRANSFORM, "-w", str(tmp_path / name), str(tmp_path / "back.ply")], check=True, capture_output=True)
         back[name] = read_gs_ply_xyz(tmp_path / "back.ply")
-    assert len(back["scene_lite.spz"]) == 1000 and back["scene_lite.spz"][:, 1].mean() == pytest.approx(back["scene.spz"][:, 1].mean() + 1.0, abs=0.15)
+    assert len(back["scene_lite.spz"]) == phone and back["scene_lite.spz"][:, 1].mean() == pytest.approx(back["scene.spz"][:, 1].mean() + 1.0, abs=0.15)

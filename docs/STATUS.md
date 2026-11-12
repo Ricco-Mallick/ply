@@ -39,10 +39,12 @@ Nothing. No Modal app is running on either account and no workflow is in progres
   viewer pays for it (27.72 to 29.47 dB on the same model). The chapel's exports have not been run again.
 - **Sparse depth loss (`q4a`):** the NaN is fixed and the fix holds on a GPU; no gain on Dr Johnson.
   **Pose refinement (`q2`):** no gain on the chapel.
-- **Phone file (`q6`):** trained on for 3,000 steps at its own size after it is cut down, it gains 0.73 dB on
-  Dr Johnson at the same 240k splats and ends 0.22 dB below the desktop file (0.96 dB before). Off by default
-  (`--lite-finetune 3000` on export); the export ships the fine-tuned file only when it scores better. Billed $0.21 on
-  opservemakesalt on 2026-11-12.
+- **Phone file (`q6`):** trained on for 3,000 steps at its own size, it gains 0.80 dB on the chapel (800k splats,
+  now 0.48 dB below the desktop file instead of 1.25) and 0.73 dB on Dr Johnson cut to 240k. A twin under the phone
+  size, whose phone file only loses the third SH band, gains 0.52 dB and ends 0.05 dB below the desktop file.
+  See-through pixels rise a little on the chapel (0.16% to 0.29%). Off by default (`--lite-finetune 3000` on export);
+  the export ships the fine-tuned file only when it scores better. It adds about five minutes to an export on an L4.
+  Billed $1.11 on opservemakesalt on 2026-11-12 for the three runs.
 - Billed on opservemakesalt on 2026-11-11: $5.34 ($3.17 for the chapel runs and checks, $2.17 for the small scenario).
   About $0.50 more falls on 2026-11-12 (the 30k runs' last minutes) and was not in the report yet.
 
@@ -59,10 +61,9 @@ Nothing. No Modal app is running on either account and no workflow is in progres
    Next run: a second 30k baseline (`--variant q0-30k-b --args "--iterations 30000"`, `PLY_EVAL_TIMEOUT_MIN=27`), for
    the noise floor that decides whether an opacity regulariser of 0.005 may become the default. Then Q1 (exposure
    folded back), the variant left that needs code and can be judged on this scene. Q6 (the phone file fine-tuned)
-   passed here: before it becomes a default it needs `q6` on the chapel (about $0.60), which also gives its time at
-   800k splats against the worker's 40-minute export limit. A twin under the phone size still ships its phone file
-   with the third SH band cut and no fine-tune (0.59 dB on Dr Johnson); the same option could cover it. Q3 (higher
-   resolution) needs the chapel's 4K frames and waits.
+   passed on both scenes, twins under the phone size included. Making it the default is the owner's call: about five
+   minutes and $0.12 more per job on an L4, and it reaches real jobs only after a worker redeploy and its smoke test.
+   Q3 (higher resolution) needs the chapel's 4K frames and waits.
    On the chapel, before any training run there: export `q5a` and `q5b` again under the new filter rule (export only)
    to see whether their see-through pixels go. No full-length run before the rest is in (decision 8).
 3. **After every worker deploy:** `python3 scripts/plyctl.py smoke --clip smoke-chapel-30s.mp4` (the clip is on both

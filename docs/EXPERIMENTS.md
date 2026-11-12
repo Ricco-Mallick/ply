@@ -190,8 +190,8 @@ by 0.02 dB, so the noise is far below these differences.
   the phone file comes within 0.7 dB of the desktop file at the same size; it is at 0.22 dB.
 - **It also beats the phone file the baselines ship, at 54% of the splats and 56% of the bytes** (29.05 dB against
   28.79 dB). Those files were never cut down, only stripped of their third SH band, and that alone costs 0.59 dB: a
-  model trained with the bands it ships gets it back. The export fine-tunes only a phone file it has cut down, so a
-  twin under the phone size still ships the stripped one. Fine-tuning that one too is not tried yet.
+  model trained with the bands it ships gets it back. In this run the export fine-tuned only a phone file it had cut
+  down; a twin under the phone size is covered since `60db587` and measured below.
 - **Away from the training views the phone model holds up.** The trainer's own scores for it: cc-PSNR 29.14 on the
   every-8th set (desktop 29.26) and 28.03 on the block (desktop 27.70); cc-LPIPS 0.248 and 0.267 (desktop 0.241 and
   0.265).
@@ -199,10 +199,45 @@ by 0.02 dB, so the noise is far below these differences.
   point more than the cut-down model).
 - **Time:** 67 s of the export for 3,000 steps at 240k splats on an L40S, the trainer's start and both scorings
   included; the whole export took 123 s.
-- **Still off by default** (`--lite-finetune STEPS`). This is one run on one scene: the chapel has to repeat it
-  (decision 8; `q6` there is estimated at $0.60), and on the worker it adds minutes to every export. The export
-  stage's limit is 40 minutes and exports take 2 to 18 today, but the fine-tune's time at 800k splats on an L4 is
-  not measured.
+- **Off by default** (`--lite-finetune STEPS`). The chapel's repeat and the time it adds are below.
 
-**Cost.** Billed $0.21 on opservemakesalt for the run (estimated $0.24 on an L4 and $0.34 on an L40S; the L40S did it
+**Cost.** Billed $0.28 on opservemakesalt for the run (estimated $0.24 on an L4 and $0.34 on an L40S; the L40S did it
 in 5.5 minutes).
+
+#### The chapel, and a twin that is not cut down
+
+Two more runs on an L40S, one launch after the other. `q6` on the chapel (code `9713f9a`): 1.21M splats shipped, the
+phone file cut to 800k. `q6-uncut` on Dr Johnson (`--args "--lite-finetune 3000"`, code `60db587`): from that commit
+the fine-tune also covers a twin under the phone size, whose phone file keeps its 441k splats and loses only the third
+SH band.
+
+| run | phone model | splats | viewer PSNR | SSIM | see-through (worst view) | below the desktop file |
+|---|---|---:|---:|---:|---:|---:|
+| chapel `q6` | cut down | 800k | 23.89 | 0.8595 | 0.16% (1.8%) | 1.25 dB |
+| | then 3,000 steps | 800k | 24.69 | 0.8655 | 0.29% (2.7%) | 0.45 dB |
+| | the same as shipped (20.5 MB) | 800k | 24.64 | 0.8654 | 0.29% (2.7%) | 0.48 dB |
+| Dr Johnson `q6-uncut` | third SH band cut | 441k | 28.70 | 0.8913 | 0.30% (1.7%) | 0.59 dB |
+| | then 3,000 steps | 441k | 29.22 | 0.8953 | 0.30% (1.6%) | 0.07 dB |
+| | the same as shipped (10.3 MB) | 441k | 29.19 | 0.8952 | 0.31% (1.7%) | 0.05 dB |
+
+Desktop files: the chapel 25.14 dB cleaned and 25.12 dB as shipped (38.8 MB); Dr Johnson 29.29 and 29.24 dB (12.4 MB).
+
+- **The chapel repeats it: +0.80 dB at the same 800k splats**, nearly six times its noise floor (0.14 dB). The phone
+  file ships 0.48 dB below the desktop file, inside the plan's 0.7 dB. The two chapel baselines' phone files, cut to
+  800k and left at that, ship 1.19 and 1.09 dB below theirs.
+- **A twin that is not cut gains 0.52 dB**, and its phone file ends 0.05 dB below the desktop file: the SH band it
+  gives up now costs next to nothing.
+- **Away from the training views the phone models are not the weaker ones.** On the block of consecutive frames
+  they score above their desktop models: 23.18 against 22.52 dB cc-PSNR on the chapel (cc-LPIPS 0.164 against 0.165),
+  27.83 against 27.57 dB on Dr Johnson (0.256 against 0.266). On the every-Nth views they are 0.22 and 0.08 dB below.
+- **See-through pixels are the one number that moves the wrong way:** 0.16% to 0.29% on the chapel, 1.8% to 2.7% in
+  its worst view. That is inside what the export tolerates, and unchanged on the twin that is not cut.
+- **Time:** 151 s of the chapel's export for 3,000 steps at 800k splats on an L40S (the export took 265 s against
+  114 and 117 s for the baselines); 65 s on Dr Johnson at 441k. An L4 is about twice as slow, so about five minutes a
+  job on the worker, inside the export stage's 40-minute limit (exports take 2 to 18 minutes today). At the L4's
+  $1.43 an hour that is about $0.12 a job.
+- **Still off by default.** The plan's test is passed on both scenes. What is left is a choice, not a measurement:
+  every job would pay those five minutes, and the worker needs a redeploy and its smoke test before real jobs see it.
+
+**Cost.** Billed on opservemakesalt on 2026-11-12: $0.58 for the chapel run (estimated $0.60) and $0.24 for
+`q6-uncut` (estimated $0.34 on an L40S). With the first `q6` run, $1.11 for the three.

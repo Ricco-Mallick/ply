@@ -119,9 +119,9 @@ def test_the_fine_tuned_phone_model_ships_when_the_viewer_shows_it_better(tmp_pa
 
 
 @pytest.mark.parametrize("after", [{"psnr": 23.9, "holes": 0.01}, {"psnr": 25.5, "holes": 0.05}, None])
-def test_a_fine_tune_that_is_not_better_leaves_the_cut_down_phone_model(tmp_path, monkeypatch, after):
+def test_a_fine_tune_that_is_not_better_leaves_the_phone_model_it_started_from(tmp_path, monkeypatch, after):
     report, replaced, calls = _phone(tmp_path, monkeypatch, {"scene_lite.ply": {"psnr": 24.0, "holes": 0.01}, "point_cloud_299.ply": after})
-    assert len(calls) == 1 and not replaced and report["shipped"] == "decimated" and report["why"].startswith("measured")
+    assert len(calls) == 1 and not replaced and report["shipped"] == "untuned" and report["why"].startswith("measured")
     assert report["before"]["psnr"] == 24.0 and report["after"] == after
 
 
@@ -130,9 +130,9 @@ def test_a_fine_tune_that_fails_or_cannot_be_measured_leaves_the_export_as_it_wa
         raise RuntimeError("python exited with 1; last output:\nCUDA out of memory")
 
     report, replaced, _ = _phone(tmp_path, monkeypatch, {"scene_lite.ply": {"psnr": 24.0, "holes": 0.01}}, fitted=out_of_memory)
-    assert not replaced and report["shipped"] == "decimated" and "CUDA out of memory" in report["why"]
+    assert not replaced and report["shipped"] == "untuned" and "CUDA out of memory" in report["why"]
     report, replaced, calls = _phone(tmp_path, monkeypatch, {})                      # no GPU: nothing to compare, so no training
-    assert not replaced and calls == [] and report == {"steps": 300, "shipped": "decimated", "why": "not measured: needs a GPU and held-out views"}
+    assert not replaced and calls == [] and report == {"steps": 300, "shipped": "untuned", "why": "not measured: needs a GPU and held-out views"}
 
 
 # ------------------------------------------------------------------ the pinned trainer itself, on CPU
