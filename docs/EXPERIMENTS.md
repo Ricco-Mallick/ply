@@ -279,3 +279,11 @@ turns it off), with two limits that keep it to where it was measured to pay:
 
 The eval runner counts the 3,000 steps in every estimate from here on, and new runs' phone-file numbers are not
 comparable with the ones above the Q6 heading (`--args "--lite-finetune 0"` gives the old export).
+
+**On the live worker.** Deployed as v19 (`c5cccb3`) and run through the API with the smoke clip (job `8582285e…`;
+the smoke job now trains at SH 3 so that its phone file gives up a band). The fine-tune ran inside the export in 44 s
+(3,000 steps on 22k splats; the export took 62 s against 15 s for the morning's smoke job) and was not shipped: the
+fine-tuned file scored 19.21 dB against 17.69 dB, but with 5.6% of its pixels see-through against 3.9%, more than
+the one point the export allows. A 2,000-step model of a 30-second clip is not a twin (the gate fails it as `tiny`),
+so this shows the path and the guard on the worker, not the gain. The GPU type the job got is not in its report.
+Not yet seen on the worker: a phone file of 800k splats on an L4, in time and in memory.
