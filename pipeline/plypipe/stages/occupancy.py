@@ -23,7 +23,8 @@ column c = +X, top-left pixel = cell at the origin corner) and occupancy.json, w
 the walk check of plypipe.walkcheck (`walk`) and where the grid came from (`source`: "sparse" or "depth").
 
 The grid from depth (IMPROVEMENT-PLAN 2.3; `from_depth`, run by export with --dense-occupancy where a GPU can render)
-replaces the one above when it walks at least as well. The sparse grid knows a wall only where the solve found points
+replaces the one above unless fewer capture positions are walkable on it; where the depth decided nothing it takes
+the sparse grid's floor, and it keeps the sparse grid's walls. The sparse grid knows a wall only where the solve found points
 on it, and floor only where it found points or the cameras walked. The trained splat's depth, kept where other views
 confirm it (plypipe.dense), is a range scan from every view, in 5 cm cells over the same area:
 
@@ -280,9 +281,16 @@ def depth_votes(views, lo: np.ndarray, cell: float, shape: tuple[int, int], band
 
 def grid_from_depth(views, cam_path: np.ndarray, lo: np.ndarray, shape: tuple[int, int], cell: float = DEPTH_CELL,
                     band: tuple[float, float] = (0.2, 1.8), min_views: int = 3, path_radius: float = 0.2, hole_m2: float = 0.25,
-                    max_range: float = 12.0, max_rays: int = 20_000) -> tuple[np.ndarray, dict]:
+                    max_range: float = 12.0, max_rays: int = 20_000, sparse: np.ndarray | None = None) -> tuple[np.ndarray, dict]:
     """The grid from the views' confirmed depth points (module docstring), over the area that starts at `lo` (x, z)
-    with `shape` cells. `views` yields (camera centre, points) and is read once; `cam_path` is every capture position."""
+    with `shape` cells. `views` yields (camera centre, points) and is read once; `cam_path` is every capture position.
+
+    `sparse`: the camera solve's grid over the same area, any cell size. Each grid is right where it has evidence. On
+    the chapel the depth saw every pew the sparse points leave walkable; on Dr Johnson it left a corridor's floor
+    unknown that the sparse grid has, and looked through a gap in a wall the sparse points close (2026-11-12,
+    docs/EXPERIMENTS.md). So a cell the depth left undecided takes the sparse grid's free floor, unless any view saw it
+    blocked or it lies within 10 cm of a cell the depth blocked (the inside of a wall, which no view sees, lies between
+    two faces it did), and the sparse grid's blocked cells stay blocked."""
     H, W = shape
     cam = np.asarray(cam_path, float).reshape(-1, 3)
     votes = depth_votes(views, lo, cell, shape, band, max_range, max_rays)
@@ -291,6 +299,16 @@ def grid_from_depth(views, cam_path: np.ndarray, lo: np.ndarray, shape: tuple[in
     grid = np.full(shape, UNKNOWN, np.uint8)
     grid[free] = FREE
     grid[blocked] = BLOCKED
+    merged = {}
+    if sparse is not None:
+        fine = cv2.resize(sparse, (W, H), interpolation=cv2.INTER_NEAREST)
+        k = 2 * max(1, int(round(0.1 / cell))) + 1
+        beside = cv2.dilate(blocked.astype(np.uint8), np.ones((k, k), np.uint8)) > 0
+        take = (grid == UNKNOWN) & (fine == FREE) & (votes["blocked"] == 0) & ~beside
+        wall = (fine == BLOCKED) & (grid != BLOCKED)
+        grid[take] = FREE
+        grid[wall] = BLOCKED
+        merged = {"sparseFree": int(take.sum()), "sparseBlocked": int(wall.sum())}
     walked, segments = walked_corridor(cam, lo, cell, shape, path_radius)
     grid[walked] = FREE  # someone walked here: wins over whatever the depth says
     _forget_unreached(grid, walked)
@@ -304,7 +322,7 @@ def grid_from_depth(views, cam_path: np.ndarray, lo: np.ndarray, shape: tuple[in
             "holesFilled": filled, "source": "depth",
             "depth": {"views": votes["views"], "minViews": min_views, "maxRange": max_range, "holeM2": hole_m2,
                       "seenFree": int((votes["free"] >= min_views).sum()), "seenBlocked": int(blocked.sum()),
-                      "seenBlockedByFewer": int(((votes["blocked"] > 0) & ~blocked).sum())},
+                      "seenBlockedByFewer": int(((votes["blocked"] > 0) & ~blocked).sum()), **merged},
             "stats": {"free": int((grid == FREE).sum()), "blocked": int((grid == BLOCKED).sum()),
                       "unknown": int((grid == UNKNOWN).sum())}}
     return grid, meta
@@ -351,10 +369,11 @@ def run_stage(ctx: Ctx) -> dict:
 
 
 def from_depth(ctx: Ctx, ply: Path, holdout: int = 30, antialiased: bool = True, step: int = 5, scale: float = 0.5) -> dict:
-    """The grid from the depth of the splats in `ply` (module docstring), written in place of the sparse grid when it
-    walks at least as well: capture positions walkable at least as often, and no less floor to stand on. Otherwise the
-    sparse grid is written again, with the reason, and the grid that lost is left beside it as occupancy_depth.png.
-    The confirmed points are saved as dense_points.npz for the mesh and layout stages.
+    """The grid from the depth of the splats in `ply` (module docstring), with the sparse grid's evidence where the
+    depth has none (grid_from_depth), written in place of the sparse grid unless fewer capture positions are walkable
+    on it. Less floor to stand on is not a reason to refuse it: on the chapel the floor it takes away is the pews.
+    When it is refused the sparse grid is written again, with the reason, and the grid that lost is left beside it as
+    occupancy_depth.png. The confirmed points are saved as dense_points.npz for the mesh and layout stages.
 
     Returns the record for the export report. Without CUDA and gsplat, or with cameras that are not PINHOLE, nothing
     is built or written. Raises if the pass itself fails: the caller decides what that costs."""
@@ -374,14 +393,13 @@ def from_depth(ctx: Ctx, ply: Path, holdout: int = 30, antialiased: bool = True,
             cloud.add(p.points, p.normals)
             yield p.center, p.points
 
-    grid, meta = grid_from_depth(scans(), centers, np.array(sparse_meta["origin"]), shape)
+    grid, meta = grid_from_depth(scans(), centers, np.array(sparse_meta["origin"]), shape, sparse=sparse)
     meta["walk"] = now = walkcheck.check(grid, meta, spawn, centers[:, [0, 2]])
     meta["depth"].update(pixels=pixels, points=cloud.save(ctx.out / dense.FILE))
     was = sparse_meta["walk"]
     out = {"views": meta["depth"]["views"], "walk": now, "sparseWalk": was, "points": meta["depth"]["points"]}
-    if (now["cameras"] or 0) < (was["cameras"] or 0) or now["standableM2"] < was["standableM2"]:
-        why = (f"it walks worse than the sparse grid: capture positions {now['cameras']} against {was['cameras']}, "
-               f"{now['standableM2']} m2 to stand on against {was['standableM2']}")
+    if (now["cameras"] or 0) < (was["cameras"] or 0):
+        why = f"fewer capture positions are walkable on it: {now['cameras']} against {was['cameras']}"
         cv2.imwrite(str(ctx.out / "occupancy_depth.png"), grid)
         sparse_meta["depth"] = {**meta["depth"], "stats": meta["stats"], "walk": now, "rejected": why}
         _write(ctx, sparse, sparse_meta)

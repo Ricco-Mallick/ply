@@ -18,8 +18,9 @@ GPU can score it, and is shipped when the viewer shows it better than the one it
 +0.73 and +0.52 dB on Dr Johnson (docs/EXPERIMENTS.md, Q6). --lite-max sets the phone file's splat count.
 
 With --dense-occupancy and a GPU, the walking grid is rebuilt from the cleaned model's own depth (plypipe.dense,
-stages/occupancy.from_depth) and replaces the camera solve's grid when it walks at least as well. Off by default
-until a GPU run has confirmed it; a failure there is a warning and the grid stays as it was.
+stages/occupancy.from_depth), with the camera solve's grid where the depth saw nothing, and replaces that grid unless
+fewer capture positions are walkable on it. Off by default until a GPU run has confirmed it; a failure there is a
+warning and the grid stays as it was.
 
 Last, plypipe.topview renders the cleaned model from above (topview.webp, recorded as scene.json's `topview` block)
 for the viewer's minimap. Failing to do so is a warning, never a failed export.
@@ -420,7 +421,7 @@ def run_stage(ctx: Ctx) -> dict:
 
 def _dense_occupancy(ctx: Ctx, ply: Path, holdout: int, aa: bool) -> dict:
     """--dense-occupancy: the walking grid rebuilt from the depth of the twin as the viewer shows it
-    (stages/occupancy.from_depth), kept only when it walks at least as well as the grid from the camera solve.
+    (stages/occupancy.from_depth), kept unless fewer capture positions are walkable on it than on the camera solve's.
     Opt-in until a GPU run has confirmed it on a real twin. Whatever goes wrong in it, the export stands with the
     grid it had; without a GPU nothing is built and the report says so."""
     t0 = time.time()
