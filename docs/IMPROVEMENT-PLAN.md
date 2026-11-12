@@ -37,7 +37,7 @@ The cheapest minutes are the 32 spent on a mapper that always fails and the 18 s
 | Ship a training change at +0.2 dB or −0.005 LPIPS | No run has been repeated, so the noise is unknown; an earlier A/B differed by 0.08 dB. Held-out views sit between training frames | Train the baseline twice, hold out a block of consecutive frames too, and read every threshold as the stated value or twice the measured spread, whichever is larger |
 | Compare L40S, A100 and H100 on full runs; compare 8, 16 and 32 cores | Training is 7% of the job, and the solve's waste is a mapper choice | Pick hardware from a two-minute timing probe per GPU. Test cores only with a mapper that can use them (1g) |
 | Layout from SpatialLM on mesh points | Its weights are non-commercial and it was trained on box rooms. We already hold three strong signals: dense wall points, the camera path (a wall line the camera crossed is a door) and SAM 3's door and window detections | The deterministic layout (4b) is the main line; SpatialLM is one comparison run |
-| not covered | The phone file is 2.15 dB worse than the desktop file | Variant Q6: fine-tune a model at the phone size instead of decimating |
+| not covered | The phone file is 2.15 dB worse than the desktop file | Variant Q6: fine-tune a model at the phone size instead of decimating (done: 0.48 dB on the chapel at 15k steps) |
 | not covered | The wheels expire on 2026-11-12, spend is unbounded, new twins carry a "bad capture" badge, nothing is checked on a pull request | Phase 0 |
 
 ## 3. Order of work
@@ -251,7 +251,7 @@ repeats only what wins there (decision 8).
 | Q4a | sparse depth loss (`--depth-loss`, exists) | free to try; fewer floaters |
 | Q4b | dense depth and normal losses from the phase 5 priors (the DN-Splatter / AGS-Mesh method) | flatter walls; also variant 3c |
 | Q5 | opacity regulariser 0.01 → 0.005 and 0.002 at the 2M cap. A 3M cap only if at least 85% of the splats then survive export | half of the High budget is deleted today |
-| Q6 | **phone file fine-tuned, not decimated**: continue 3k steps with the cap at the phone size | the phone file is 2.15 dB below the desktop file |
+| Q6 | **phone file fine-tuned, not decimated**: continue 3k steps with the cap at the phone size. Shipped 2026-11-12, on by default (decision 9) | the phone file is 2.15 dB below the desktop file |
 
 Then one run with the winners combined, and one at full length (phase 7).
 
@@ -392,5 +392,12 @@ Made on 2026-11-11:
 8. Experiments run on a small twin first, so the credit lasts until the work is done: Dr Johnson
    (`PLY_EVAL_SCENARIO=drjohnson`, about $0.20 a run by billing). The chapel repeats only a winner, and no full-length run is made
    before the rest of the plan is in. The credentials for the three Modal accounts were given in chat for this.
+
+Made on 2026-11-12:
+
+9. The phone file's fine-tune (Q6) is on by default. The owner's condition was a significant gain for its price, and
+   it is the cheapest quality measured here: +0.52 to +0.80 dB on the phone file for $0.04 to $0.11 a job, against
+   +0.61 dB for $0.20 from Quick to Standard training (`EXPERIMENTS.md`). It runs only where the phone file has fewer
+   splats or SH bands than the twin and a GPU can score it; `--lite-finetune 0` turns it off.
 
 Open: the date of the final, so the phases can be given dates and the cut order applied.

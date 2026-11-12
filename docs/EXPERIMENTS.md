@@ -236,8 +236,54 @@ Desktop files: the chapel 25.14 dB cleaned and 25.12 dB as shipped (38.8 MB); Dr
   114 and 117 s for the baselines); 65 s on Dr Johnson at 441k. An L4 is about twice as slow, so about five minutes a
   job on the worker, inside the export stage's 40-minute limit (exports take 2 to 18 minutes today). At the L4's
   $1.43 an hour that is about $0.12 a job.
-- **Still off by default.** The plan's test is passed on both scenes. What is left is a choice, not a measurement:
-  every job would pay those five minutes, and the worker needs a redeploy and its smoke test before real jobs see it.
+- **Off by default in these runs.** The plan's test is passed on both scenes; whether the gain is worth its price on
+  every job is weighed below.
 
 **Cost.** Billed on opservemakesalt on 2026-11-12: $0.58 for the chapel run (estimated $0.60) and $0.24 for
 `q6-uncut` (estimated $0.34 on an L40S). With the first `q6` run, $1.11 for the three.
+
+#### What it buys for its price: on by default (2026-11-12)
+
+The owner's condition for turning it on: a significant gain for what it costs. Every lever measured in this file or
+in `BENCHMARK.md` that buys image quality with GPU time, on an L40S at the run's own container price ($2.58 an hour
+for the chapel, $2.27 for Dr Johnson):
+
+| lever | gain in PSNR | GPU time | cost | dB per dollar |
+|---|---:|---:|---:|---:|
+| phone file fine-tuned, chapel (cut to 800k) | +0.80 dB, phone file | 151 s | $0.11 | 7 |
+| phone file fine-tuned, Dr Johnson (cut to 240k) | +0.73 dB, phone file | 67 s | $0.04 | 17 |
+| phone file fine-tuned, Dr Johnson (not cut) | +0.52 dB, phone file | 65 s | $0.04 | 13 |
+| Quick to Standard training, Dr Johnson (`BENCHMARK.md`) | +0.61 dB, both files | 5.4 min | $0.20 | 3 |
+| Standard to High training, Dr Johnson (`BENCHMARK.md`) | −0.50 dB | 4.7 min | $0.18 | none |
+| 15k to 30k steps, Dr Johnson (above) | −0.16 dB in the viewer (cc-LPIPS −0.019) | 2 min | $0.06 | none |
+
+- **Per dollar it buys two to six times what the next best lever buys**, and that lever (Standard instead of Quick)
+  is the only other one with a gain in PSNR at all: past Standard, more training time bought none.
+- **It is a small part of a job.** On the worker's L4 (about twice as slow as the L40S, at $1.43 an hour; the L4 is
+  not timed) the chapel's fine-tune is about 5 minutes and $0.12, on a High job of about 135 GPU-minutes and $3.20:
+  under 4% of either. A small twin pays about 2 minutes and $0.05.
+- **The gain is far outside the noise:** 2.9 times the plan's bar on the chapel (0.28 dB, twice its noise floor) and
+  2.6 to 3.7 times the 0.2 dB bar on Dr Johnson.
+- **It reaches most viewers of a phone product:** the viewer loads the phone file on every phone and on low-tier
+  desktops (`app/src/walk/scene.ts`).
+- **What it costs in quality:** see-through pixels on the chapel, 0.16% to 0.29%.
+
+So the export fine-tunes the phone file by default (`plan.LITE_FINETUNE_STEPS`, 3,000 steps; `--lite-finetune 0`
+turns it off), with two limits that keep it to where it was measured to pay:
+
+- **Only where the phone file gives something up:** fewer splats than the twin (cut to 800k) or fewer SH bands
+  (Standard and High train SH 3, the phone file ships SH 2). A Quick twin (SH 2, under 800k) is its own phone file:
+  nothing was lost, nothing is trained, and the job pays nothing.
+- **Only where it can be scored:** a GPU and held-out views. Without them the report says so and the file ships as it
+  was; with them the fine-tuned file ships only when the viewer shows it better.
+
+The eval runner counts the 3,000 steps in every estimate from here on, and new runs' phone-file numbers are not
+comparable with the ones above the Q6 heading (`--args "--lite-finetune 0"` gives the old export).
+
+**On the live worker.** Deployed as v19 (`c5cccb3`) and run through the API with the smoke clip (job `8582285e…`;
+the smoke job now trains at SH 3 so that its phone file gives up a band). The fine-tune ran inside the export in 44 s
+(3,000 steps on 22k splats; the export took 62 s against 15 s for the morning's smoke job) and was not shipped: the
+fine-tuned file scored 19.21 dB against 17.69 dB, but with 5.6% of its pixels see-through against 3.9%, more than
+the one point the export allows. A 2,000-step model of a 30-second clip is not a twin (the gate fails it as `tiny`),
+so this shows the path and the guard on the worker, not the gain. The GPU type the job got is not in its report.
+Not yet seen on the worker: a phone file of 800k splats on an L4, in time and in memory.

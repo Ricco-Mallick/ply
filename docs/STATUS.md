@@ -1,6 +1,6 @@
 # Status
 
-Updated 2026-11-12 (morning). What is deployed, what is running and what is next. Update this file at the end of every
+Updated 2026-11-12 (afternoon). What is deployed, what is running and what is next. Update this file at the end of every
 session, so the next one starts here and not from an exported transcript.
 
 ## Deployed
@@ -9,7 +9,7 @@ session, so the next one starts here and not from an exported transcript.
 |---|---|---|
 | Site (https://ricco.codes/ply/) | `main` at `0597c98` (PR #23), 2026-11-11 | every twin opens in Free and the minimap shows the twin's top view. The deploy succeeded and the pages answer; not looked at in a browser since |
 | API (`ply-api`, Cloudflare) | `35c9c1d`, 2026-11-05 | read from `GET /` |
-| GPU worker (Modal app `ply`, riccomarcelino) | v18, `4a45de8`, 2026-11-12 (`main` at `3ae4be7` plus the GPU fallback) | an L4, or an L40S when Modal has no L4 free. Smoke test passed after the deploy (job `5265343b…`, on an L40S): every stage, the gate, the top view and the new export rule ran on a real job |
+| GPU worker (Modal app `ply`, riccomarcelino) | v19, `c5cccb3`, 2026-11-12 (the head of PR #29: `main` at `1bf549d` plus the phone file's fine-tune by default; redeploy from `main` if that pull request changes or closes) | an L4, or an L40S when Modal has no L4 free. Smoke test passed after the deploy (job `8582285e…`): every stage, the gate and the phone file's fine-tune ran on a real job, the fine-tune in 44 s of a 62 s export. On that clip (2,000 steps, not a twin) the fine-tuned file scored 1.5 dB higher with 1.7 points more see-through pixels, which is over the export's limit, so the untuned file shipped as designed. The job took 20 minutes from upload to review, most of it the container's start and publishing |
 | Twins on Hugging Face (`ply-data`) | `4c46886`, 2026-11-11 | 13 twins have `topview.webp` and a `topview` block in `scene.json`; `4c09354` is the commit before. `chapel-high-2` has the rebuilt walking grid (`4c09354`; `e063f08` before it) |
 | CUDA wheels | `wheels/cp312-cu128-sm89` at `e063f08` | L4 and L40S; what `pipeline/wheels.lock.json` pins and every image built so far uses |
 | CUDA wheels, rebuilt | `wheels/cp312-cu128-sm80-89-90-r2` at `73b576a` | for A100, L4/L40S and H100. An image built from it passed a GPU check on an L40S, an A100 and an H100 request (served by an H200): gsplat render, `fused_ssim` and a bilateral-grid kernel forward and backward, the trainer's imports. No training run has used it. Its lock is `pipeline/wheels.lock.sm80-89-90.json`; the default lock is unchanged. (`…sm80-89-90` without `-r2` is the first rebuild, whose `fused-ssim` failed on the H100) |
@@ -18,8 +18,8 @@ session, so the next one starts here and not from an exported transcript.
 
 | Modal account | Holds | Used for |
 |---|---|---|
-| riccomarcelino (about $6 before 2026-11-12, when the deploy checks and the smoke job used about $0.60 by estimate) | the deployed worker, `ply-bench` (with `smoke/smoke-chapel-30s.mp4`) and `ply-handoff` Volumes, secrets `ply-hf` and `ply-worker` | live jobs |
-| opservemakesalt ($30 on 2026-11-11; $5.34 billed by the end of that day) | Volume `ply-bench` with `chapel/high/job` and `drjohnson/prep` (each the solve and photos only) and the smoke clip, secret `ply-hf` (read token), the worker image | experiments (`pipeline/modal/ply_eval.py`) |
+| riccomarcelino (about $6 before 2026-11-12; $1.37 billed that day for two deploys and two smoke jobs) | the deployed worker, `ply-bench` (with `smoke/smoke-chapel-30s.mp4`) and `ply-handoff` Volumes, secrets `ply-hf` and `ply-worker` | live jobs |
+| opservemakesalt ($30 on 2026-11-11; $5.34 billed by the end of that day and $1.59 on 2026-11-12) | Volume `ply-bench` with `chapel/high/job` and `drjohnson/prep` (each the solve and photos only) and the smoke clip, secret `ply-hf` (read token), the worker image | experiments (`pipeline/modal/ply_eval.py`) |
 | ricco-mallick (about $1.70) | `ply-bench:drjohnson/prep` and the Dr Johnson benchmark twins | nothing at present |
 
 ## Running
@@ -42,8 +42,11 @@ Nothing. No Modal app is running on either account and no workflow is in progres
 - **Phone file (`q6`):** trained on for 3,000 steps at its own size, it gains 0.80 dB on the chapel (800k splats,
   now 0.48 dB below the desktop file instead of 1.25) and 0.73 dB on Dr Johnson cut to 240k. A twin under the phone
   size, whose phone file only loses the third SH band, gains 0.52 dB and ends 0.05 dB below the desktop file.
-  See-through pixels rise a little on the chapel (0.16% to 0.29%). Off by default (`--lite-finetune 3000` on export);
-  the export ships the fine-tuned file only when it scores better. It adds about five minutes to an export on an L4.
+  See-through pixels rise a little on the chapel (0.16% to 0.29%). **On by default since 2026-11-12** (decision 9),
+  because no other lever here buys as much per dollar (`EXPERIMENTS.md`): the export fine-tunes the phone file wherever
+  it has fewer splats or SH bands than the twin and a GPU can score it, and ships the result only when it scores
+  better. A Quick twin (SH 2, under 800k) is its own phone file and pays nothing. `--lite-finetune 0` turns it off.
+  It adds about five minutes to a chapel-size export on an L4 (scaled from 151 s on an L40S; not timed on an L4).
   Billed $1.11 on opservemakesalt on 2026-11-12 for the three runs.
 - Billed on opservemakesalt on 2026-11-11: $5.34 ($3.17 for the chapel runs and checks, $2.17 for the small scenario).
   About $0.50 more falls on 2026-11-12 (the 30k runs' last minutes) and was not in the report yet.
@@ -61,8 +64,9 @@ Nothing. No Modal app is running on either account and no workflow is in progres
    Next run: a second 30k baseline (`--variant q0-30k-b --args "--iterations 30000"`, `PLY_EVAL_TIMEOUT_MIN=27`), for
    the noise floor that decides whether an opacity regulariser of 0.005 may become the default. Then Q1 (exposure
    folded back), the variant left that needs code and can be judged on this scene. Q6 (the phone file fine-tuned)
-   passed on both scenes, twins under the phone size included. Making it the default is the owner's call: about five
-   minutes and $0.12 more per job on an L4, and it reaches real jobs only after a worker redeploy and its smoke test.
+   is the default and deployed. To read from the first real Standard or High job: `report.export.liteFinetune`
+   (its `seconds`, estimated at about five minutes for an 800k phone file on an L4, and that it did not fall back for
+   lack of GPU memory).
    Q3 (higher resolution) needs the chapel's 4K frames and waits.
    On the chapel, before any training run there: export `q5a` and `q5b` again under the new filter rule (export only)
    to see whether their see-through pixels go. No full-length run before the rest is in (decision 8).

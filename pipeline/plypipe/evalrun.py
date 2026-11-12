@@ -23,6 +23,8 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
+from plypipe.plan import LITE_FINETUNE_STEPS
+
 SCHEMA = 1
 
 # The plan's baseline: the saved High chapel run's settings (job.json: preset high, cap 2M from the plan, SH 3, no
@@ -44,7 +46,8 @@ VARIANTS: dict[str, dict] = {
     "q5b": {"add": ["--opacity-reg", "0.002"], "note": "opacity regulariser 0.002"},
     "q5c": {"add": ["--opacity-reg", "0.001"], "note": "opacity regulariser 0.001"},
     "q5d": {"add": ["--opacity-reg", "0"], "note": "no opacity regulariser"},
-    # the small twin is under the phone size as trained: its phone file is cut to 240k, the chapel's 2M -> 800k ratio
+    # the phone file's fine-tune, since 2026-11-12 the export's default: named here so the runs on the Volume keep their
+    # arguments. The small twin is under the phone size as trained: its phone file is cut to 240k, the chapel's ratio
     "q6": {"add": ["--lite-finetune", "3000"], "scenario_add": {"drjohnson": ["--lite-max", "240000"]},
            "note": "phone file trained on for 3k steps at its own size after it is cut down; scored against the cut-down one"},
 }
@@ -151,9 +154,11 @@ def estimate(args: list[str], gpu: str = "L40S", timeout_min: int | None = None,
     steps, s = steps_of(args), SCENARIOS[scenario]
     if steps is None or gpu_key(gpu) not in s["seconds_per_step"]:
         raise ValueError(f"cannot estimate '{' '.join(args)}' on {gpu}: needs --iterations and an L4 or L40S")
-    # the phone file's fine-tune counts at the full model's pace: fewer splats train faster, and the difference pays
-    # for starting the trainer a second time and scoring both phone models
-    tune = _int_option(args, "--lite-finetune") or 0
+    # the export trains the phone file on (the pipeline's default length unless --lite-finetune says otherwise). It
+    # counts at the full model's pace: fewer splats train faster, and the difference pays for starting the trainer a
+    # second time and scoring both phone models
+    tune = _int_option(args, "--lite-finetune")
+    tune = LITE_FINETUNE_STEPS if tune is None else tune
     train_min = math.ceil((steps + tune) * s["seconds_per_step"][gpu_key(gpu)] / 60)
     total_min = train_min + s["overhead_min"]
     timeout = timeout_min or math.ceil(STOP_LOSS * total_min)

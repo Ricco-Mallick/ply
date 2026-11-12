@@ -12,9 +12,10 @@ voxel. The floater filter needs WebGPU; without it the stage logs a warning and 
 The phone file keeps SH bands up to LITE_SH and, above LITE_MAX Gaussians, is decimated (phones crash on
 multi-million-splat scenes). Both files get their SH back at SH_BITS (see plypipe.spz): splat-transform rounds it to
 4-5 bits, which cost Dr Johnson 1 dB on desktop; dropping SH entirely cost the phone file another 2.6 dB.
-With --lite-finetune N the phone model, cut down or not, is trained on for N steps at its own splat count and with
-the SH bands it ships (plypipe.finetune), and is shipped when the viewer shows it better than the one it started from:
-dropping the third band alone cost Dr Johnson's phone file 0.59 dB. --lite-max sets the phone file's splat count.
+The phone model is then trained on for plan.LITE_FINETUNE_STEPS (--lite-finetune N; 0 turns it off) at its own splat
+count and with the SH bands it ships (plypipe.finetune), whenever it has fewer splats or SH bands than the twin and a
+GPU can score it, and is shipped when the viewer shows it better than the one it started from: +0.80 dB on the chapel,
++0.73 and +0.52 dB on Dr Johnson (docs/EXPERIMENTS.md, Q6). --lite-max sets the phone file's splat count.
 
 Last, plypipe.topview renders the cleaned model from above (topview.webp, recorded as scene.json's `topview` block)
 for the viewer's minimap. Failing to do so is a warning, never a failed export.
@@ -34,6 +35,7 @@ from pathlib import Path
 import numpy as np
 
 from plypipe import clean as clean_mod
+from plypipe import plan as plan_mod
 from plypipe import spz as spz_mod
 from plypipe import topview as topview_mod
 from plypipe.util import Ctx, need, read_scene, run, splat_transform_cmd, update_scene
@@ -57,6 +59,18 @@ def ply_count(ply: Path) -> int:
             if line == "end_header":
                 break
     return 0
+
+
+def ply_sh_degree(ply: Path) -> int:
+    """SH degree of a 3DGS PLY, from the f_rest properties its header names."""
+    rest = 0
+    with ply.open("rb") as f:
+        for _ in range(200):
+            line = f.readline().decode("ascii", "replace").strip()
+            if not line or line == "end_header":
+                break
+            rest += line.startswith("property") and line.split()[-1].startswith("f_rest_")
+    return int(round(math.sqrt(rest // 3 + 1))) - 1
 
 
 # splat-transform runs its actions (-r/-s/-t/-B) in PlayCanvas's engine frame, which is the PLY
@@ -363,13 +377,18 @@ def run_stage(ctx: Ctx) -> dict:
     sh = {"full": _restore_sh(ctx, full, cleaned)}
     n = ply_count(cleaned)
     lite_max = int(ctx.opt("lite_max") or LITE_MAX)
-    steps = int(ctx.opt("lite_finetune", 0) or 0)
+    steps = int(ctx.opt("lite_finetune", plan_mod.LITE_FINETUNE_STEPS) or 0)
+    # what the phone model gives up against the twin: splats, SH bands, or nothing. With nothing given up it is the twin
+    # itself (a Quick twin: SH 2, under the phone size), and a fine-tune has nothing to win back
+    lossy = n > lite_max or ply_sh_degree(cleaned) > LITE_SH
     lite_n, tuned = n, None
-    if n > lite_max or steps:  # the phone model as a .ply: decimation must end in one, and a fine-tune starts from one
+    if steps and lossy and not viewer:  # unscored, a fine-tuned model cannot be told from a worse one: none is made
+        tuned, steps = {"steps": steps, "shipped": "untuned", "why": "not measured: needs a GPU and held-out views"}, 0
+    if n > lite_max or (steps and lossy):  # the phone model as a .ply: decimation must end in one, and a fine-tune starts from one
         lite_ply = ctx.out / "scene_lite.ply"
         cut = ["-d", str(lite_max)] if n > lite_max else []
         run([*st, "-w", str(cleaned), "-H", str(LITE_SH), *cut, str(lite_ply)], ctx, "export")
-        if steps:
+        if steps and lossy:
             tuned = _finetune_lite(ctx, lite_ply, steps, holdout, aa)
         run([*st, "-w", "--spz-version", "3", str(lite_ply), str(lite)], ctx, "export")
         sh["lite"] = _restore_sh(ctx, lite, lite_ply)
@@ -429,6 +448,11 @@ def _finetune_lite(ctx: Ctx, lite_ply: Path, steps: int, holdout: int, aa: bool)
         if not before:
             return {**out, "why": "not measured: needs a GPU and held-out views"}
         out["before"] = before
+        try:  # the scoring above leaves this process holding cached GPU memory, which the trainer would go without
+            import torch
+            torch.cuda.empty_cache()
+        except Exception:
+            pass
         fitted = train_stage.finetune(ctx, lite_ply, steps, LITE_SH)
         after = viewer_eval.evaluate(fitted["ply"], ctx.data_dir, holdout, aa)
         out.update(after=after, **{k: fitted[k] for k in ("eval", "evalBlock") if k in fitted})

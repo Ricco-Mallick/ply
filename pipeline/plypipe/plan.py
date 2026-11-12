@@ -30,6 +30,11 @@ _FRAMES_MIN, _FRAMES_MAX = 700, 3200
 _SIDE_MIN, _SIDE_MAX = 1280, 2048
 _SIDE_SHARE = 0.45
 
+# the phone file: steps trained on from the model export makes for phones (fewer splats, SH 2), at its own splat
+# count (plypipe.finetune). Measured at this length only: +0.80 dB on the chapel for 151 s of an L40S, +0.73 and
+# +0.52 dB on Dr Johnson for 65 s (docs/EXPERIMENTS.md, Q6); --lite-finetune 0 turns it off
+LITE_FINETUNE_STEPS = 3_000
+
 # gaussians: enough to cover the surfaces once, capped again by what the views can support. The view cap
 # counts pixels, not frames: 2400 per view-megapixel is the old 2200 per 1280x720 video frame, while a
 # 1.2 MP photo carries more. Both caps scale with the preset; a view cap that ignored it made `high` equal `standard`

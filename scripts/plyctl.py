@@ -7,8 +7,9 @@
     python3 scripts/plyctl.py smoke --clip clip.mp4   # a short clip through the real API, then every result is checked
     python3 scripts/plyctl.py smoke --job <id>        # the same wait and checks for a job that is already queued
 
-`smoke` uploads the clip in parts as the capture app does, queues a Quick job of 2,000 training steps, waits for it
-and checks that every stage reported, that the gate ran, and that the API serves each result file. It exits 0 when
+`smoke` uploads the clip in parts as the capture app does, queues a Quick job of 2,000 training steps at SH 3, waits
+for it and checks that every stage reported, that the gate ran, that the export's fine-tune of the phone file ran to
+the end, and that the API serves each result file. It exits 0 when
 all of that holds, 1 when a check fails and 2 when the job is still running at the time limit. The job stays in
 review: rejecting it would queue it again. A capture under 400 frames is solved on the GPU box, so the hand-off to
 the CPU solver is not covered.
@@ -32,7 +33,9 @@ from pathlib import Path
 
 API = "https://ply-api.ricco-ply.workers.dev"
 PART = 16 * 1024 * 1024  # the capture app's part size; storage wants at least 5 MB for every part but the last
-SMOKE_ARGS = ["--preset", "quick", "--iterations", "2000"]
+# Quick, but at SH 3: the phone file then has one SH band less than the twin, so the export fine-tunes it as it does
+# for a Standard or High job
+SMOKE_ARGS = ["--preset", "quick", "--iterations", "2000", "--sh-degree", "3"]
 STAGES = ("frames", "sfm", "align", "occupancy", "label", "train", "export")
 REQUIRED = ("scene.spz", "scene_lite.spz", "scene.json", "report.json", "occupancy.json", "occupancy.png", "places.json")
 EXPECTED = ("topview.webp", "evidence/poses.json")  # a short walk may have no wall ring to draw; evidence never fails a job
@@ -140,6 +143,15 @@ def check(job: dict, served=lambda path: True) -> tuple[list[str], list[str]]:
     sfm, train = report.get("sfm") or {}, report.get("train") or {}
     notes.append(f"{sfm.get('registered')} of {sfm.get('images')} views solved, {sfm.get('mapper')} mapper ({sfm.get('mapperReason')}); "
                  f"{train.get('maxSteps')} steps in {train.get('seconds')} s")
+    # the phone file's fine-tune falls back to the untuned file by design, so only this check sees it fail
+    tune = (report.get("export") or {}).get("liteFinetune")
+    if not tune:
+        problems.append("the export did not fine-tune the phone file (a job without --sh-degree 3, or a worker from before the fine-tune)")
+    elif tune.get("shipped") != "finetuned" and not str(tune.get("why") or "").startswith("measured"):
+        problems.append(f"the phone file's fine-tune did not finish: {str(tune.get('why') or '')[-300:]}")
+    else:
+        notes.append(f"phone file: {(tune.get('before') or {}).get('psnr')} dB, {(tune.get('after') or {}).get('psnr')} dB after "
+                     f"{tune.get('steps')} steps ({tune.get('seconds')} s); shipped the {tune.get('shipped')} one")
     return problems, notes
 
 
