@@ -22,7 +22,8 @@ only when other views confirm it:
 What a semi-transparent floater does to expected depth is exactly what this removes: it drags the depth to a point
 between itself and the wall behind, and every view that is not looking through the same blob sees the wall there.
 
-Normals are the cross product of central differences of the back-projected depth map, turned to face the camera, in
+Normals are the cross product of finite differences of the back-projected depth map (central where both neighbours
+are usable, one-sided at the last pixel before a hole or a silhouette), turned to face the camera, in
 the world frame. Points are yielded view by view (`consistent_points` is a generator), so what is held is the usable
 depth of every view (N x H x W floats) and one view's points: never the points of every view. `Cloud` keeps one point
 per 2 cm voxel for dense_points.npz (points float32, normals float16), which the mesh and layout stages read; it is not
@@ -198,22 +199,32 @@ def _pixel_rays(v: View) -> np.ndarray:
     return np.stack([(u - v.K[0, 2]) / v.K[0, 0], (w - v.K[1, 2]) / v.K[1, 1], np.ones_like(u)], -1)
 
 
-def _normals(P, ok):
-    """Unit normals facing the camera from central differences of the camera-space points P (H, W, 3), and where
-    they exist: the pixel and its four neighbours are usable."""
+def _along_rows(P, ok):
+    """Difference of the points P (H, W, 3) along each row, and where it exists: from the pixel before to the pixel
+    after where both are usable, else to or from the one that is (the last pixel before a hole or a silhouette)."""
     xp = _ns(P)
-    du, dv = P[1:-1, 2:] - P[1:-1, :-2], P[2:, 1:-1] - P[:-2, 1:-1]
+    ahead, behind, has_ahead, has_behind = xp.zeros_like(P), xp.zeros_like(P), xp.zeros_like(ok), xp.zeros_like(ok)
+    ahead[:, :-1] = P[:, 1:] - P[:, :-1]
+    has_ahead[:, :-1] = ok[:, 1:] & ok[:, :-1]
+    behind[:, 1:] = ahead[:, :-1]
+    has_behind[:, 1:] = has_ahead[:, :-1]
+    return ahead * has_ahead[..., None] + behind * has_behind[..., None], has_ahead | has_behind
+
+
+def _normals(P, ok):
+    """Unit normals facing the camera from finite differences of the camera-space points P (H, W, 3), and where they
+    exist: the pixel is usable and has a usable neighbour in its row and in its column."""
+    xp = _ns(P)
+    du, has_u = _along_rows(P, ok)
+    dv, has_v = _along_rows(P.swapaxes(0, 1), ok.swapaxes(0, 1))
+    dv, has_v = dv.swapaxes(0, 1), has_v.swapaxes(0, 1)
     n = xp.stack([dv[..., 1] * du[..., 2] - dv[..., 2] * du[..., 1],
                   dv[..., 2] * du[..., 0] - dv[..., 0] * du[..., 2],
                   dv[..., 0] * du[..., 1] - dv[..., 1] * du[..., 0]], -1)
     length = xp.sqrt((n * n).sum(-1))
-    good = ok[1:-1, 1:-1] & ok[1:-1, 2:] & ok[1:-1, :-2] & ok[2:, 1:-1] & ok[:-2, 1:-1] & (length > 0)
-    away = (n * P[1:-1, 1:-1]).sum(-1) > 0
-    n = n / xp.where(good, xp.where(away, -length, length), xp.ones_like(length))[..., None]
-    out, has = xp.zeros_like(P), xp.zeros_like(ok)
-    out[1:-1, 1:-1] = n
-    has[1:-1, 1:-1] = good
-    return out, has
+    has = has_u & has_v & (length > 0)
+    away = (n * P).sum(-1) > 0
+    return n / xp.where(has, xp.where(away, -length, length), xp.ones_like(length))[..., None], has
 
 
 def _sample(D, px, py):

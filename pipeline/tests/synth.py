@@ -217,6 +217,67 @@ def depth_views(boxes: np.ndarray, centers: np.ndarray, rots: np.ndarray, camera
     return out
 
 
+# Two rooms for the walking grid from depth: a 0.8 m door, 2 m high, through a plain partition only 10 cm thick (the
+# sparse grid cannot keep one under 25 cm, see TWO_ROOMS), and a table in the corner of the second room.
+NAV_ROOMS = (8.1, 4.0, 2.8)
+NAV_PARTITION = (4.0, 4.1)
+NAV_DOOR = (1.7, 2.5, 2.0)                  # z0, z1, height
+NAV_TABLE = (6.9, 0.3, 7.9, 1.1, 0.75)
+NAV_ROUTE = [(0.9, 3.1), (0.9, 0.9), (3.1, 0.9), (3.1, 2.1), (5.0, 2.1), (7.2, 2.1), (7.2, 3.2), (5.0, 3.2), (5.0, 2.1), (3.1, 2.1), (2.0, 3.2)]
+
+
+def nav_boxes() -> np.ndarray:
+    """The two rooms as solid boxes: the shell and the table, then the partition either side of the door and above it."""
+    (p0, p1), (z0, z1, top), (_, D, H) = NAV_PARTITION, NAV_DOOR, NAV_ROOMS
+    return np.vstack([solid_room(NAV_ROOMS, (NAV_TABLE,)), [(p0, 0, 0, p1, H, z0), (p0, 0, z1, p1, H, D), (p0, top, z0, p1, H, z1)]])
+
+
+def nav_walk(spacing: float = 0.08, pan: float = 0.6, pitch: float = -0.18) -> tuple[np.ndarray, np.ndarray]:
+    """A walk round the first room, through the door and round the second, at 1.45 m: centres and cam_from_world
+    rotations. The phone looks where it is going, tilted 10 degrees down, and pans from side to side every 3 m."""
+    route = np.array(NAV_ROUTE, float)
+    xz, yaw, walked = [], [], 0.0
+    for a, b in zip(route[:-1], route[1:]):
+        length = np.linalg.norm(b - a)
+        s = np.arange(0, length, spacing)
+        xz.append(a + (b - a) * (s / length)[:, None])
+        yaw.append(np.arctan2(b[1] - a[1], b[0] - a[0]) + pan * np.sin(2 * np.pi * (walked + s) / 3.0))
+        walked += length
+    xz, yaw = np.concatenate(xz), np.concatenate(yaw)
+    return np.c_[xz[:, 0], np.full(len(xz), 1.45), xz[:, 1]], np.array([look(y, pitch) for y in yaw])
+
+
+def nav_model(floor_points: int = 200, seed: int = 4, camera: tuple = SMALL_CAMERA) -> colmap_txt.Model:
+    """What a camera solve leaves of the two rooms, in the scene frame: the walk's cameras, and points on the floor,
+    the outer walls and the table but none on the plain partition. Each point is observed by the three nearest
+    cameras with a clear line to it."""
+    rng = np.random.default_rng(seed)
+    boxes = nav_boxes()
+    (W, D, H), (x0, z0, x1, z1, top), (p0, p1) = NAV_ROOMS, NAV_TABLE, NAV_PARTITION
+    floor = np.c_[rng.uniform(0, W, floor_points), np.zeros(floor_points), rng.uniform(0, D, floor_points)]
+    floor = floor[((floor[:, 0] < p0) | (floor[:, 0] > p1)) & ~((floor[:, 0] > x0) & (floor[:, 0] < x1) & (floor[:, 2] > z0) & (floor[:, 2] < z1))]
+    pts = [floor, np.c_[rng.uniform(x0, x1, 400), np.full(400, top), rng.uniform(z0, z1, 400)]]
+    for (a0, b0, a1, b1) in [(0, 0, W, 0), (W, 0, W, D), (W, D, 0, D), (0, D, 0, 0)]:
+        t = rng.uniform(0, 1, 1500)
+        pts.append(np.c_[a0 + (a1 - a0) * t, rng.uniform(0, H, 1500), b0 + (b1 - b0) * t])
+    pts = np.concatenate(pts)
+    pts += (np.array([W / 2, H / 2, D / 2]) - pts) * 1e-6  # a hair inside the room, off the surface it lies on
+    centers, rots = nav_walk()
+    tails = []
+    for p in pts:
+        near = np.argsort(np.linalg.norm(centers - p, axis=1))[:24]
+        d = np.where(np.abs(p - centers[near]) < 1e-12, 1e-12, p - centers[near])
+        t0, t1 = (boxes[:, None, :3] - centers[near]) / d, (boxes[:, None, 3:] - centers[near]) / d
+        enter, leave = np.minimum(t0, t1).max(-1), np.maximum(t0, t1).min(-1)
+        clear = ~((leave >= enter) & (leave > 0) & (enter < 1)).any(0)
+        tails.append("128 128 128 0.5 " + " ".join(f"{k + 1} 0" for k in near[clear][:3]))
+    w, h, f = camera
+    images = [colmap_txt.Image(i + 1, geometry.mat_to_quat(R), -R @ c, 1, f"{i:06d}.jpg", "") for i, (c, R) in enumerate(zip(centers, rots))]
+    n = len(pts)
+    return colmap_txt.Model(["# Camera list", f"1 PINHOLE {w} {h} {f:g} {f:g} {w / 2:g} {h / 2:g}"], images, np.arange(1, n + 1), pts,
+                            np.full((n, 3), 128, np.uint8), np.full(n, 0.5), np.full(n, 3, np.int32), tails)
+
+
 def surface_distance(boxes: np.ndarray, pts: np.ndarray) -> np.ndarray:
     """Distance from each point (in the open air between the boxes) to the nearest box."""
     out = np.full(len(pts), np.inf)
