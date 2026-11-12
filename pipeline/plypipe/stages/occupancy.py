@@ -22,7 +22,7 @@ Writes occupancy.png (8-bit grey: 255 free, 0 blocked, 127 unknown; image row r 
 column c = +X, top-left pixel = cell at the origin corner) and occupancy.json, which also carries
 the walk check of plypipe.walkcheck (`walk`) and where the grid came from (`source`: "sparse" or "depth").
 
-The grid from depth (IMPROVEMENT-PLAN 2.3; `from_depth`, run by export with --dense-occupancy where a GPU can render)
+The grid from depth (IMPROVEMENT-PLAN 2.3; `from_depth`, run by export where a GPU can render, --no-dense-occupancy off)
 replaces the one above unless fewer capture positions are walkable on it; where the depth decided nothing it takes
 the sparse grid's floor, and it keeps the sparse grid's walls. The sparse grid knows a wall only where the solve found points
 on it, and floor only where it found points or the cameras walked. The trained splat's depth, kept where other views

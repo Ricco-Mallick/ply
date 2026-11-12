@@ -75,9 +75,6 @@ GRID_SLOWDOWN = 1.5
 # 15,000 steps against 159 s plain, x2.9, where the fused 16x16x8 grid of q1 took 255 s (x1.6)
 AFFINE_SLOWDOWN = 2.9
 FOLD_MIN = 2
-# --dense-occupancy renders every 5th training view and votes the depth into a 5 cm grid: 4 s on Dr Johnson (46 views)
-# and 25 s on the chapel (L40S, 2026-11-12)
-DENSE_MIN = 1
 STOP_LOSS = 1.5    # IMPROVEMENT-PLAN rule 3: the timeout is 1.5 times the estimate
 GRACE_MIN = 2      # the Modal function outlives the in-code deadline by this much, to save what a stopped run has
 
@@ -122,7 +119,7 @@ TRAINED_FILES = ("scene.ply", ".done/train.json")
 TRAINED_TREE, EXPORTED_TREE = "eval", "eval/lite"
 # Its own options must be ones the export stage reads and training does not (tests/test_evalrun.py checks both stages'
 # source): an option that changes training would be recorded against a model trained without it
-EXPORT_ONLY_OPTIONS = ("--dense-occupancy", "--lite-finetune", "--lite-max", "--min-opacity", "--no-crop")
+EXPORT_ONLY_OPTIONS = ("--dense-occupancy", "--no-dense-occupancy", "--lite-finetune", "--lite-max", "--min-opacity", "--no-crop")
 
 INPUT = "saved-solve"  # the CLI wants an input path; train and export never read it
 NAME = re.compile(r"^[a-z0-9][a-z0-9_.-]{0,39}$")
@@ -216,14 +213,15 @@ def estimate(args: list[str], gpu: str = "L40S", timeout_min: int | None = None,
     slowdown = AFFINE_SLOWDOWN if affine else GRID_SLOWDOWN
     paced = steps * (slowdown if grid else 1) + max(fold or 0, 0) + tune
     train_min = math.ceil(paced * s["seconds_per_step"][gpu_key(gpu)] / 60)
-    dense = "--dense-occupancy" in args
-    overhead = s["overhead_min"] + (FOLD_MIN if fold is not None else 0) + (DENSE_MIN if dense else 0)
+    # the export's depth pass for the walking grid (on by default) took 4 s on Dr Johnson and 25 s on the chapel (L40S,
+    # 2026-11-12): inside the overhead
+    overhead = s["overhead_min"] + (FOLD_MIN if fold is not None else 0)
     total_min = train_min + overhead
     timeout = timeout_min or math.ceil(STOP_LOSS * total_min)
     rate = per_hour(gpu, s["cpu"], s["memory_gib"])
     return {"gpu": gpu, "steps": steps, **({"gridSlowdown": slowdown} if grid else {}), **({"exposureFoldSteps": max(fold, 0)} if fold is not None else {}),
             **({"fineTuneSteps": tune} if tune else {}), **({"exportOnly": True} if export_only else {}),
-            **({"denseMin": DENSE_MIN} if dense else {}), "trainMin": train_min, "overheadMin": overhead,
+            "trainMin": train_min, "overheadMin": overhead,
             "totalMin": total_min,
             "timeoutMin": timeout, "usd": round(total_min / 60 * rate, 2), "maxUsd": round(timeout / 60 * rate, 2), "perHour": rate}
 
@@ -275,8 +273,7 @@ def describe(job: dict, job_dir: str = "/tmp/work/job") -> str:
                    f"{' + ' + str(e['exposureFoldSteps']) + ' after the exposure fold' if 'exposureFoldSteps' in e else ''}")
         out.append(f"  {e['gpu']}: {trained}"
                    f"{' + ' + str(e['fineTuneSteps']) + ' for the phone file' if e.get('fineTuneSteps') else ''}"
-                   f" = {e['trainMin']} min training + {e['overheadMin']} min restore/export/scoring{' and the fold' if 'exposureFoldSteps' in e else ''}"
-                   f"{' and the depth grid (an estimate)' if e.get('denseMin') else ''} = "
+                   f" = {e['trainMin']} min training + {e['overheadMin']} min restore/export/scoring{' and the fold' if 'exposureFoldSteps' in e else ''} = "
                    f"{e['totalMin']} min, about ${e['usd']:.2f} at ${e['perHour']:.2f}/h; stop-loss {e['timeoutMin']} min, at most ${e['maxUsd']:.2f}")
     out += [f"the stop-loss is 1.5x the estimate unless the table sets one; the Modal function times out {GRACE_MIN} min later "
             f"({job['ceilingMin'] + GRACE_MIN} min), to save what a stopped run has",
