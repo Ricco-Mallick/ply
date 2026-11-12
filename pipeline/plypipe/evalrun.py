@@ -64,9 +64,9 @@ CPU, MEMORY_GIB = 8, 32  # what the chapel's train and export ran on (the worker
 # 1,717.9 s for 60,000 steps on an L40S (the saved High run's report). An L4 is about twice as slow (ply_bench's notes).
 SECONDS_PER_STEP = {"L40S": 1717.9 / 60_000, "L4": 2 * 1717.9 / 60_000}
 OVERHEAD_MIN = 5   # restore, export and scoring for a 2M-splat model
-# Not measured yet, both set on the careful side so the stop-loss does not end a first q1 run: a step with the bilateral
-# grid also slices one grid per photo and regularises all of them, and the exposure fold renders its views twice,
-# rewrites the PLY and starts the trainer a second time. Replace both with the first q1 run's timings.
+# Estimates, not measurements (no bilateral-grid run has been timed), set on the careful side so the stop-loss does not
+# end a first q1 run: a step with the grid also slices one grid per photo and regularises all of them, and the exposure
+# fold renders its views twice, rewrites the PLY and starts the trainer a second time.
 GRID_SLOWDOWN = 1.5
 FOLD_MIN = 2
 STOP_LOSS = 1.5    # IMPROVEMENT-PLAN rule 3: the timeout is 1.5 times the estimate

@@ -276,6 +276,35 @@ def test_gsplats_own_sh_evaluation_of_a_folded_model_is_the_mapped_colour():
         assert np.abs(gsplat(f0, fN) - (gsplat(sh0, shN) @ M_TRUE.T + B_TRUE)).max() < 1e-5
 
 
+def test_the_rasteriser_is_handed_the_model_as_the_viewer_draws_it(tmp_path, monkeypatch):
+    """exposure._renderer up to gsplat's rasterization(), which needs CUDA: a stand-in takes its arguments on the CPU."""
+    torch = pytest.importorskip("torch")
+    gsplat = pytest.importorskip("gsplat")
+    write_model(tmp_path / "m.ply", n=6, k=15, normals=False)
+    model, seen, as_tensor = finetune.read_splats(tmp_path / "m.ply", 3), {}, torch.as_tensor
+
+    def rasterization(means, quats, scales, opacities, colors, viewmats, Ks, width, height, sh_degree=None, rasterize_mode="classic"):
+        seen.update(means=means, quats=quats, scales=scales, opacities=opacities, colors=colors, viewmats=viewmats, Ks=Ks,
+                    sh_degree=sh_degree, mode=rasterize_mode, grad=torch.is_grad_enabled())
+        return torch.full((1, height, width, 3), 1.25), torch.full((1, height, width, 1), 0.5), {}
+
+    monkeypatch.setattr(gsplat, "rasterization", rasterization)
+    monkeypatch.setattr(torch.cuda, "is_available", lambda: True)
+    monkeypatch.setattr(torch, "as_tensor", lambda a, dtype=None, device=None: as_tensor(a, dtype=dtype))   # "cuda" is not here
+    view, K = np.eye(4), np.array([[120.0, 0, 80], [0, 120, 60], [0, 0, 1]])
+    view[:3, 3] = 1, 2, 3
+    rgb, alpha = exposure._renderer(tmp_path / "m.ply", True)(view, K, 160, 120)
+    assert rgb.shape == (120, 160, 3) and alpha.shape == (120, 160) and rgb.dtype == np.float32
+    assert (rgb == 1.25).all() and (alpha == 0.5).all()                         # as rasterised: nothing clamped
+    assert np.array_equal(seen["means"], model["means"]) and np.array_equal(seen["quats"], model["quats"])
+    assert np.allclose(seen["scales"], np.exp(model["scales"])) and np.allclose(seen["opacities"], 1 / (1 + np.exp(-model["opacities"])))
+    assert np.array_equal(seen["colors"], np.concatenate([model["sh0"], model["shN"]], 1)) and seen["sh_degree"] == 3
+    assert seen["viewmats"].shape == (1, 4, 4) and np.array_equal(seen["viewmats"][0], view) and np.array_equal(seen["Ks"][0], K)
+    assert seen["mode"] == "antialiased" and not seen["grad"]
+    exposure._renderer(tmp_path / "m.ply", False)(view, K, 16, 12)
+    assert seen["mode"] == "classic"
+
+
 def test_the_train_stage_folds_and_the_pinned_trainer_continues_from_the_folded_colours_with_no_appearance_model(trainer, tmp_path, monkeypatch, capsys):
     """The train stage with --bilateral-grid --exposure-fold, its launcher command lines run by the real launcher on
     the pinned trainer (--dry-run: gsplat's Config, parser, datasets and parameters on a CPU). Only the rasteriser and
