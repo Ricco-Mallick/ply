@@ -381,3 +381,52 @@ $0.33), against the mean of `q0a` and `q0b`:
   one affine map of its input to 2e-7, where the default grid leaves a residual of 0.23. It can absorb a photo's
   exposure and white balance and nothing else, so the fold should return the model to the photos' colours with
   little left for the extra steps to repair.
+
+### Q1b on Dr Johnson: the one-cell grid trains well, and the fold and its steps still cost 0.3 dB (2026-11-12)
+
+One run (`q1b`: `--exposure-affine --exposure-fold 2000`, L40S, 11.4 minutes, $0.43), against the two baselines
+(`q0a`, `q0b`; mean, and twice the noise floor in brackets):
+
+| | every-8th cc-PSNR | block cc-PSNR | every-8th cc-LPIPS | viewer PSNR desktop | viewer brightness |
+|---|---:|---:|---:|---:|---:|
+| baselines | 29.25 (±0.04) | 27.58 (±0.10) | 0.2412 (±0.0008) | 29.38 (±0.02) | ×1.011 to ×1.016 |
+| q1b as it left training, before the fold | 29.29 | 27.73 | 0.2387 | – | – |
+| q1b shipped (folded, 2,000 steps after) | 29.13 | 27.28 | 0.2356 | 29.09 | ×1.007 |
+| q1 (the 16×16×8 grid), for comparison | 28.75 | 27.45 | 0.2427 | 28.47 | ×1.006 |
+
+- **The one-cell grid is not what costs.** Trained with it, the model scores as well as the baseline or better on
+  both hold-outs before the fold. The full grid of `q1` left its model 2.3 dB under there.
+- **The fold had almost nothing to do.** The fitted map is close to the identity (gains 0.99, 1.00, 0.99), the
+  model's brightness on the training views went from ×0.974 to ×1.006 of the photos, and the error on the fitted
+  pixels from 0.0194 to 0.0173. Dr Johnson's photos do not differ in exposure.
+- **The shipped model is 0.12 dB under on the every-8th views, 0.30 on the block and 0.28 in the viewer**, with
+  LPIPS 0.0056 better. Between the model before the fold and the shipped one, what happened is the fold and the
+  2,000 steps without an appearance model; this run cannot tell which of the two costs. A run with the fold and no
+  steps after it (`--exposure-affine --exposure-fold 0`) would.
+- **Under the rule set for this run (`STATUS.md`), more than 0.2 dB under on any score closes Q1:** it is closed, and
+  the twin keeps no appearance model. The diagnostic run above (about $0.45) and the chapel, whose windows are where
+  an exposure model could pay, are left to the owner.
+- The phone file's +0.5 dB against the baselines is the phone fine-tune, which became the default after `q0a` and
+  `q0b` ran: `q0a`'s own model exported again today scores 29.30 on the phone, `q1b` 29.31.
+- **Time:** the one-cell grid runs on the pure-torch `lib_bilagrid` at 2.9 times a plain step (464 s for 15,000
+  steps against 159 s; the fused 16×16×8 grid was 1.6). `evalrun.AFFINE_SLOWDOWN` holds it.
+
+### The walking grid from depth on two real twins (2026-11-12)
+
+`--dense-occupancy`, exported again from `q0a`'s trained model on each scene (`--export-from q0a`, L40S):
+
+| | views rendered | surface points | seconds | camera positions walkable, depth / sparse | floor to stand on, depth / sparse |
+|---|---:|---:|---:|---:|---:|
+| Dr Johnson | 46 | 349k (2 cm voxels) | 4.0 | 99.6% / 99.6% | 26.8 / 27.4 m² |
+| Chapel | 237 | 2.29M (4 cm voxels) | 24.7 | 100% / 100% | 17.4 / 28.1 m² |
+
+- The depth pass runs on a GPU in seconds, and the depth grid keeps every place the camera stood walkable on both.
+- It has less floor to stand on: 2% less on Dr Johnson and 38% less on the chapel. The rule (no less floor, no fewer
+  camera positions) kept the sparse grid both times, so neither twin changed.
+- **On the chapel the depth grid is the right one.** Side by side, the sparse grid's pew blocks are speckled with
+  walkable cells, gaps between the few SfM points on each pew, while the depth grid has every pew block solid and
+  the aisles clear. Its 38% less floor is the pews. The rule counts any floor as better, so it kept the grid a
+  walker can cross the pews on. Whether to change the rule (for example: camera positions as walkable, and no
+  walkable cell the depth saw blocked) is a decision for the owner; nothing ships until then.
+- Each export wrote `occupancy_depth.png` beside the sparse `occupancy.png` in `<scenario>/eval/q0a-dense/` on the
+  Volume. The two runs cost $0.30.

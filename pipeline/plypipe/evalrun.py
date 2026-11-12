@@ -71,10 +71,13 @@ OVERHEAD_MIN = 5   # restore, export and scoring for a 2M-splat model
 # end a first q1 run: a step with the grid also slices one grid per photo and regularises all of them, and the exposure
 # fold renders its views twice, rewrites the PLY and starts the trainer a second time.
 GRID_SLOWDOWN = 1.5
+# --exposure-affine's 1x1x1 grid runs on the pure-torch lib_bilagrid: q1b on Dr Johnson (L40S, 2026-11-12) took 464 s for
+# 15,000 steps against 159 s plain, x2.9, where the fused 16x16x8 grid of q1 took 255 s (x1.6)
+AFFINE_SLOWDOWN = 2.9
 FOLD_MIN = 2
-# --dense-occupancy renders every 5th training view and votes the depth into a 5 cm grid on the CPU. Not timed yet: the
-# plan expects seconds for the render, and the vote and the two walk checks are numpy on the container's cores
-DENSE_MIN = 3
+# --dense-occupancy renders every 5th training view and votes the depth into a 5 cm grid: 4 s on Dr Johnson (46 views)
+# and 25 s on the chapel (L40S, 2026-11-12)
+DENSE_MIN = 1
 STOP_LOSS = 1.5    # IMPROVEMENT-PLAN rule 3: the timeout is 1.5 times the estimate
 GRACE_MIN = 2      # the Modal function outlives the in-code deadline by this much, to save what a stopped run has
 
@@ -205,19 +208,20 @@ def estimate(args: list[str], gpu: str = "L40S", timeout_min: int | None = None,
     # second time and scoring both phone models
     tune = _int_option(args, "--lite-finetune")
     tune = LITE_FINETUNE_STEPS if tune is None else tune
-    # --exposure-fold trains the full model on, with no appearance model: its steps count at the plain pace. The 1x1x1
-    # grid slices in pure torch; until a q1b run times it, it is budgeted like the full grid rather than ended early
-    grid, fold = "--bilateral-grid" in args or "--exposure-affine" in args, _int_option(args, "--exposure-fold")
+    # --exposure-fold trains the full model on, with no appearance model: its steps count at the plain pace
+    affine = "--exposure-affine" in args and "--bilateral-grid" not in args
+    grid, fold = "--bilateral-grid" in args or affine, _int_option(args, "--exposure-fold")
     if export_only:
         steps, grid, fold = 0, False, None
-    paced = steps * (GRID_SLOWDOWN if grid else 1) + max(fold or 0, 0) + tune
+    slowdown = AFFINE_SLOWDOWN if affine else GRID_SLOWDOWN
+    paced = steps * (slowdown if grid else 1) + max(fold or 0, 0) + tune
     train_min = math.ceil(paced * s["seconds_per_step"][gpu_key(gpu)] / 60)
     dense = "--dense-occupancy" in args
     overhead = s["overhead_min"] + (FOLD_MIN if fold is not None else 0) + (DENSE_MIN if dense else 0)
     total_min = train_min + overhead
     timeout = timeout_min or math.ceil(STOP_LOSS * total_min)
     rate = per_hour(gpu, s["cpu"], s["memory_gib"])
-    return {"gpu": gpu, "steps": steps, **({"gridSlowdown": GRID_SLOWDOWN} if grid else {}), **({"exposureFoldSteps": max(fold, 0)} if fold is not None else {}),
+    return {"gpu": gpu, "steps": steps, **({"gridSlowdown": slowdown} if grid else {}), **({"exposureFoldSteps": max(fold, 0)} if fold is not None else {}),
             **({"fineTuneSteps": tune} if tune else {}), **({"exportOnly": True} if export_only else {}),
             **({"denseMin": DENSE_MIN} if dense else {}), "trainMin": train_min, "overheadMin": overhead,
             "totalMin": total_min,

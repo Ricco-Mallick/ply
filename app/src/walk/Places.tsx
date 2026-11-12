@@ -7,6 +7,7 @@ import { Glass } from '../shared/Glass';
 import type { WalkEngine } from './engine';
 import type { MapExtras } from './Walk';
 import { Navigator, pathLength, steps, type Place } from '../lab/places';
+import { RADIUS } from './walker';
 import { Overlay } from '../lab/overlay';
 import { Palette } from '../lab/search';
 
@@ -40,7 +41,7 @@ export function PlacesLayer({ engine, base, entered, onMap, onData, searchOpen, 
   useEffect(() => { if (!base) return; fetch(new URL('places.json', base)).then(r => r.ok ? r.json() : null).then(j => setPlaces(j?.places ?? [])).catch(() => setPlaces([])); }, [base]);
   useEffect(() => {
     if (!engine.state.loaded || !places?.length || ov) return;
-    const n = engine.grid ? new Navigator(engine.grid) : null, o = new Overlay(engine, n); o.allPlaces = places;
+    const n = engine.grid ? new Navigator(engine.grid, RADIUS) : null, o = new Overlay(engine, n); o.allPlaces = places;
     setNav(n); setOv(o); onData?.({ places, nav: n }); return () => o.dispose();
   }, [engine.state.loaded, places]);
   // 200 labelled places means 200 floating labels over the room. Stack neighbours of the same kind into one pin

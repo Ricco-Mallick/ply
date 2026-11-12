@@ -36,26 +36,26 @@ def test_it_loads_and_builds_its_modal_objects_without_a_connection(monkeypatch)
     monkeypatch.setenv("MODAL_CONFIG_PATH", "/nonexistent/modal.toml")
     m = load(monkeypatch)
     assert m.app.name == "ply-eval" and callable(m.main) and callable(m.run_variant.local)
-    assert m.GPUS == ["L40S"] and m.CEILING_MIN == 32                             # q1: 15k steps with the grid, 2k after the fold, the phone file's 3k
+    assert m.GPUS == ["L40S"] and m.CEILING_MIN == 47                             # q1b: 15k steps with the pure-torch grid, 2k after the fold, the phone file's 3k
     original = next(v for k, v in vars(m.run_variant).items() if k.startswith("_sync_original"))
     info = getattr(original, "_function_info", None)
     if info is not None:                                                          # modal 1.6.3's layout; the GPU, size and timeout it will ask for
-        assert info.gpus == [("L40S", 1)] and info.cpu == 8 and info.memory_mib == 32768 and info.timeout == 34 * 60
+        assert info.gpus == [("L40S", 1)] and info.cpu == 8 and info.memory_mib == 32768 and info.timeout == 49 * 60
 
 
 def test_a_gpu_fallback_is_opt_in_and_lengthens_the_timeout(monkeypatch):
     m = load(monkeypatch, "ply_eval_fallback", PLY_EVAL_GPU="L40S,L4")
-    assert m.GPUS == ["L40S", "L4"] and m.CEILING_MIN == 51
+    assert m.GPUS == ["L40S", "L4"] and m.CEILING_MIN == 81
     assert load(monkeypatch, "ply_eval_longer", PLY_EVAL_TIMEOUT_MIN="45").CEILING_MIN == 45
 
 
 def test_the_scenario_sizes_the_container_and_must_match_the_launch(monkeypatch):
     m = load(monkeypatch, "ply_eval_small", PLY_EVAL_SCENARIO="drjohnson", PLY_EVAL_GPU="L4,L40S")
-    assert m.SCENARIO == "drjohnson" and m.CEILING_MIN == 29
+    assert m.SCENARIO == "drjohnson" and m.CEILING_MIN == 44
     original = next(v for k, v in vars(m.run_variant).items() if k.startswith("_sync_original"))
     info = getattr(original, "_function_info", None)
     if info is not None:
-        assert info.gpus == [("L4", 1), ("L40S", 1)] and info.cpu == 4 and info.memory_mib == 16384 and info.timeout == 31 * 60
+        assert info.gpus == [("L4", 1), ("L40S", 1)] and info.cpu == 4 and info.memory_mib == 16384 and info.timeout == 46 * 60
     with pytest.raises(SystemExit, match="PLY_EVAL_SCENARIO=chapel"):          # sized for Dr Johnson: a chapel run would get its container
         m.main.info.raw_f(scenario="chapel", variant="q0a")
     with pytest.raises(SystemExit, match="not one of"):
