@@ -156,6 +156,34 @@ def test_a_hole_is_not_filled_over_a_cell_that_was_seen_blocked():
     assert (grid[2:4, 2:4] == FREE).all() and (grid[5:7, 5:7] == UNKNOWN).all()
 
 
+def test_the_sparse_grid_fills_only_what_the_depth_left_undecided_and_keeps_its_walls(rooms):
+    """Each grid where it has evidence: the depth's obstacles stay (the chapel's pews), the sparse grid's walls stay
+    (a gap the depth looked through), and floor the depth did not decide on comes from the sparse grid unless a view
+    saw something there. A sparse grid that calls the whole footprint free, partition and all (it has no point on
+    it), changes nothing outside the rooms and does not open the partition."""
+    centers, scans, grid, meta, votes = rooms
+    sx = LO[0] + (np.arange(SHAPE[1] // 2) + 0.5) * 0.1
+    sz = LO[1] + (np.arange(SHAPE[0] // 2) + 0.5) * 0.1
+    sparse = np.full((SHAPE[0] // 2, SHAPE[1] // 2), UNKNOWN, np.uint8)        # 10 cm cells over the same area
+    sparse[np.ix_((sz > 0) & (sz < NAV_ROOMS[1]), (sx > 0) & (sx < NAV_ROOMS[0]))] = FREE
+    inside = (slice(28, 30), slice(36, 38))                                     # a post in the second room
+    sparse[inside] = BLOCKED
+    merged, mmeta = occupancy.grid_from_depth(iter(scans), centers, LO, SHAPE, max_rays=RAYS, sparse=sparse)
+    fine = cv2.resize(sparse, (SHAPE[1], SHAPE[0]), interpolation=cv2.INTER_NEAREST)
+    walked, _ = occupancy.walked_corridor(centers, LO, CELL, SHAPE, 0.2)
+    assert (merged[(grid == BLOCKED)] == BLOCKED).all() and standable_in_partition(merged, mmeta) == 0
+    kept = (fine == BLOCKED) & ~walked                                          # the walk wins where it crosses the post
+    assert kept.sum() >= 1 and (merged[kept] == BLOCKED).all() and mmeta["depth"]["sparseBlocked"] > 0
+    took = (grid == UNKNOWN) & (votes["blocked"] == 0) & (merged == FREE)
+    assert mmeta["depth"]["sparseFree"] > 0 and took.sum() > 0
+    assert (merged[(grid == UNKNOWN) & (votes["blocked"] > 0) & ~walked] != FREE).all()  # a view saw something there
+    outside = ~np.ix_((ZS > 0) & (ZS < NAV_ROOMS[1]), (XS > 0) & (XS < NAV_ROOMS[0]))[0] | ~np.ix_(ZS > 0, (XS > 0) & (XS < NAV_ROOMS[0]))[1]
+    assert np.array_equal(merged[outside], grid[outside])                       # beyond the footprint, the depth's grid as it was
+    assert mmeta["source"] == "depth" and set(meta) <= set(mmeta)
+    plain, _ = occupancy.grid_from_depth(iter(scans), centers, LO, SHAPE, max_rays=RAYS)
+    assert np.array_equal(plain, grid)                                          # without a sparse grid, as before
+
+
 # ------------------------------------------------------------------ export's step, around a stand-in for the GPU
 
 RENDERED = {}
