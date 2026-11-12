@@ -20,11 +20,20 @@ Read the checklist before any paid GPU run. Add an entry when something costs cr
 - [ ] **Report spend from billing, not arithmetic.** `modal billing report --for today --json` per app.
 - [ ] **Kill by PID, never by pattern.** Read `/proc/<pid>/cmdline` and match the target binary; a pattern in your
       own command line matches your own shell.
+- [ ] **One launch at a time.** Modal refuses apps created within a few seconds of each other: let one `modal run`
+      return before the next starts.
 - [ ] **Inputs present.** `pipeline/wheels` filled by `modal run scripts/wheels.py::fetch` (the copy on Hugging Face;
       the `wheels` workflow's artifacts expire after 30 days); data on the Volume checked with `modal volume ls`,
       symlinked folders included.
 
 ## Log
+
+### 2026-11-11: four launches at once, again ($0, about two minutes)
+
+The entry below already says to start parallel runs a few seconds apart. The first wave on the small scenario was
+started as four `modal run --detach` in one shell line, and Modal refused two of them (`App create rate limit
+exceeded`). Nothing was billed; both were launched again one after the other.
+**Rule:** it is in the checklist now: one launch at a time.
 
 ### 2026-11-11: an export cancelled with its client, `--detach` or not (~$0.25, two attempts)
 

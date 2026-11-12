@@ -3,6 +3,25 @@
 What changed in the pipeline, why, and how it was measured. The newest work is first. Each entry names the defect,
 the evidence for it, the change, and what the change was checked against. Costs are from `modal billing report`.
 
+## 2026-11-11: a small test scene, and an export filter that was eating the twin
+
+**Evidence.** The owner: experiments must not use up the credit before the work is done, so try them on small twins.
+A chapel variant costs $0.34 to $0.43 by the runner's estimate and about a quarter more by billing. On Dr Johnson,
+the first run with a weaker opacity regulariser (`q5b`) scored better than the baseline on every held-out metric and
+1.65 dB worse in the viewer, with 7% of its pixels see-through: export's value filter had removed splats the picture
+needed, and nothing measured it (`EXPERIMENTS.md`).
+
+**Change.**
+- `plypipe/evalrun.py`, `modal/ply_eval.py`: scenarios. The same table of variants runs on the chapel or on Dr Johnson
+  (`PLY_EVAL_SCENARIO=drjohnson`: 15k steps at a 600k cap, every 8th view held out, 4 cores and 16 GiB, an L4 first).
+- `stages/export.py`: the value filter is still picked by splat count, but when the twin then measures worse than
+  the tolerance (0.3 dB, 1% see-through) under every cleanup, looser filters are tried against the same tolerance,
+  down to `opacity>0.001`. A twin that passed before exports exactly as before.
+
+**Measured.** Dr Johnson, same trained model, export run twice: 27.72 dB and 7.05% see-through before, 29.47 dB and
+0.12% after. The small scene's noise floor is 0.02 dB; ten variants and a smoke run on it cost about $2.70 ($2.17
+billed, the rest not in the report yet; `EXPERIMENTS.md`). Not measured: the chapel's exports with the new rule.
+
 ## 2026-11-11: the sparse depth loss no longer turns the model NaN
 
 **Evidence.** Variant Q4a (`--depth-loss`) went NaN near step 158 of 15,000 on the chapel and aborted near step 570
@@ -16,9 +35,9 @@ the loss itself NaN.
 with 1 / 0 kept out of the graph, and 0 for a view without track points. It stops if more than one GPU is visible or
 the pinned trainer has no such function, so a run cannot train on the old loss unnoticed.
 
-**Measured.** On a CPU only: the same loss value as gsplat's on 900 random frames, and no NaN or infinite gradient
-where gsplat's sent one into a rendered pixel on 11 of them. Not run on a GPU: Q4a has to be launched again to show
-that it trains.
+**Measured.** On a CPU: the same loss value as gsplat's on 900 random frames, and no NaN or infinite gradient
+where gsplat's sent one into a rendered pixel on 11 of them. On a GPU (Dr Johnson, `q4a`, the same night): the run
+that went NaN on the chapel trains to the end, with no gain over the baseline (`EXPERIMENTS.md`).
 
 ## 2026-11-11: a top view for every twin, job limits, the eval runner (second batch)
 

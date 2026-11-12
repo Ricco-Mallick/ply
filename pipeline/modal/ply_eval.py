@@ -8,7 +8,7 @@
     python scripts/eval_table.py /tmp/ply-eval                                           # the results table
 
     PLY_EVAL_SCENARIO=drjohnson PLY_EVAL_GPU=L4,L40S MODAL_PROFILE=<account> modal run --detach pipeline/modal/ply_eval.py \\
-        --variant q0a                                           # the same variant on the small scenario, at about a third of the cost
+        --variant q0a                                           # the same variant on the small scenario, at about half the cost
 
 A scenario (evalrun.SCENARIOS) is a saved solve, its baseline and its container. Try a variant on the small one first.
 
