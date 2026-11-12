@@ -28,13 +28,59 @@ def gsplat_examples(ctx: Ctx) -> Path:
     return ex
 
 
+def launcher(ctx: Ctx, result: Path) -> list[str]:
+    # PLY_TRAIN_PYTHON: training may live in its own venv (install_fast.sh: prebuilt gsplat 1.5.3 on Python 3.10)
+    return [os.environ.get("PLY_TRAIN_PYTHON") or sys.executable, "-m", "plypipe.train_launcher", "--examples", str(gsplat_examples(ctx)),
+            "--data", str(ctx.data_dir), "--result", str(result), "--preset", ctx.opt("preset", "standard")]
+
+
+def split_flags(ctx: Ctx) -> tuple[list[str], int]:
+    """What every run on a job must share: how the splats are drawn and which views are held out. Returns the
+    launcher flags and the block's size."""
+    flags = [] if ctx.opt("no_antialias") else ["--antialiased"]
+    holdout = int(ctx.opt("holdout", 30) or 0)
+    if holdout > 1:
+        flags += ["--holdout", str(holdout)]
+    block = int(ctx.opt("holdout_block", 0) or 0)
+    if block:
+        if holdout <= 1:
+            raise RuntimeError("--holdout-block is scored next to the every-Nth views: it needs --holdout N (N > 1)")
+        flags += ["--holdout-block", str(block), "--frames-index", str(ctx.out / "frames_index.json")]
+    if ctx.opt("opacity_reg") is not None:
+        flags += ["--opacity-reg", str(ctx.opt("opacity_reg"))]
+    return flags, block
+
+
+def launcher_env() -> dict:
+    pkg_root = Path(__file__).resolve().parents[2]
+    # MPLBACKEND: notebooks (Kaggle) export an inline backend that a separate training venv can't load
+    return {"PYTHONPATH": os.pathsep.join([str(pkg_root), os.environ.get("PYTHONPATH", "")]), "MPLBACKEND": "Agg",
+            # gsplat's cli() spawns one process per visible GPU (Kaggle gives two T4s); train on one
+            "CUDA_VISIBLE_DEVICES": os.environ.get("PLY_TRAIN_GPU", "0")}
+
+
+def finetune(ctx: Ctx, ply: Path, steps: int, sh_degree: int, stage: str = "export") -> dict:
+    """Train on from the model in `ply` for `steps`, at its own splat count (plypipe.finetune), on the views the job
+    trained on. Returns the fitted PLY's path and the trainer's held-out scores. <out>/train-lite is this run's alone."""
+    result = ctx.out / "train-lite"
+    shutil.rmtree(result, ignore_errors=True)
+    flags, block = split_flags(ctx)
+    cmd = launcher(ctx, result) + ["--no-ppisp", "--from-ply", str(ply), "--iterations", str(steps), "--sh-degree", str(sh_degree), *flags]
+    if ctx.opt("random_bkgd"):
+        cmd.append("--random-bkgd")
+    run(cmd, ctx, stage, env=launcher_env(), progress_every=50)
+    plys = sorted((result / "ply").glob("point_cloud_*.ply"), key=lambda p: int(p.stem.rsplit("_", 1)[1]))
+    if not plys:
+        raise RuntimeError(f"the fine-tune finished but left no PLY in {result / 'ply'}")
+    scores = held_out_scores(result, ctx.out / "eval" / "lite")
+    held = held_out_scores(result, ctx.out / "eval" / "lite", stage="block") if block else None
+    return {"ply": plys[-1], **({"eval": scores} if scores else {}), **({"evalBlock": held} if held else {})}
+
+
 def run_stage(ctx: Ctx) -> dict:
-    ex = gsplat_examples(ctx)
     preset = ctx.opt("preset", "standard")
     result = ctx.train_dir
-    # PLY_TRAIN_PYTHON: training may live in its own venv (install_fast.sh: prebuilt gsplat 1.5.3 on Python 3.10)
-    cmd = [os.environ.get("PLY_TRAIN_PYTHON") or sys.executable, "-m", "plypipe.train_launcher", "--examples", str(ex), "--data", str(ctx.data_dir),
-           "--result", str(result), "--preset", preset]
+    cmd = launcher(ctx, result)
     if ctx.opt("ppisp") is False:
         cmd.append("--no-ppisp")
     elif ctx.opt("ppisp") is True:
@@ -73,27 +119,12 @@ def run_stage(ctx: Ctx) -> dict:
             cmd += ["--world-scale", f"{spread['medianM']:.4f}"]
     if ctx.opt("sh_degree") is not None:
         cmd += ["--sh-degree", str(ctx.opt("sh_degree"))]
-    if not ctx.opt("no_antialias"):
-        cmd.append("--antialiased")
-    holdout = int(ctx.opt("holdout", 30) or 0)
-    if holdout > 1:
-        cmd += ["--holdout", str(holdout)]
-    block = int(ctx.opt("holdout_block", 0) or 0)
-    if block:
-        if holdout <= 1:
-            raise RuntimeError("--holdout-block is scored next to the every-Nth views: it needs --holdout N (N > 1)")
-        cmd += ["--holdout-block", str(block), "--frames-index", str(ctx.out / "frames_index.json")]
-    if ctx.opt("opacity_reg") is not None:
-        cmd += ["--opacity-reg", str(ctx.opt("opacity_reg"))]
+    flags, block = split_flags(ctx)
+    cmd += flags
     for flag in ("pose_opt", "depth_loss", "bilateral_grid", "random_bkgd"):
         if ctx.opt(flag):
             cmd.append("--" + flag.replace("_", "-"))
-    pkg_root = Path(__file__).resolve().parents[2]
-    # MPLBACKEND: notebooks (Kaggle) export an inline backend that a separate training venv can't load
-    env = {"PYTHONPATH": os.pathsep.join([str(pkg_root), os.environ.get("PYTHONPATH", "")]), "MPLBACKEND": "Agg",
-           # gsplat's cli() spawns one process per visible GPU (Kaggle gives two T4s); train on one
-           "CUDA_VISIBLE_DEVICES": os.environ.get("PLY_TRAIN_GPU", "0")}
-    run(cmd, ctx, "train", env=env, progress_every=50)
+    run(cmd, ctx, "train", env=launcher_env(), progress_every=50)
     if ctx.opt("train_dry_run"):
         return {"dryRun": True}
     plys = sorted((result / "ply").glob("point_cloud_*.ply"), key=lambda p: int(p.stem.rsplit("_", 1)[1]))

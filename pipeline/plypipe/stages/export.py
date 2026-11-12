@@ -12,6 +12,8 @@ voxel. The floater filter needs WebGPU; without it the stage logs a warning and 
 The phone file keeps SH bands up to LITE_SH and, above LITE_MAX Gaussians, is decimated (phones crash on
 multi-million-splat scenes). Both files get their SH back at SH_BITS (see plypipe.spz): splat-transform rounds it to
 4-5 bits, which cost Dr Johnson 1 dB on desktop; dropping SH entirely cost the phone file another 2.6 dB.
+With --lite-finetune N the cut-down phone model is trained on for N steps at its own splat count (plypipe.finetune)
+and shipped when the viewer shows it better than the cut-down one; --lite-max sets the phone file's splat count.
 
 Last, plypipe.topview renders the cleaned model from above (topview.webp, recorded as scene.json's `topview` block)
 for the viewer's minimap. Failing to do so is a warning, never a failed export.
@@ -25,6 +27,7 @@ import os
 
 import math
 import shutil
+import time
 from pathlib import Path
 
 import numpy as np
@@ -358,11 +361,17 @@ def run_stage(ctx: Ctx) -> dict:
     run(src + [str(full)], ctx, "export")
     sh = {"full": _restore_sh(ctx, full, cleaned)}
     n = ply_count(cleaned)
-    if n > LITE_MAX:  # decimation must end in a .ply: decimate, then convert
+    lite_max = int(ctx.opt("lite_max") or LITE_MAX)
+    lite_n, tuned = n, None
+    if n > lite_max:  # decimation must end in a .ply: decimate, then convert
         lite_ply = ctx.out / "scene_lite.ply"
-        run([*st, "-w", str(cleaned), "-H", str(LITE_SH), "-d", str(LITE_MAX), str(lite_ply)], ctx, "export")
+        run([*st, "-w", str(cleaned), "-H", str(LITE_SH), "-d", str(lite_max), str(lite_ply)], ctx, "export")
+        steps = int(ctx.opt("lite_finetune", 0) or 0)
+        if steps:
+            tuned = _finetune_lite(ctx, lite_ply, steps, holdout, aa)
         run([*st, "-w", "--spz-version", "3", str(lite_ply), str(lite)], ctx, "export")
         sh["lite"] = _restore_sh(ctx, lite, lite_ply)
+        lite_n = ply_count(lite_ply)
         lite_ply.unlink(missing_ok=True)
     else:
         run(src + ["-H", str(LITE_SH), str(lite)], ctx, "export")
@@ -372,7 +381,8 @@ def run_stage(ctx: Ctx) -> dict:
     update_scene(ctx, {"splat": {"file": "scene.spz", "lite": "scene_lite.spz", "format": "spz"}})
     top = _topview(ctx, cleaned if cleaned.exists() else full)
     return {"spz": full.name, "spzMB": round(full.stat().st_size / 2**20, 2), "lite": lite.name, "liteMB": round(lite.stat().st_size / 2**20, 2),
-            "cropBox": box, "cropDropped": drop_crop, "gaussiansIn": total, "gaussiansOut": n, "floaterFilter": floaters, "liteGaussians": min(n, LITE_MAX),
+            "cropBox": box, "cropDropped": drop_crop, "gaussiansIn": total, "gaussiansOut": n, "floaterFilter": floaters, "liteGaussians": lite_n,
+            **({"liteFinetune": tuned} if tuned else {}),
             "keptFraction": round(n / total, 3) if total else None,
             "exportFilters": {"opacity": chosen["opacity"], "scaleCap": chosen["scale"], "why": chosen["why"]},
             "floaterClean": clean_stats, "clippedFraction": clipped, **({"viewerEval": viewer} if viewer else {}),
@@ -400,6 +410,40 @@ def _restore_sh(ctx: Ctx, spz: Path, ply: Path) -> dict:
     except Exception as e:  # the file splat-transform wrote is still a valid twin
         ctx.log.emit("export", "warn", f"SH restore skipped for {spz.name}: {str(e)[-160:]}")
         return {"restored": False, "why": str(e)[-160:]}
+
+
+def _finetune_lite(ctx: Ctx, lite_ply: Path, steps: int, holdout: int, aa: bool) -> dict:
+    """The phone model refitted: `steps` of training on from the cut-down model, at its own splat count (variant Q6).
+
+    Both models are scored the way the viewer shows them, and the refit replaces lite_ply only when it is the better
+    one. A fine-tune that fails, or that cannot be measured, leaves the cut-down file: the export is what it was."""
+    out: dict = {"steps": steps, "shipped": "decimated"}
+    t0 = time.time()
+    try:
+        from plypipe import viewer_eval
+        from plypipe.stages import train as train_stage
+        before = viewer_eval.evaluate(lite_ply, ctx.data_dir, holdout, aa)
+        if not before:
+            return {**out, "why": "not measured: needs a GPU and held-out views"}
+        out["before"] = before
+        fitted = train_stage.finetune(ctx, lite_ply, steps, LITE_SH)
+        after = viewer_eval.evaluate(fitted["ply"], ctx.data_dir, holdout, aa)
+        out.update(after=after, **{k: fitted[k] for k in ("eval", "evalBlock") if k in fitted})
+        if after and after["psnr"] > before["psnr"] and after["holes"] <= before["holes"] + 0.01:
+            shutil.copy2(fitted["ply"], lite_ply)
+            out["shipped"] = "finetuned"
+            ctx.log.emit("export", "progress", f"phone file fine-tuned {steps} steps: PSNR {before['psnr']:.2f} -> {after['psnr']:.2f} "
+                         f"as the viewer shows it, holes {before['holes']:.1%} -> {after['holes']:.1%}")
+        else:
+            out["why"] = "measured: the fine-tuned model was not the better one"
+            ctx.log.emit("export", "warn", f"phone file: {steps} steps of fine-tuning did not improve it "
+                         f"(PSNR {before['psnr']:.2f} -> {after['psnr'] if after else float('nan'):.2f}); shipping the cut-down model")
+    except Exception as e:
+        out["why"] = str(e)[-160:]
+        ctx.log.emit("export", "warn", f"phone file fine-tune skipped: {str(e)[-160:]}")
+    finally:
+        shutil.rmtree(ctx.out / "train-lite", ignore_errors=True)  # checkpoints and renders; the scores are in the report
+    return {**out, "seconds": round(time.time() - t0, 1)}
 
 
 def _score_shipped(ctx: Ctx, st: list[str], files: dict[str, Path], holdout: int, aa: bool) -> dict | None:

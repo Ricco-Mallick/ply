@@ -167,3 +167,42 @@ three on an L40S, code `47dfbf2`. One run each, so the 15k noise floor above is 
 and all of `q5a-30k` fall on 2026-11-12 and were not in the billing report yet: about $0.50 more. The runner's own
 estimates for the eleven runs billed so far add up to $1.75: a launch pays $0.05 to $0.08 before its function starts,
 which the estimate leaves out.
+
+### Q6: the phone file, trained on at its own size (2026-11-12)
+
+One run, `q6` on Dr Johnson (L40S, code `c055ad7`): the baseline's training, then an export with `--lite-max 240000
+--lite-finetune 3000`. The twin ships 441k splats, so its phone file is cut to 240k (the chapel's 2M to 800k ratio),
+and that model is then trained on for 3,000 steps with the splat cap at its own count (`plypipe/finetune.py`), on the
+same training views. The export scores both phone models as the viewer shows them, on the 12 held-out views, and
+ships the better one.
+
+| phone model | splats | viewer PSNR | SSIM | see-through (worst view) | below the desktop file |
+|---|---:|---:|---:|---:|---:|
+| cut down, as it shipped until now | 240k | 28.36 | 0.8824 | 0.01% (0.13%) | 0.96 dB |
+| cut down, then 3,000 steps | 240k | 29.09 | 0.8913 | 0.05% (0.41%) | 0.23 dB |
+| the same as shipped (`scene_lite.spz`, 5.6 MB) | 240k | 29.05 | 0.8912 | 0.04% (0.39%) | 0.22 dB |
+| for scale: `q0a`'s phone file, never cut (10.1 MB) | 443k | 28.79 | | | 0.59 dB |
+
+The desktop file of this run: 29.32 dB cleaned, 29.27 dB as shipped (12.5 MB). The two baselines' phone files differ
+by 0.02 dB, so the noise is far below these differences.
+
+- **+0.73 dB at the same 240k splats: three quarters of the gap to the desktop file is gone.** The plan ships Q6 when
+  the phone file comes within 0.7 dB of the desktop file at the same size; it is at 0.22 dB.
+- **It also beats the phone file the baselines ship, at 54% of the splats and 56% of the bytes** (29.05 dB against
+  28.79 dB). Those files were never cut down, only stripped of their third SH band, and that alone costs 0.59 dB: a
+  model trained with the bands it ships gets it back. The export fine-tunes only a phone file it has cut down, so a
+  twin under the phone size still ships the stripped one. Fine-tuning that one too is not tried yet.
+- **Away from the training views the phone model holds up.** The trainer's own scores for it: cc-PSNR 29.14 on the
+  every-8th set (desktop 29.26) and 28.03 on the block (desktop 27.70); cc-LPIPS 0.248 and 0.267 (desktop 0.241 and
+  0.265).
+- **See-through pixels rise from 0.01% to 0.05%** (0.41% in the worst view), inside what the export tolerates (one
+  point more than the cut-down model).
+- **Time:** 67 s of the export for 3,000 steps at 240k splats on an L40S, the trainer's start and both scorings
+  included; the whole export took 123 s.
+- **Still off by default** (`--lite-finetune STEPS`). This is one run on one scene: the chapel has to repeat it
+  (decision 8; `q6` there is estimated at $0.60), and on the worker it adds minutes to every export. The export
+  stage's limit is 40 minutes and exports take 2 to 18 today, but the fine-tune's time at 800k splats on an L4 is
+  not measured.
+
+**Cost.** Billed $0.21 on opservemakesalt for the run (estimated $0.24 on an L4 and $0.34 on an L40S; the L40S did it
+in 5.5 minutes).

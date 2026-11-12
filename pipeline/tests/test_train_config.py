@@ -9,6 +9,8 @@ from plypipe import train_launcher
 
 
 class FakeConfig:
+    means_lr = 1.6e-4
+
     def __init__(self, **kw):
         self.__dict__.update(kw)
         self.steps_scaler = 1.0
@@ -129,7 +131,7 @@ def test_depth_loss_of_a_view_with_no_track_point_in_frame_is_zero():
     assert value == 0.0 and torch.isfinite(acc).all() and torch.isfinite(alpha).all()
 
 
-def _launch(tmp_path, monkeypatch, *flags, gpus=1, trainer_has_the_loss=True):
+def _launch(tmp_path, monkeypatch, *flags, gpus=1, trainer_has_the_loss=True, trainer_builds_splats=True):
     """main() up to the hand-over to gsplat, with stand-ins for simple_trainer and torch. Returns the stand-in trainer."""
     class Config(FakeConfig):
         def adjust_steps(self, factor):
@@ -139,6 +141,8 @@ def _launch(tmp_path, monkeypatch, *flags, gpus=1, trainer_has_the_loss=True):
     trainer.Config, trainer.MCMCStrategy, trainer.main, trainer.cli = Config, FakeMCMC, None, lambda fn, cfg, verbose: None
     if trainer_has_the_loss:
         trainer.depth_l1_loss = "gsplat's"
+    if trainer_builds_splats:
+        trainer.create_splats_with_optimizers = "gsplat's"
     monkeypatch.setitem(sys.modules, "simple_trainer", trainer)
     monkeypatch.setitem(sys.modules, "torch", types.SimpleNamespace(cuda=types.SimpleNamespace(device_count=lambda: gpus)))
     monkeypatch.setattr(sys, "path", list(sys.path))
@@ -310,3 +314,75 @@ def test_train_report_carries_both_score_sets_the_block_images_and_the_per_view_
     assert (tmp_path / "eval" / "per_view.json").exists() and (tmp_path / "eval" / "block_stats.json").exists()
     assert sorted(p.name for p in (tmp_path / "eval").glob("block_step*.png")) == [f"block_step14999_{i:04d}.png" for i in (0, 5, 10, 15)]
     assert train_stage.block_report(tmp_path / "nothing", tmp_path / "eval2") == {}
+
+
+# ------------------------------------------------------------------ the phone file's fine-tune (plypipe.finetune)
+
+def test_a_fine_tune_caps_the_splats_at_the_models_count_and_trains_every_sh_band_from_the_start():
+    cfg, summary = train_launcher.build_config(st, "/d", "/r", "high", False, True, iterations=3000, sh_degree=2, cap_max=2_000_000,
+                                               from_splats=240_000)
+    assert cfg.strategy.cap_max == 240_000 == summary["capMax"] == summary["fromSplats"]     # the model's count beats --cap-max
+    assert cfg.strategy.refine_stop_iter == int(3000 * 0.83) and cfg.max_steps == 3000 and cfg.sh_degree == 2
+    assert cfg.sh_degree_interval == 1 and cfg.means_lr == pytest.approx(1.6e-5)
+    cfg, summary = train_launcher.build_config(st, "/d", "/r", "high", False, True)          # a fresh run is what it was
+    assert "fromSplats" not in summary and not hasattr(cfg, "sh_degree_interval") and cfg.means_lr == 1.6e-4
+
+
+def test_the_launcher_starts_from_a_model_only_when_asked_and_only_where_the_patch_holds(tmp_path, monkeypatch):
+    import json
+    from test_finetune import write_model
+    write_model(tmp_path / "lite.ply", n=7, k=8)
+    assert _launch(tmp_path, monkeypatch).create_splats_with_optimizers == "gsplat's"
+    trainer = _launch(tmp_path, monkeypatch, "--from-ply", str(tmp_path / "lite.ply"), "--sh-degree", "2", "--iterations", "300")
+    assert callable(trainer.create_splats_with_optimizers)
+    preset = json.loads((tmp_path / "r" / "ply_preset.json").read_text())
+    assert preset["fromSplats"] == 7 == preset["capMax"] and preset["maxSteps"] == 300
+    with pytest.raises(SystemExit, match="--from-ply: needs one visible GPU"):
+        _launch(tmp_path, monkeypatch, "--from-ply", str(tmp_path / "lite.ply"), "--sh-degree", "2", gpus=2)
+    with pytest.raises(SystemExit, match="gsplat pin"):
+        _launch(tmp_path, monkeypatch, "--from-ply", str(tmp_path / "lite.ply"), "--sh-degree", "2", trainer_builds_splats=False)
+    with pytest.raises(ValueError, match="SH degree 3 needs 15"):                             # quick is SH 2; the model has no third band
+        _launch(tmp_path, monkeypatch, "--from-ply", str(tmp_path / "lite.ply"), "--sh-degree", "3")
+
+
+def test_the_fine_tune_runs_on_the_jobs_own_split_and_returns_the_trainers_model_and_scores(tmp_path, monkeypatch):
+    import json
+    from plypipe.log import Log
+    from plypipe.stages import train as train_stage
+    from plypipe.util import Ctx
+    (tmp_path / "gs" / "examples").mkdir(parents=True)
+    (tmp_path / "gs" / "examples" / "simple_trainer.py").write_text("")
+    job, seen = tmp_path / "job", {}
+
+    def trainer(cmd, ctx, stage, **kw):
+        seen.update(cmd=[str(c) for c in cmd], stage=stage, env=kw["env"])
+        result = job / "train-lite"
+        for d in ("ply", "stats", "renders"):
+            (result / d).mkdir(parents=True)
+        (result / "ply" / "point_cloud_149.ply").write_bytes(b"part-way")
+        (result / "ply" / "point_cloud_2999.ply").write_bytes(b"fitted")
+        for name, psnr in (("val", 26.0), ("block", 23.0)):
+            (result / "stats" / f"{name}_step2999.json").write_text(json.dumps({"psnr": psnr, "ssim": 0.8, "lpips": 0.3, "num_GS": 240000}))
+            (result / "renders" / f"{name}_step2999_0000.png").write_bytes(b"png")
+
+    monkeypatch.setattr(train_stage, "run", trainer)
+    opts = {"gsplat_dir": str(tmp_path / "gs"), "preset": "high", "holdout": 8, "holdout_block": 10, "opacity_reg": 0.005,
+            "pose_opt": True, "depth_loss": True, "bilateral_grid": True, "ppisp": True, "iterations": 15_000, "cap_max": 600_000}
+    ctx = Ctx(out=job, log=Log(job, quiet=True), opts=opts)
+    (job / "train-lite").mkdir()
+    (job / "train-lite" / "stale.pt").write_bytes(b"an earlier attempt")
+    out = train_stage.finetune(ctx, job / "scene_lite.ply", 3000, 2)
+    cmd = seen["cmd"]
+    value = lambda flag: cmd[cmd.index(flag) + 1]
+    assert cmd[1:3] == ["-m", "plypipe.train_launcher"] and seen["stage"] == "export" and seen["env"]["CUDA_VISIBLE_DEVICES"] == "0"
+    assert value("--result") == str(job / "train-lite") and value("--from-ply") == str(job / "scene_lite.ply") and value("--preset") == "high"
+    assert (value("--iterations"), value("--sh-degree"), value("--holdout"), value("--holdout-block")) == ("3000", "2", "8", "10")
+    assert value("--frames-index") == str(job / "frames_index.json") and value("--opacity-reg") == "0.005" and "--antialiased" in cmd
+    # the viewer applies no appearance model, and the model was fitted to the solved poses: none of that is trained again
+    assert "--no-ppisp" in cmd and not {"--ppisp", "--pose-opt", "--depth-loss", "--bilateral-grid", "--cap-max"} & set(cmd)
+    assert out["ply"] == job / "train-lite" / "ply" / "point_cloud_2999.ply" and not (job / "train-lite" / "stale.pt").exists()
+    assert out["eval"]["psnr"] == 26.0 and out["eval"]["gaussians"] == 240000 and out["evalBlock"]["psnr"] == 23.0
+    assert (job / "eval" / "lite" / "val_stats.json").exists() and (job / "eval" / "lite" / "block_stats.json").exists()
+    with pytest.raises(RuntimeError, match="left no PLY"):
+        monkeypatch.setattr(train_stage, "run", lambda *a, **k: None)
+        train_stage.finetune(ctx, job / "scene_lite.ply", 3000, 2)

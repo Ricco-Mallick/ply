@@ -20,7 +20,7 @@ import json
 import os
 import sys
 
-from plypipe import evalsplit
+from plypipe import evalsplit, finetune
 
 OPACITY_REG = 0.01  # the "mcmc" preset of simple_trainer; lower values keep more faint splats (plan variant Q5)
 
@@ -37,12 +37,15 @@ PRESETS = {
 def build_config(st, data: str, result: str, preset: str, ppisp: bool | None, antialiased: bool,
                  iterations: int | None = None, sh_degree: int | None = None, cap_max: int | None = None,
                  holdout: int = 0, pose_opt: bool = False, depth_loss: bool = False, world_scale: float | None = None,
-                 bilateral_grid: bool = False, random_bkgd: bool = False, opacity_reg: float = OPACITY_REG, holdout_block: int = 0):
+                 bilateral_grid: bool = False, random_bkgd: bool = False, opacity_reg: float = OPACITY_REG, holdout_block: int = 0,
+                 from_splats: int = 0):
     p = dict(PRESETS[preset])
     # the capture app's advanced settings: explicit values win over the preset
     for k, v in (("max_steps", iterations), ("sh_degree", sh_degree), ("cap_max", cap_max)):
         if v is not None:
             p[k] = v
+    if from_splats:  # a fine-tune (plypipe.finetune): the cap is the model's own count, so MCMC moves splats and adds none
+        p["cap_max"] = from_splats
     use_ppisp = p["ppisp"] if ppisp is None else ppisp
     steps = p["max_steps"]
     # world_scale: the median camera distance in metres. The MCMC recipe (noise_lr 5e5, scale_reg 0.01) is tuned
@@ -76,6 +79,10 @@ def build_config(st, data: str, result: str, preset: str, ppisp: bool | None, an
     # PLY_LIVE_SNAPSHOTS="0.15,0.4,0.7": also save PLYs part-way, for the live view on the status page
     cfg.ply_steps = sorted({*(max(1, int(steps * float(f))) for f in os.environ.get("PLY_LIVE_SNAPSHOTS", "").split(",") if f.strip()), steps})
     cfg.sh_degree = p["sh_degree"]
+    if from_splats:
+        # gsplat adds one SH band every 1000 steps; a fitted model would spend them refitting its base colour alone
+        cfg.sh_degree_interval = 1
+        cfg.means_lr = cfg.means_lr * finetune.MEANS_LR
     cfg.disable_viewer = True
     cfg.disable_video = True
     cfg.antialiased = antialiased
@@ -108,7 +115,8 @@ def build_config(st, data: str, result: str, preset: str, ppisp: bool | None, an
                  "appearance": getattr(cfg, "post_processing", None) or ("app_opt" if getattr(cfg, "app_opt", False) else None),
                  "randomBkgd": bool(random_bkgd),
                  **({"opacityReg": opacity_reg} if opacity_reg != OPACITY_REG else {}),
-                 **({"holdoutBlock": holdout_block} if holdout_block else {})}
+                 **({"holdoutBlock": holdout_block} if holdout_block else {}),
+                 **({"fromSplats": from_splats} if from_splats else {})}
 
 
 def depth_l1_loss(pred_depth, gt_depth, scene_scale: float = 1.0):
@@ -150,6 +158,8 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--depth-loss", action="store_true")
     ap.add_argument("--bilateral-grid", action="store_true")
     ap.add_argument("--random-bkgd", action="store_true")
+    ap.add_argument("--from-ply", help="fine-tune: start from this trained model instead of the SfM points, the splat cap at its own "
+                                       "count (its SH is cut to --sh-degree)")
     ap.add_argument("--world-scale", type=float, help="median camera distance (scene units): MCMC noise/scale_reg follow it")
     ap.add_argument("--dry-run", action="store_true",
                     help="everything except the GPU work: import the trainer, build the config, load the scene with gsplat's parser")
@@ -163,15 +173,18 @@ def main(argv: list[str] | None = None) -> int:
             sys.modules["fused_ssim"] = stub
 
     index = evalsplit.read_index(os.path.abspath(a.frames_index)) if a.frames_index else None
+    start = None
+    if a.from_ply:
+        start = finetune.read_splats(os.path.abspath(a.from_ply), PRESETS[a.preset]["sh_degree"] if a.sh_degree is None else a.sh_degree)
     sys.path.insert(0, os.path.abspath(a.examples))
     os.chdir(a.examples)  # simple_trainer imports sibling modules (datasets, utils, gsplat_viewer)
     import simple_trainer as st  # noqa: E402
 
     cfg, summary = build_config(st, os.path.abspath(a.data), os.path.abspath(a.result), a.preset, a.ppisp, a.antialiased,
                                 a.iterations, a.sh_degree, a.cap_max, a.holdout, a.pose_opt, a.depth_loss, a.world_scale,
-                                a.bilateral_grid, a.random_bkgd, a.opacity_reg, a.holdout_block)
+                                a.bilateral_grid, a.random_bkgd, a.opacity_reg, a.holdout_block, len(start["means"]) if start else 0)
     block = None
-    patched = [flag for flag, on in (("--holdout-block", a.holdout_block), ("--depth-loss", a.depth_loss)) if on]
+    patched = [flag for flag, on in (("--holdout-block", a.holdout_block), ("--depth-loss", a.depth_loss), ("--from-ply", start)) if on]
     if patched:
         import torch
         if not a.dry_run and torch.cuda.device_count() > 1:  # gsplat would spawn workers that do not see the patch
@@ -182,6 +195,10 @@ def main(argv: list[str] | None = None) -> int:
         if not hasattr(st, "depth_l1_loss"):  # a gsplat pin that computes the loss elsewhere must not train unpatched
             raise SystemExit("--depth-loss: simple_trainer has no depth_l1_loss to replace (check the gsplat pin)")
         st.depth_l1_loss = depth_l1_loss
+    if start:
+        if not hasattr(st, "create_splats_with_optimizers"):  # nothing to wrap: the run would start from the SfM points
+            raise SystemExit("--from-ply: simple_trainer has no create_splats_with_optimizers to start from a model (check the gsplat pin)")
+        finetune.install(st, start)
     cfg.adjust_steps(cfg.steps_scaler)
     os.makedirs(a.result, exist_ok=True)
     with open(os.path.join(a.result, "ply_preset.json"), "w") as f:
@@ -196,6 +213,9 @@ def main(argv: list[str] | None = None) -> int:
         if a.holdout_block:
             found.update(valImages=len(st.Dataset(parser, split="val")), blockImages=len(st.Dataset(parser, split="block")),
                          block=block["block"])
+        if start:  # upstream's parameters and optimizers, built on the CPU, holding the model
+            splats, _ = st.create_splats_with_optimizers(parser, sh_degree=cfg.sh_degree, scene_scale=float(parser.scene_scale), device="cpu")
+            found.update(startSplats=len(splats["means"]), startShCoefficients=int(splats["shN"].shape[1]) + 1)
         print(json.dumps({"plyTrainDryRun": found}), flush=True)
         return 0
     st.cli(st.main, cfg, verbose=True)

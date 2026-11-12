@@ -63,8 +63,13 @@ def test_the_small_scenario_runs_the_same_variants_on_its_own_baseline():
     assert small["cap_max"] == 600_000 and small["holdout"] == 8 and small["holdout_block"] == 10
     for name, v in evalrun.VARIANTS.items():
         ours, chapel = evalrun.resolve(name, scenario="drjohnson")["args"], evalrun.resolve(name)["args"]
-        assert ours[len(evalrun.SMALL):] == chapel[len(evalrun.BASE):] == v["add"], name     # a variant adds the same thing to both
+        small_only = v.get("scenario_add", {}).get("drjohnson", [])
+        assert chapel[len(evalrun.BASE):] == v["add"] and ours[len(evalrun.SMALL):] == v["add"] + small_only, name   # a variant adds the same thing to both
         assert chapel == v["args"]
+    # the one exception: the small twin trains under the phone size, so only there the phone file's size is set, for it to be cut down at all
+    assert [n for n, v in evalrun.VARIANTS.items() if v.get("scenario_add")] == ["q6"]
+    assert evalrun.resolve("q6", scenario="drjohnson")["args"] == evalrun.SMALL + ["--lite-finetune", "3000", "--lite-max", "240000"]
+    assert evalrun.resolve("q6")["args"] == evalrun.BASE + ["--lite-finetune", "3000"]
     assert evalrun.resolve("smoke", scenario="drjohnson")["args"] == ["--preset", "high", "--iterations", "300", "--cap-max", "600000",
                                                                       "--holdout", "8", "--holdout-block", "10"]
     # unchanged, so the smoke run saved on the chapel's Volume is still the same experiment
@@ -77,7 +82,12 @@ def test_the_small_scenario_runs_the_same_variants_on_its_own_baseline():
 def test_the_small_scenario_has_its_own_saved_solve_container_and_estimate():
     job = evalrun.make_job("drjohnson", "", "q5b", gpus=("L4", "L40S"))
     assert job["src"] == "drjohnson/prep" and (job["cpu"], job["memoryGib"], job["needsIndex"]) == (4, 16, False)
-    assert job["args"] == evalrun.SMALL + ["--opacity-reg", "0.002"] and job["ceilingMin"] == 17
+    # the function's timeout is the longest table variant's stop-loss: q6, whose phone-file fine-tune is 3k steps more
+    assert job["args"] == evalrun.SMALL + ["--opacity-reg", "0.002"] and job["ceilingMin"] == 20
+    tuned = evalrun.make_job("drjohnson", "", "q6", gpus=("L4", "L40S"))["estimates"]
+    assert (tuned["L4"]["fineTuneSteps"], tuned["L4"]["trainMin"], tuned["L4"]["timeoutMin"]) == (3000, 9, 20)
+    assert (tuned["L40S"]["trainMin"], tuned["L40S"]["totalMin"], tuned["L40S"]["timeoutMin"], tuned["L40S"]["usd"]) == (5, 9, 14, 0.34)
+    assert "15000 steps + 3000 for the phone file" in evalrun.describe(evalrun.make_job("drjohnson", "", "q6"))
     l4, l40s = job["estimates"]["L4"], job["estimates"]["L40S"]
     assert (l4["trainMin"], l4["totalMin"], l4["timeoutMin"]) == (7, 11, 17) and (l40s["trainMin"], l40s["totalMin"], l40s["timeoutMin"]) == (4, 8, 12)
     assert l4["perHour"] == pytest.approx(0.80 + 4 * 0.047 + 16 * 0.008) and l4["usd"] == 0.20 and l40s["usd"] == 0.30   # the slower GPU is the cheaper run
@@ -113,9 +123,9 @@ def test_a_15k_run_is_8_minutes_of_training_and_13_in_all_with_a_1_5x_stop_loss(
 
 
 def test_the_function_timeout_follows_the_slowest_allowed_gpu():
-    assert evalrun.default_ceiling_min(("L40S",)) == 20 and evalrun.default_ceiling_min(("L40S", "L4")) == 30
+    assert evalrun.default_ceiling_min(("L40S",)) == 21 and evalrun.default_ceiling_min(("L40S", "L4")) == 35   # q6, the longest
     job = evalrun.make_job("chapel", "/chapel/high/job/", "q0a")
-    assert job["src"] == "chapel/high/job" and job["ceilingMin"] == 20 and set(job["estimates"]) == {"L40S"}
+    assert job["src"] == "chapel/high/job" and job["ceilingMin"] == 21 and set(job["estimates"]) == {"L40S"}
     with pytest.raises(ValueError, match="PLY_EVAL_TIMEOUT_MIN"):
         evalrun.make_job("chapel", "chapel/high/job", "q0a", gpus=("L40S", "L4"), ceiling_min=20)
     both = evalrun.make_job("chapel", "chapel/high/job", "q0a", gpus=("L40S", "L4"))
@@ -331,6 +341,22 @@ def test_metrics_carry_both_hold_outs_the_viewer_scores_splats_files_time_and_co
     assert m["costUsd"] == round(900 / 3600 * (1.95 + 8 * 0.047 + 32 * 0.008), 2) == 0.65 and m["wallMinutes"] == 15.0
     assert m["gate"] == {"ok": True, "issues": [{"level": "warn", "code": "pruned-some"}]}
     assert "q0a: complete" in evalrun.summary(m) and "cc-PSNR 22.5" in evalrun.summary(m)
+    assert "phoneFinetune" not in m["viewer"] and "fine-tune" not in evalrun.summary(m)
+
+
+def test_metrics_carry_the_phone_files_fine_tune_next_to_the_cut_down_score():
+    gpu = {"name": "NVIDIA L40S", "memoryMiB": 46068, "priced": "L40S"}
+    report = finished_report()
+    report["export"]["liteFinetune"] = {"steps": 3000, "shipped": "finetuned", "before": {"psnr": 21.4, "holes": 0.02},
+                                        "after": {"psnr": 23.1, "holes": 0.01}, "eval": {"psnr": 23.6, "views": 41}, "seconds": 95.0}
+    job = evalrun.make_job("chapel", "chapel/high/job", "q6")
+    m = evalrun.assemble(job, report, gpu=gpu, seconds={}, sizes={}, invocation=evalrun.invocation_record(1_800_000_000, 900.0, gpu, ["train", "export"], []))
+    assert m["complete"] and m["viewer"]["phoneFinetune"] == report["export"]["liteFinetune"] and m["viewer"]["phone"]["psnr"] == 21.5
+    assert "phone file, 3000 fine-tune steps: PSNR 21.4 cut down, 23.1 fine-tuned; shipped the finetuned one" in evalrun.summary(m)
+    report["export"]["liteFinetune"] = {"steps": 3000, "shipped": "decimated", "why": "CUDA out of memory"}
+    m = evalrun.assemble(job, report, gpu=gpu, seconds={}, sizes={}, invocation=evalrun.invocation_record(1_800_000_000, 900.0, gpu, ["export"], []))
+    assert "shipped the decimated one (CUDA out of memory)" in evalrun.summary(m)
+    assert not evalrun.savable(Path("train-lite/ckpts/ckpt_2999_rank0.pt")) and evalrun.savable(Path("eval/lite/val_stats.json"))
 
 
 def test_a_stopped_run_still_gets_metrics_that_say_what_is_missing():
