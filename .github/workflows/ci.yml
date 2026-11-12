@@ -45,6 +45,7 @@ jobs:
         run: |
           node --experimental-strip-types test/scene-status.test.mts
           node --experimental-strip-types test/module-url.test.mts
+          node --experimental-strip-types test/walk.test.mts
   pipeline:
     runs-on: ubuntu-24.04
     timeout-minutes: 25
