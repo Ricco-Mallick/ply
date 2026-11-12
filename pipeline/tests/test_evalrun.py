@@ -334,8 +334,8 @@ def test_an_export_only_run_takes_a_table_variants_model_and_export_options_only
     assert job["exportFrom"] == "q0a" and job["trainArgs"] == evalrun.variant_args("q0a", "drjohnson")
     assert job["args"] == evalrun.variant_args("q0a", "drjohnson") + ["--dense-occupancy"] and job["argsSource"] == "--export-from q0a"
     l40s = job["estimates"]["L40S"]
-    # no training steps: the phone file's 3k at Dr Johnson's 13.8 ms (1 min), the 4 min overhead and 1 for the depth grid
-    assert (l40s["steps"], l40s["exportOnly"], l40s["trainMin"], l40s["overheadMin"], l40s["timeoutMin"]) == (0, True, 1, 5, 9)
+    # no training steps: the phone file's 3k at Dr Johnson's 13.8 ms (1 min) and the 4 min overhead
+    assert (l40s["steps"], l40s["exportOnly"], l40s["trainMin"], l40s["overheadMin"], l40s["timeoutMin"]) == (0, True, 1, 4, 8)
     assert "gridSlowdown" not in evalrun.make_job("drjohnson", "", "q1-again", export_from="q1")["estimates"]["L40S"]   # q1's grid trained already
     with pytest.raises(ValueError, match="not a table variant"):
         evalrun.make_job("drjohnson", "", "x-dense", export_from="q0a-30k-b")
@@ -352,10 +352,9 @@ def test_an_export_only_run_takes_a_table_variants_model_and_export_options_only
 def test_export_only_options_are_read_by_the_export_and_not_by_training():
     root = Path(evalrun.__file__).resolve().parent
     export, train = (root / "stages" / "export.py").read_text(), (root / "stages" / "train.py").read_text()
-    dests = {a.dest: a for a in cli.build_parser()._subparsers._group_actions[0].choices["run"]._actions}
+    dests = {s: a.dest for a in cli.build_parser()._subparsers._group_actions[0].choices["run"]._actions for s in a.option_strings}
     for flag in evalrun.EXPORT_ONLY_OPTIONS:
-        dest = flag[2:].replace("-", "_")
-        assert dest in dests and flag in dests[dest].option_strings, flag
+        dest = dests[flag]
         assert f'opt("{dest}"' in export and f'opt("{dest}"' not in train, flag
 
 
@@ -391,7 +390,7 @@ def test_the_plan_of_an_export_only_run_shows_one_export_and_no_training(capsys)
     assert evalrun.main(["plan", "--variant", "q0a-dense", "--export-from", "q0a", "--args=--dense-occupancy", "--scenario", "drjohnson"]) == 0
     text = capsys.readouterr().out
     for needle in ("--export-from q0a, export only, of the model q0a trained, with --dense-occupancy", "no training (the model q0a trained) + 3000 for the phone file",
-                   "and the depth grid (an estimate)", "/vol/drjohnson/eval/q0a/ must hold a finished training", "--only export"):
+                   "/vol/drjohnson/eval/q0a/ must hold a finished training", "--only export"):
         assert needle in text, needle
     assert "--only train" not in text
     assert evalrun.main(["plan", "--variant", "q0a", "--export-from", "q0a", "--scenario", "drjohnson"]) == 2

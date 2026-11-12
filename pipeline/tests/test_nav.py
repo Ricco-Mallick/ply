@@ -277,10 +277,11 @@ def test_a_failing_dense_pass_does_not_fail_the_export(tmp_path, monkeypatch):
     assert [e["event"] for e in logged if "CUDA out of memory" in e["msg"]] == ["warn"]
 
 
-def test_the_grid_from_depth_is_off_unless_asked_for():
+def test_the_grid_from_depth_is_on_unless_turned_off():
     from plypipe import cli
     run = ["run", "walk.mp4", "--out", "o"]
-    assert cli.build_parser().parse_args(run).dense_occupancy is False
+    assert cli.build_parser().parse_args(run).dense_occupancy is True
+    assert cli.build_parser().parse_args([*run, "--no-dense-occupancy"]).dense_occupancy is False
     assert cli.build_parser().parse_args([*run, "--dense-occupancy"]).dense_occupancy is True
 
 
