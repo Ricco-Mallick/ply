@@ -115,14 +115,14 @@ def test_a_fit_on_too_little_or_on_renders_without_colour_is_refused():
 
 # ------------------------------------------------------------------ the view loop
 
-def scene(tmp_path, monkeypatch):
+def scene(root, monkeypatch):
     """A 40-view scene with a stand-in rasteriser whose render of a view is that view's photo taken back through the
     known map. Returns the data folder, the image names, what the rasteriser was asked for, and the photos read."""
     cv2 = pytest.importorskip("cv2")
     from gs_scene import write_trainable_scene
     from plypipe import colmap_txt
-    names = write_trainable_scene(tmp_path / "scene", n_cams=40)
-    data = tmp_path / "scene" / "data"
+    names = write_trainable_scene(root, n_cams=40)
+    data = root / "data"
     by_pose = {tuple(np.round(im.tvec, 6)): im.name for im in colmap_txt.read_model(data / "sparse" / "0").images}
     asked, read, imread = [], [], cv2.imread
 
@@ -134,7 +134,8 @@ def scene(tmp_path, monkeypatch):
         return ((photo - B_TRUE) @ np.linalg.inv(M_TRUE).T).astype(np.float32), np.ones((height, width), np.float32)
 
     def spy(path, *args):
-        read.append(Path(path).name)
+        if args == (cv2.IMREAD_COLOR,):                 # the fit's reads (the train stage also sizes the first photo, in grey)
+            read.append(Path(path).name)
         return imread(path, *args)
 
     monkeypatch.setattr(cv2, "imread", spy)
@@ -150,7 +151,7 @@ def test_training_views_are_gsplats_split_without_the_block():
 
 
 def test_the_fit_reads_training_views_only_and_recovers_the_map_through_the_view_loop(tmp_path, monkeypatch):
-    data, names, asked, read = scene(tmp_path, monkeypatch)
+    data, names, asked, read = scene(tmp_path / "scene", monkeypatch)
     block = names[10:16]
     held = {names[i] for i in (0, 8, 16, 24, 32)} | set(block)
     found = exposure.fit_views(tmp_path / "model.ply", data, every=8, block=block, scale=1.0)
@@ -163,7 +164,7 @@ def test_the_fit_reads_training_views_only_and_recovers_the_map_through_the_view
 
 
 def test_the_fit_spreads_its_views_over_the_capture_and_renders_them_at_reduced_resolution(tmp_path, monkeypatch):
-    data, names, asked, read = scene(tmp_path, monkeypatch)
+    data, names, asked, read = scene(tmp_path / "scene", monkeypatch)
     found = exposure.fit_views(tmp_path / "model.ply", data, every=8, max_views=12)   # scale 0.5, no block
     train = [n for i, n in enumerate(names) if i % 8]
     assert len(train) == 35 and read == train[::3] * 2 and found["views"] == 12 and found["pixels"] > 100_000
@@ -273,3 +274,93 @@ def test_gsplats_own_sh_evaluation_of_a_folded_model_is_the_mapped_colour():
         assert np.abs(gsplat(sh0, shN) - colour(sh0, shN, dirs)).max() < 1e-5   # the basis these tests use is gsplat's
         f0, fN = exposure.fold(sh0, shN, M_TRUE, B_TRUE)
         assert np.abs(gsplat(f0, fN) - (gsplat(sh0, shN) @ M_TRUE.T + B_TRUE)).max() < 1e-5
+
+
+def test_the_train_stage_folds_and_the_pinned_trainer_continues_from_the_folded_colours_with_no_appearance_model(trainer, tmp_path, monkeypatch, capsys):
+    """The train stage with --bilateral-grid --exposure-fold, its launcher command lines run by the real launcher on
+    the pinned trainer (--dry-run: gsplat's Config, parser, datasets and parameters on a CPU). Only the rasteriser and
+    the training steps are stand-ins."""
+    import json
+    import os
+    import shutil
+    import sys
+    import torch
+    from gsplat import export_splats
+    from gsplat.cuda._torch_impl import _spherical_harmonics
+    from plypipe import train_launcher
+    from plypipe.log import Log
+    from plypipe.stages import train as train_stage
+    from plypipe.util import Ctx
+    st, job, n = trainer, tmp_path / "job", 50
+    originals = {k: getattr(st, k) for k in ("Dataset", "Runner", "create_splats_with_optimizers")}
+    for k, v in originals.items():
+        monkeypatch.setattr(st, k, v)                                             # put back after the test
+    monkeypatch.delitem(sys.modules, "fused_ssim", raising=False)                 # the fixture's stand-in has no spec to find
+    monkeypatch.setattr(sys, "path", list(sys.path))
+    monkeypatch.chdir(tmp_path)
+    data, names, asked, read = scene(job, monkeypatch)
+    g = torch.Generator().manual_seed(0)
+    model = {name: torch.randn(n, *shape, generator=g) for name, shape in
+             (("means", (3,)), ("scales", (3,)), ("quats", (4,)), ("opacities", ()), ("sh0", (1, 3)), ("shN", (15, 3)))}
+    runs = []
+
+    def launch(cmd, ctx, stage, **kw):
+        """What a run of the launcher's process does up to the first training step, then a model where gsplat would save one."""
+        cmd = [str(c) for c in cmd]
+        for k, v in originals.items():
+            setattr(st, k, v)
+        sys.modules.pop("fused_ssim", None)
+        assert cmd[1:3] == ["-m", "plypipe.train_launcher"] and train_launcher.main(cmd[3:] + ["--dry-run"]) == 0
+        printed = {k: v for line in capsys.readouterr().out.splitlines() if line.startswith("{") for k, v in json.loads(line).items()}
+        result = Path(cmd[cmd.index("--result") + 1])
+        parser = st.Parser(data_dir=str(data), factor=1, normalize=False, test_every=8)
+        run = {"cmd": cmd, **printed, "train": [parser.image_names[i] for i in st.Dataset(parser, split="train").indices]}
+        (result / "ply").mkdir(parents=True)
+        if "--from-ply" in cmd:
+            run["params"], _ = st.create_splats_with_optimizers(parser, sh_degree=3, scene_scale=float(parser.scene_scale), device="cpu")
+            shutil.copy2(cmd[cmd.index("--from-ply") + 1], result / "ply" / "point_cloud_199.ply")
+        else:
+            export_splats(**model, format="ply", save_to=str(result / "ply" / "point_cloud_299.ply"))
+            (result / "ply_block.json").write_text(json.dumps(printed["plyTrainDryRun"]["block"]))   # as the Runner writes it
+        runs.append(run)
+
+    monkeypatch.setattr(train_stage, "run", launch)
+    opts = {"gsplat_dir": os.environ["PLY_GSPLAT_DIR"], "preset": "high", "iterations": 300, "holdout": 8, "holdout_block": 8,
+            "bilateral_grid": True, "exposure_fold": 200}
+    report = train_stage.run_stage(Ctx(out=job, log=Log(job, quiet=True), opts=opts))
+    trained, settle = runs
+    fold = report["exposureFold"]
+    # trained as configured, with the grid; the fit then read views of the trainer's own training split only
+    assert trained["plyTrainConfig"]["appearance"] == "bilateral_grid" and "--bilateral-grid" in trained["cmd"]
+    held = set(names) - set(trained["train"])
+    block = trained["plyTrainDryRun"]["block"]["frames"]
+    assert len(block) == 8 and held == {names[i] for i in range(0, 40, 8)} | set(block)
+    assert set(read) == set(trained["train"]) and not held & set(read) and fold["views"] == len(trained["train"]) == 28
+    assert off(fold) < 5e-3 and (fold["folded"], fold["settled"], fold["steps"]) == (True, True, 200)
+    assert fold["brightnessBefore"] > 1.1 and fold["brightnessAfter"] == pytest.approx(1.0, abs=5e-3)
+    # the continuation: no appearance model, the model's own splat count and SH bands, the same split
+    config = settle["plyTrainConfig"]
+    assert config["appearance"] is None and config["ppisp"] is False and config["fromSplats"] == n == config["capMax"]
+    assert (config["maxSteps"], config["shDegree"], config["holdout"], config["holdoutBlock"]) == (200, 3, 8, 8)
+    assert settle["plyTrainDryRun"]["startSplats"] == n and settle["plyTrainDryRun"]["startShCoefficients"] == 16
+    assert settle["train"] == trained["train"] and "--bilateral-grid" not in settle["cmd"]
+    # gsplat's parameters hold the folded colours: its own SH evaluation of them is the fitted map of the trained model's
+    dirs = torch.nn.functional.normalize(torch.randn(n, 3, generator=g), dim=-1)
+    shown = lambda sh0, shN: (_spherical_harmonics(3, dirs, torch.cat([sh0, shN], 1)) + 0.5).double().numpy()
+    params = settle["params"]
+    assert all(p.requires_grad for p in params.values()) and torch.allclose(params["means"].data, model["means"])
+    want = shown(model["sh0"], model["shN"]) @ np.array(fold["matrix"]).T + np.array(fold["offset"])
+    assert np.abs(shown(params["sh0"].data, params["shN"].data) - want).max() < 1e-5
+    assert (job / "scene.ply").read_bytes() == (job / "train" / "folded.ply").read_bytes()   # the stand-in "settled" model is the folded one
+
+
+def test_the_pinned_trainers_bilateral_grid_is_not_part_of_the_model_it_saves(trainer):
+    """A checkpoint holds the grid under "post_processing", beside "splats"; the PLY holds the splats alone. So a
+    model trained with the grid continues without one as it is, in the colours the grid left it in."""
+    import inspect
+    import lib_bilagrid
+    grid = lib_bilagrid.BilateralGrid(4, grid_X=16, grid_Y=16, grid_W=8)
+    assert {k: tuple(v.shape) for k, v in grid.state_dict().items()} == {"grids": (4, 12, 8, 16, 16), "rgb2gray_weight": (1, 3)}
+    source = inspect.getsource(trainer.Runner.train)
+    assert 'data["post_processing"] = self.post_processing_module.state_dict()' in source and '"splats": self.splats.state_dict()' in source
+    assert "sh0 = self.splats[\"sh0\"]" in source and "export_splats(" in source
