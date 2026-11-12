@@ -148,6 +148,9 @@ def build_parser() -> argparse.ArgumentParser:
                    help="export: train the phone file on for this many steps at its own splat count and SH degree, and ship it "
                         "when the viewer shows it better than the one it started from. Default 3000, when the phone file has "
                         "fewer splats or SH bands than the twin and a GPU can score it; 0 disables")
+    g.add_argument("--dense-occupancy", action="store_true",
+                   help="export: rebuild the walking grid from the twin's own depth (5 cm cells; walls the camera solve has no "
+                        "points on) and use it when it walks at least as well as the sparse grid. Needs a GPU; off by default")
     return ap
 
 
