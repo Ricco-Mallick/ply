@@ -430,3 +430,27 @@ One run (`q1b`: `--exposure-affine --exposure-fold 2000`, L40S, 11.4 minutes, $0
   walkable cell the depth saw blocked) is a decision for the owner; nothing ships until then.
 - Each export wrote `occupancy_depth.png` beside the sparse `occupancy.png` in `<scenario>/eval/q0a-dense/` on the
   Volume. The two runs cost $0.30.
+
+### The merged walking grid, and on by default (2026-11-12)
+
+Looked at side by side, neither grid is right everywhere. On Dr Johnson the depth grid left a corridor's floor
+undecided that the sparse grid has, and looked through a gap in a wall the sparse points close, so free space ran
+out of the room. On the chapel it is the only one with the pews. So the depth grid now takes the sparse grid's floor
+where it decided nothing (unless a view saw something there or it lies within 10 cm of a cell it blocked: the inside
+of a wall), keeps the sparse grid's blocked cells, and is used unless fewer capture positions are walkable on it.
+Exported again from `q0a` (`q0a-merged`, $0.30 for both):
+
+| | used | camera positions walkable | floor to stand on, merged / sparse | sparse cells taken, floor / blocked | seconds |
+|---|---|---:|---:|---:|---:|
+| Dr Johnson (L4) | depth | 99.6% | 26.8 / 27.4 m² | 1,285 / 1,104 | 3.7 |
+| Chapel (L40S) | depth | 100% | 16.4 / 28.1 m² | 77 / 4,351 | 21.5 |
+
+- Dr Johnson's merged grid has the corridor back and the wall closed: it is the sparse grid's shape with thicker
+  walls where the depth saw them. The chapel's has the pews solid and the aisles and side walkways clear.
+- **Walk on `chapel-high-2` with the merged grid swapped in** (dev build, the engine's own frame step): 16 headings
+  held into walls at 9.7 m/s for 5 s each never put the walker more than 1 cm inside its radius; routes from the
+  spawn point to 20 places along the aisles were all found and Walk followed every one to its end without
+  stopping. 16 of them pass within 1.3 cm of the walker's radius somewhere, in aisles the pews leave narrow at 5 cm
+  cells; on the published sparse grid the same check finds roomier routes because they cross the pews.
+- **On by default** (`--no-dense-occupancy` turns it off): it adds 4 to 25 s to an export on a GPU. The live worker
+  runs it from its next deploy; published twins keep their grids until they are exported again.
