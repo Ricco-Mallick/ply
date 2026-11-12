@@ -90,7 +90,7 @@ export function moveCircle(g: Grid, x: number, z: number, dx: number, dz: number
 
 export class GridCollider implements Collider {
   grid: Grid;
-  /** the smallest radius known to fit nowhere on the grid, so that search is made once */
+  /** the smallest radius known to fit at no cell centre, so the search of the whole grid is made once */
   private none = Infinity;
   constructor(grid: Grid) { this.grid = grid; }
 
@@ -101,10 +101,10 @@ export class GridCollider implements Collider {
       cell centre where the circle fits, searched in rings of cells outwards. */
   nearestFree(x: number, z: number, r: number, reach = Infinity): Point | null {
     const g = this.grid, m = g.meta, ox = m.origin[0], oz = m.origin[1], c = m.cell, w = m.width, h = m.height;
-    if (r >= this.none || !Number.isFinite(x) || !Number.isFinite(z)) return null;
+    if (!Number.isFinite(x) || !Number.isFinite(z)) return null;
     if (settle(g, x, z, r, 16) >= 0 && Math.hypot(SX - x, SZ - z) <= reach) return { x: SX, z: SZ };
     const ci = Math.floor((x - ox) / c), cj = Math.floor((z - oz) / c);
-    if (!(Math.abs(ci) < 1e9 && Math.abs(cj) < 1e9)) return null;  // so far out that ring numbers stop counting
+    if (r >= this.none || !(Math.abs(ci) < 1e9 && Math.abs(cj) < 1e9)) return null;  // 1e9: so far out that ring numbers stop counting
     const k0 = Math.max(0, -ci, ci - w + 1, -cj, cj - h + 1), k1 = Math.min(Math.ceil(reach / c) + 1, Math.max(ci, w - 1 - ci, cj, h - 1 - cj));
     let best: Point | null = null, bd = reach;
     const at = (i: number, j: number) => {
