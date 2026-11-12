@@ -151,3 +151,75 @@ def _clear_lines(centers: np.ndarray, p: np.ndarray, n: int = 40) -> np.ndarray:
     x, z = s[..., 0], s[..., 2]
     solid = (x > PARTITION[0]) & (x < PARTITION[1]) & ((z < DOOR[0]) | (z > DOOR[1]))
     return ~solid.any(axis=1)
+
+
+# ------------------------------------------------------------------ analytic depth for the dense pass (plypipe.dense)
+# Solid boxes ray-cast exactly: what a perfect splat would render as depth, without a splat or a GPU.
+
+SMALL_CAMERA = (480, 360, 360.0)  # width, height and focal length of the photo; the dense pass renders at half of it
+
+
+def solid_room(size: tuple = ROOM, furniture: tuple = (TABLE,), wall: float = 0.2) -> np.ndarray:
+    """(B, 6) boxes (x0, y0, z0, x1, y1, z1): floor, ceiling, the four walls, then each piece of furniture as a solid
+    block from the floor to its top."""
+    W, D, H = size
+    shell = [(-wall, -wall, -wall, W + wall, 0, D + wall), (-wall, H, -wall, W + wall, H + wall, D + wall),
+             (-wall, 0, -wall, 0, H, D + wall), (W, 0, -wall, W + wall, H, D + wall),
+             (0, 0, -wall, W, H, 0), (0, 0, D, W, H, D + wall)]
+    return np.array(shell + [(x0, 0, z0, x1, top, z1) for (x0, z0, x1, z1, top) in furniture], float)
+
+
+def look(yaw: float, pitch: float = -0.18) -> np.ndarray:
+    """cam_from_world rotation of an upright phone looking along `yaw` (from +x towards +z), tilted `pitch` up."""
+    fwd = np.array([np.cos(yaw) * np.cos(pitch), np.sin(pitch), np.sin(yaw) * np.cos(pitch)])
+    right = np.cross(fwd, [0, 1, 0])
+    right /= np.linalg.norm(right)
+    return np.stack([right, np.cross(fwd, right), fwd])
+
+
+def cast_depth(boxes: np.ndarray, K: np.ndarray, R: np.ndarray, t: np.ndarray, width: int, height: int,
+               blobs: tuple = ()) -> tuple[np.ndarray, np.ndarray]:
+    """Expected z-depth and alpha (H, W) of the boxes from a pinhole camera, pixel centres at +0.5 as gsplat has them.
+    A blob (centre, radius, opacity) is a semi-transparent ball: where a ray enters it in front of the surface, the
+    expected depth is the blend  opacity * blob + (1 - opacity) * surface, as alpha compositing gives."""
+    u, v = np.meshgrid(np.arange(width) + 0.5, np.arange(height) + 0.5)
+    # in the world frame; the camera-z component is 1, so the ray parameter is z-depth
+    d = np.stack([(u - K[0, 2]) / K[0, 0], (v - K[1, 2]) / K[1, 1], np.ones_like(u)], -1) @ R
+    d = np.where(np.abs(d) < 1e-12, 1e-12, d)
+    o = -R.T @ t
+    depth = np.full((height, width), np.inf)
+    for b in np.asarray(boxes, float):
+        t0, t1 = (b[:3] - o) / d, (b[3:] - o) / d
+        enter, leave = np.minimum(t0, t1).max(-1), np.maximum(t0, t1).min(-1)
+        depth = np.where((leave >= enter) & (enter > 0), np.minimum(depth, enter), depth)
+    alpha = np.isfinite(depth).astype(np.float32)
+    for centre, radius, opacity in blobs:
+        oc = o - np.asarray(centre, float)
+        a, b = (d * d).sum(-1), 2 * (d @ oc)
+        disc = b * b - 4 * a * (oc @ oc - radius * radius)
+        s = (-b - np.sqrt(np.maximum(disc, 0))) / (2 * a)
+        depth = np.where((disc > 0) & (s > 0) & (s < depth), opacity * s + (1 - opacity) * depth, depth)
+    return np.where(alpha > 0, depth, 0).astype(np.float32), alpha
+
+
+def depth_views(boxes: np.ndarray, centers: np.ndarray, rots: np.ndarray, camera: tuple = SMALL_CAMERA, scale: float = 0.5,
+                blobs: tuple = ()) -> list:
+    """plypipe.dense views of the boxes at `scale` of the photo. A blob is (centre, radius, opacity, view): `view` is
+    the index of the only view that renders it, or None for a blob that is really there and blends into every view."""
+    from plypipe import dense
+    w, h, f = camera
+    K = np.array([[f * scale, 0, w * scale / 2], [0, f * scale, h * scale / 2], [0, 0, 1]])
+    out = []
+    for i, (c, R) in enumerate(zip(centers, rots)):
+        v = dense.View(K, R, -R @ c, int(w * scale), int(h * scale), f"{i:06d}.jpg")
+        v.depth, v.alpha = cast_depth(boxes, K, R, v.t, v.width, v.height, [b[:3] for b in blobs if b[3] in (None, i)])
+        out.append(v)
+    return out
+
+
+def surface_distance(boxes: np.ndarray, pts: np.ndarray) -> np.ndarray:
+    """Distance from each point (in the open air between the boxes) to the nearest box."""
+    out = np.full(len(pts), np.inf)
+    for b in np.asarray(boxes, float):
+        out = np.minimum(out, np.linalg.norm(np.maximum(np.maximum(b[:3] - pts, pts - b[3:]), 0), axis=1))
+    return out
