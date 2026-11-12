@@ -65,17 +65,30 @@ export function clearance(g: OccupancyGrid) {
   return d;
 }
 
+/* Route clearance, in metres beyond the walker's radius, tried widest first. clearance() counts cells between cell
+   centres with 1 / 1.414 steps, which reads up to 8.3% long, and a point of a route can lie anywhere in its cell, up to
+   half a diagonal nearer a wall than the centre. So a route that keeps `m` metres clear needs (m / cell + √½) × 1.09
+   cells. The last tier checks cell centres only (half a cell, and no allowance for the chamfer, which is exact along the
+   axes): a door the walker fits through but the slack would close.
+   Measured in cells as before, routes passed 5 cm from a wall on a 5 cm grid, inside the walker (test/walk.test.mts). */
+const TIERS: [number, number, number][] = [[.23, Math.SQRT1_2, 1.09], [.1, Math.SQRT1_2, 1.09], [.02, Math.SQRT1_2, 1.09], [0, .5, 1]];
+
 export class Navigator {
-  clr: Float32Array; w: number; h: number; cell: number; ox: number; oz: number;
-  constructor(public grid: OccupancyGrid) {
+  clr: Float32Array; w: number; h: number; cell: number; ox: number; oz: number; grid: OccupancyGrid; radius: number;
+  /** `radius`: the walker's (walk/walker.ts RADIUS), which every route keeps clear of the walls. */
+  constructor(grid: OccupancyGrid, radius: number) {
+    this.grid = grid; this.radius = radius;
     this.clr = clearance(grid); const m = grid.meta; this.w = m.width; this.h = m.height; this.cell = m.cell; this.ox = m.origin[0]; this.oz = m.origin[1];
   }
   idx(x: number, z: number) { return [Math.floor((x - this.ox) / this.cell), Math.floor((z - this.oz) / this.cell)] as const; }
   pos(i: number, j: number): [number, number] { return [this.ox + (i + .5) * this.cell, this.oz + (j + .5) * this.cell]; }
   ok(i: number, j: number, need: number) { return i >= 0 && j >= 0 && i < this.w && j < this.h && this.clr[j * this.w + i] >= need; }
+  /** Cells of clearance for a route that keeps `extra` metres beyond the walker's radius, with `slack` cells for where in
+      a cell it runs and `chamfer` for how long clearance() reads. */
+  need(extra: number, slack: number, chamfer: number) { return ((this.radius + extra) / this.cell + slack) * chamfer; }
 
   /** Nearest cell with at least `need` cells of clearance (a place on a wall becomes the floor spot in front of it). */
-  nearestFree(x: number, z: number, need = 2.5): [number, number] | null {
+  nearestFree(x: number, z: number, need: number): [number, number] | null {
     const [ci, cj] = this.idx(x, z);
     for (let r = 0; r < 40; r++) {
       let best: [number, number] | null = null, bd = Infinity;
@@ -91,7 +104,8 @@ export class Navigator {
   /** A* over 8-connected cells that keep `need` cells from walls, preferring the middle of open floor; then
       string-pulled to straight runs. Returns floor points (x, z) or null. */
   route(from: [number, number], to: [number, number]): [number, number][] | null {
-    for (const need of [2.5, 1.8, 1.2]) {
+    for (const [extra, slack, chamfer] of TIERS) {
+      const need = this.need(extra, slack, chamfer);
       const a = this.nearestFree(from[0], from[1], need), b = this.nearestFree(to[0], to[1], need); if (!a || !b) continue;
       const cells = this.astar(a, b, need); if (!cells) continue;
       const pts = cells.map(([i, j]) => this.pos(i, j));
@@ -113,17 +127,18 @@ export class Navigator {
       for (let dj = -1; dj <= 1; dj++) for (let di = -1; di <= 1; di++) {
         if (!di && !dj) continue; const ni = ci + di, nj = cj + dj; if (!this.ok(ni, nj, need)) continue;
         if (di && dj && (!this.ok(ci + di, cj, need) || !this.ok(ci, cj + dj, need))) continue; // no corner cutting
-        const k = nj * w + ni, near = Math.max(0, 6 - this.clr[k]) * .35; // keep off the walls when there is room
+        const k = nj * w + ni, near = Math.max(0, .6 / this.cell - this.clr[k]) * .35; // keep 60 cm off the walls when there is room
         const ng = g[cur] + (di && dj ? 1.414 : 1) + near;
         if (ng < g[k]) { g[k] = ng; came[k] = cur; f[k] = ng + hh(k); open.push(k); }
       }
     }
     return null;
   }
-  /** Line of sight on the grid at the given clearance. */
+  /** Line of sight on the grid at the given clearance (the same as the cells of the route: a straight run must not
+      cut closer to a wall than they do). */
   see(a: [number, number], b: [number, number], need: number) {
     const L = Math.hypot(b[0] - a[0], b[1] - a[1]), n = Math.ceil(L / (this.cell * .5));
-    for (let k = 0; k <= n; k++) { const t = k / Math.max(1, n), [i, j] = this.idx(a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t); if (!this.ok(i, j, need * .8)) return false; }
+    for (let k = 0; k <= n; k++) { const t = k / Math.max(1, n), [i, j] = this.idx(a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t); if (!this.ok(i, j, need)) return false; }
     return true;
   }
   private pull(pts: [number, number][], need: number) {

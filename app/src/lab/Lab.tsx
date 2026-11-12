@@ -5,6 +5,7 @@
 import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import QRCode from 'qrcode';
 import { WalkEngine } from '../walk/engine';
+import { RADIUS } from '../walk/walker';
 import { loadManifest, type SceneManifest } from '../walk/scene';
 import { Glass } from '../shared/Glass';
 import { Minimap } from '../walk/Walk';
@@ -56,7 +57,7 @@ export function Lab() {
       setManifest(manifest); await e.load(manifest, base);
       const at = q.get('at')?.split(',').map(Number); if (at?.length === 4 && at.every(Number.isFinite)) { e.state.pos.x = at[0]; e.state.pos.z = at[1]; e.state.yaw = at[2]; e.pitch = at[3]; }
       else if (e.grid) { e.state.pos.x = START.x; e.state.pos.z = START.z; e.state.yaw = START.yaw; e.pitch = START.pitch; e.unstick(); }
-      const n = e.grid ? new Navigator(e.grid) : null; setNav(n);
+      const n = e.grid ? new Navigator(e.grid, RADIUS) : null; setNav(n);
       const overlay = new Overlay(e, n); overlay.allPlaces = PLACES; setOv(overlay); if (import.meta.env.DEV) (window as any).__lab = overlay;
     }).catch(x => setErr(x.message));
     return () => e.dispose();
