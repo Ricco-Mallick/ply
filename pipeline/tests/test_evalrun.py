@@ -44,8 +44,9 @@ def test_each_variant_changes_one_thing_against_the_baseline():
     assert evalrun.VARIANTS["q1"]["args"][-3:] == ["--bilateral-grid", "--exposure-fold", "2000"]
     assert diff("q1b") == {"exposure_affine": True, "exposure_fold": 2000}     # q1 with the grid cut to what the fold undoes exactly
     assert evalrun.VARIANTS["q1b"]["args"][-3:] == ["--exposure-affine", "--exposure-fold", "2000"]
-    # the one-cell grid is budgeted like the full one until a run times it, so q1b fits the same function timeout as q1
-    assert evalrun.estimate(evalrun.VARIANTS["q1b"]["args"], "L40S") == evalrun.estimate(evalrun.VARIANTS["q1"]["args"], "L40S")
+    # the one-cell grid runs in pure torch, measured at x2.9 a plain step on q1b's first run: the longest table variant
+    q1b, q1 = evalrun.estimate(evalrun.VARIANTS["q1b"]["args"], "L40S"), evalrun.estimate(evalrun.VARIANTS["q1"]["args"], "L40S")
+    assert (q1b["gridSlowdown"], q1["gridSlowdown"], q1b["totalMin"], q1b["timeoutMin"]) == (2.9, 1.5, 31, 47)
 
 
 def test_resolve_names_and_the_args_escape_hatch():
@@ -89,7 +90,7 @@ def test_the_small_scenario_has_its_own_saved_solve_container_and_estimate():
     job = evalrun.make_job("drjohnson", "", "q5b", gpus=("L4", "L40S"))
     assert job["src"] == "drjohnson/prep" and (job["cpu"], job["memoryGib"], job["needsIndex"]) == (4, 16, False)
     # every export trains the phone file on for 3k steps, so every estimate counts them; --lite-finetune 0 is the run without
-    assert job["args"] == evalrun.SMALL + ["--opacity-reg", "0.002"] and job["ceilingMin"] == 29   # the function's timeout is q1's
+    assert job["args"] == evalrun.SMALL + ["--opacity-reg", "0.002"] and job["ceilingMin"] == 44   # the function's timeout is q1b's
     l4, l40s = job["estimates"]["L4"], job["estimates"]["L40S"]
     assert (l4["fineTuneSteps"], l4["trainMin"], l4["totalMin"], l4["timeoutMin"]) == (3000, 9, 13, 20)
     assert (l40s["trainMin"], l40s["totalMin"], l40s["timeoutMin"]) == (5, 9, 14)
@@ -138,7 +139,7 @@ def test_q1_counts_the_grids_slower_steps_the_fold_and_the_steps_after_it():
     job = evalrun.make_job("drjohnson", "", "q1", gpus=("L4", "L40S"))
     l4, l40s = job["estimates"]["L4"], job["estimates"]["L40S"]
     assert (l4["trainMin"], l4["overheadMin"], l4["totalMin"], l4["timeoutMin"], l4["usd"]) == (13, 6, 19, 29, 0.35)
-    assert (l40s["trainMin"], l40s["totalMin"], l40s["timeoutMin"], l40s["usd"]) == (7, 13, 20, 0.49) and job["ceilingMin"] == 29
+    assert (l40s["trainMin"], l40s["totalMin"], l40s["timeoutMin"], l40s["usd"]) == (7, 13, 20, 0.49) and job["ceilingMin"] == 44
     text = evalrun.describe(job)
     assert "15000 steps at x1.5 for the bilateral grid (an estimate) + 2000 after the exposure fold + 3000 for the phone file" in text
     assert "6 min restore/export/scoring and the fold" in text and "--bilateral-grid --exposure-fold 2000" in text
@@ -150,9 +151,9 @@ def test_q1_counts_the_grids_slower_steps_the_fold_and_the_steps_after_it():
 
 
 def test_the_function_timeout_follows_the_slowest_allowed_gpu():
-    assert evalrun.default_ceiling_min(("L40S",)) == 32 and evalrun.default_ceiling_min(("L40S", "L4")) == 51     # q1 is the longest variant
+    assert evalrun.default_ceiling_min(("L40S",)) == 47 and evalrun.default_ceiling_min(("L40S", "L4")) == 81     # q1b is the longest variant
     job = evalrun.make_job("chapel", "/chapel/high/job/", "q0a")
-    assert job["src"] == "chapel/high/job" and job["ceilingMin"] == 32 and set(job["estimates"]) == {"L40S"}
+    assert job["src"] == "chapel/high/job" and job["ceilingMin"] == 47 and set(job["estimates"]) == {"L40S"}
     assert job["estimates"]["L40S"]["timeoutMin"] == 21                              # its own stop-loss is what it was
     with pytest.raises(ValueError, match="PLY_EVAL_TIMEOUT_MIN"):
         evalrun.make_job("chapel", "chapel/high/job", "q0a", gpus=("L40S", "L4"), ceiling_min=20)
@@ -333,8 +334,8 @@ def test_an_export_only_run_takes_a_table_variants_model_and_export_options_only
     assert job["exportFrom"] == "q0a" and job["trainArgs"] == evalrun.variant_args("q0a", "drjohnson")
     assert job["args"] == evalrun.variant_args("q0a", "drjohnson") + ["--dense-occupancy"] and job["argsSource"] == "--export-from q0a"
     l40s = job["estimates"]["L40S"]
-    # no training steps: the phone file's 3k at Dr Johnson's 13.8 ms (1 min), the 4 min overhead and 3 for the depth grid
-    assert (l40s["steps"], l40s["exportOnly"], l40s["trainMin"], l40s["overheadMin"], l40s["timeoutMin"]) == (0, True, 1, 7, 12)
+    # no training steps: the phone file's 3k at Dr Johnson's 13.8 ms (1 min), the 4 min overhead and 1 for the depth grid
+    assert (l40s["steps"], l40s["exportOnly"], l40s["trainMin"], l40s["overheadMin"], l40s["timeoutMin"]) == (0, True, 1, 5, 9)
     assert "gridSlowdown" not in evalrun.make_job("drjohnson", "", "q1-again", export_from="q1")["estimates"]["L40S"]   # q1's grid trained already
     with pytest.raises(ValueError, match="not a table variant"):
         evalrun.make_job("drjohnson", "", "x-dense", export_from="q0a-30k-b")
