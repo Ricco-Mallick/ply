@@ -4,6 +4,8 @@
 The phone file was the desktop model cut down to the phone's splat count and shipped as cut: 2.15 dB below the desktop
 file on the chapel (docs/PROJECT-REVIEW.md, T2). With this, the cut-down model is where a short training run starts,
 with the splat cap at its own size, so the splats that are left refit the photos (IMPROVEMENT-PLAN.md, variant Q6).
+A twin under the phone's count gets the same run: its phone file loses only the third SH band, and the bands that are
+left refit (docs/EXPERIMENTS.md: +0.80 dB on the chapel, +0.73 and +0.52 dB on Dr Johnson).
 
 simple_trainer loads a checkpoint only to score it. `install` wraps its create_splats_with_optimizers instead: upstream
 still builds the parameters and their optimizers (from the SfM points, with its own learning rates), and the values
