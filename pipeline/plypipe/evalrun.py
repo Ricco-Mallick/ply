@@ -40,6 +40,9 @@ VARIANTS: dict[str, dict] = {
               "note": "300 steps: proves restore, train, export, scoring and saving end to end", "timeout_min": 12},
     "q0a": {"add": [], "role": "baseline", "note": "baseline; with q0b it gives the noise floor"},
     "q0b": {"add": [], "role": "baseline", "note": "identical to q0a"},
+    "q1": {"add": ["--bilateral-grid", "--exposure-fold", "2000"],
+           "note": "exposure correction folded back: trained with the bilateral grid, the colour map to the photos folded into the "
+                   "splats, then 2k steps without the grid"},
     "q2": {"add": ["--pose-opt"], "note": "pose refinement"},
     "q4a": {"add": ["--depth-loss"], "note": "sparse depth loss at the SfM track points"},
     "q5a": {"add": ["--opacity-reg", "0.005"], "note": "opacity regulariser 0.005 (baseline 0.01)"},
@@ -61,6 +64,11 @@ CPU, MEMORY_GIB = 8, 32  # what the chapel's train and export ran on (the worker
 # 1,717.9 s for 60,000 steps on an L40S (the saved High run's report). An L4 is about twice as slow (ply_bench's notes).
 SECONDS_PER_STEP = {"L40S": 1717.9 / 60_000, "L4": 2 * 1717.9 / 60_000}
 OVERHEAD_MIN = 5   # restore, export and scoring for a 2M-splat model
+# Estimates, not measurements (no bilateral-grid run has been timed), set on the careful side so the stop-loss does not
+# end a first q1 run: a step with the grid also slices one grid per photo and regularises all of them, and the exposure
+# fold renders its views twice, rewrites the PLY and starts the trainer a second time.
+GRID_SLOWDOWN = 1.5
+FOLD_MIN = 2
 STOP_LOSS = 1.5    # IMPROVEMENT-PLAN rule 3: the timeout is 1.5 times the estimate
 GRACE_MIN = 2      # the Modal function outlives the in-code deadline by this much, to save what a stopped run has
 
@@ -159,11 +167,16 @@ def estimate(args: list[str], gpu: str = "L40S", timeout_min: int | None = None,
     # second time and scoring both phone models
     tune = _int_option(args, "--lite-finetune")
     tune = LITE_FINETUNE_STEPS if tune is None else tune
-    train_min = math.ceil((steps + tune) * s["seconds_per_step"][gpu_key(gpu)] / 60)
-    total_min = train_min + s["overhead_min"]
+    # --exposure-fold trains the full model on, with no appearance model: its steps count at the plain pace
+    grid, fold = "--bilateral-grid" in args, _int_option(args, "--exposure-fold")
+    paced = steps * (GRID_SLOWDOWN if grid else 1) + max(fold or 0, 0) + tune
+    train_min = math.ceil(paced * s["seconds_per_step"][gpu_key(gpu)] / 60)
+    overhead = s["overhead_min"] + (FOLD_MIN if fold is not None else 0)
+    total_min = train_min + overhead
     timeout = timeout_min or math.ceil(STOP_LOSS * total_min)
     rate = per_hour(gpu, s["cpu"], s["memory_gib"])
-    return {"gpu": gpu, "steps": steps, **({"fineTuneSteps": tune} if tune else {}), "trainMin": train_min, "overheadMin": s["overhead_min"],
+    return {"gpu": gpu, "steps": steps, **({"gridSlowdown": GRID_SLOWDOWN} if grid else {}), **({"exposureFoldSteps": max(fold, 0)} if fold is not None else {}),
+            **({"fineTuneSteps": tune} if tune else {}), "trainMin": train_min, "overheadMin": overhead,
             "totalMin": total_min,
             "timeoutMin": timeout, "usd": round(total_min / 60 * rate, 2), "maxUsd": round(timeout / 60 * rate, 2), "perHour": rate}
 
@@ -208,8 +221,10 @@ def describe(job: dict, job_dir: str = "/tmp/work/job") -> str:
            f"scenario {job['scenario']}, saved solve /vol/{job['src']}, results /vol/{variant_dir(job['scenario'], job['variant'])}/",
            f"{job.get('cpu', CPU)} cores, {job.get('memoryGib', MEMORY_GIB)} GiB; GPU {' then '.join(job['gpus'])}" + (" (a fallback: timings differ)" if len(job["gpus"]) > 1 else "")]
     for e in job["estimates"].values():
-        out.append(f"  {e['gpu']}: {e['steps']} steps{' + ' + str(e['fineTuneSteps']) + ' for the phone file' if e.get('fineTuneSteps') else ''}"
-                   f" = {e['trainMin']} min training + {e['overheadMin']} min restore/export/scoring = "
+        out.append(f"  {e['gpu']}: {e['steps']} steps{' at x' + str(e['gridSlowdown']) + ' for the bilateral grid (an estimate)' if e.get('gridSlowdown') else ''}"
+                   f"{' + ' + str(e['exposureFoldSteps']) + ' after the exposure fold' if 'exposureFoldSteps' in e else ''}"
+                   f"{' + ' + str(e['fineTuneSteps']) + ' for the phone file' if e.get('fineTuneSteps') else ''}"
+                   f" = {e['trainMin']} min training + {e['overheadMin']} min restore/export/scoring{' and the fold' if 'exposureFoldSteps' in e else ''} = "
                    f"{e['totalMin']} min, about ${e['usd']:.2f} at ${e['perHour']:.2f}/h; stop-loss {e['timeoutMin']} min, at most ${e['maxUsd']:.2f}")
     out += [f"the stop-loss is 1.5x the estimate unless the table sets one; the Modal function times out {GRACE_MIN} min later "
             f"({job['ceilingMin'] + GRACE_MIN} min), to save what a stopped run has",
@@ -394,6 +409,7 @@ def assemble(job: dict, report: dict, *, gpu: dict, seconds: dict, sizes: dict, 
         "scores": {"every": every, "block": block},
         "viewer": {"desktop": shipped.get("full"), "phone": shipped.get("lite"), "cleaned": export.get("viewerEval"),
                    **({"phoneFinetune": export["liteFinetune"]} if export.get("liteFinetune") else {})},
+        **({"exposureFold": train["exposureFold"]} if train.get("exposureFold") else {}),
         "splats": {"atEval": (train.get("eval") or {}).get("gaussians"), "trained": export.get("gaussiansIn"),
                    "shipped": export.get("gaussiansOut"), "keptFraction": export.get("keptFraction"), "phone": export.get("liteGaussians")},
         "files": sizes, "seconds": {**seconds, "train": train.get("seconds"), "export": export.get("seconds")},
@@ -431,6 +447,10 @@ def summary(m: dict) -> str:
         return "n/a" if not s else f"cc-PSNR {s.get('ccPsnr')} cc-SSIM {s.get('ccSsim')} cc-LPIPS {s.get('ccLpips')} ({s.get('views')} views)"
     viewer = m.get("viewer") or {}
     tune = viewer.get("phoneFinetune") or {}
+    fold = m.get("exposureFold") or {}
+    folded = (f"gains {'/'.join(str(g) for g in fold.get('gains') or [])} fitted on {fold.get('views')} training views, brightness there "
+              f"x{fold.get('brightnessBefore')} -> x{fold.get('brightnessAfter')} of the photos, "
+              + (f"then {fold.get('steps')} steps without the appearance model" if fold.get("settled") else "no steps after it")) if fold.get("folded") else "NOT folded"
     return "\n".join([f"{m['variant']}: {'complete' if m['complete'] else 'INCOMPLETE, missing ' + ', '.join(m['missing'])}",
                       f"  every-Nth hold-out: {row(m['scores']['every'])}", f"  block hold-out:     {row(m['scores']['block'])}",
                       f"  viewer PSNR desktop {(viewer.get('desktop') or {}).get('psnr')}, phone {(viewer.get('phone') or {}).get('psnr')}; "
@@ -438,6 +458,8 @@ def summary(m: dict) -> str:
                       *([f"  phone file, {tune.get('steps')} fine-tune steps: PSNR {(tune.get('before') or {}).get('psnr')} before, "
                          f"{(tune.get('after') or {}).get('psnr')} fine-tuned; shipped the {tune.get('shipped')} one"
                          + (f" ({tune['why']})" if tune.get("why") else "")] if tune else []),
+                      *([f"  exposure fold: {folded}" + (f" ({fold['why']})" if fold.get("why") else "")
+                         + f"; viewer brightness desktop x{(viewer.get('desktop') or {}).get('brightness')}"] if fold else []),
                       f"  {m['wallMinutes']} min wall, about ${m['costUsd']}"])
 
 
@@ -478,7 +500,8 @@ def main(argv: list[str] | None = None) -> int:
     p = sub.add_parser("plan")
     p.add_argument("--variant", required=True)
     p.add_argument("--args", default="")
-    p.add_argument("--scenario", default="chapel", choices=sorted(SCENARIOS))
+    # PLY_EVAL_SCENARIO is what sizes the container at launch (ply_eval.py): the plan follows it, as it follows PLY_EVAL_GPU
+    p.add_argument("--scenario", default=os.environ.get("PLY_EVAL_SCENARIO", "chapel"), choices=sorted(SCENARIOS))
     p.add_argument("--src", default="", help="the saved job on the Volume (default: the scenario's)")
     p.add_argument("--gpu", default=os.environ.get("PLY_EVAL_GPU", "L40S"), help="comma-separated, tried in order")
     p.add_argument("--force", action="store_true")

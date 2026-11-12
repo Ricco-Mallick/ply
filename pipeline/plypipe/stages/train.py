@@ -12,6 +12,7 @@ import json
 import os
 import shutil
 import sys
+import time
 from pathlib import Path
 
 from plypipe import plan
@@ -59,12 +60,11 @@ def launcher_env() -> dict:
             "CUDA_VISIBLE_DEVICES": os.environ.get("PLY_TRAIN_GPU", "0")}
 
 
-def finetune(ctx: Ctx, ply: Path, steps: int, sh_degree: int, stage: str = "export") -> dict:
+def train_on(ctx: Ctx, ply: Path, steps: int, sh_degree: int, result: Path, stage: str) -> Path:
     """Train on from the model in `ply` for `steps`, at its own splat count (plypipe.finetune), on the views the job
-    trained on. Returns the fitted PLY's path and the trainer's held-out scores. <out>/train-lite is this run's alone."""
-    result = ctx.out / "train-lite"
+    trained on and with no appearance model. `result` is this run's alone. Returns the PLY it leaves."""
     shutil.rmtree(result, ignore_errors=True)
-    flags, block = split_flags(ctx)
+    flags, _ = split_flags(ctx)
     cmd = launcher(ctx, result) + ["--no-ppisp", "--from-ply", str(ply), "--iterations", str(steps), "--sh-degree", str(sh_degree), *flags]
     if ctx.opt("random_bkgd"):
         cmd.append("--random-bkgd")
@@ -73,9 +73,69 @@ def finetune(ctx: Ctx, ply: Path, steps: int, sh_degree: int, stage: str = "expo
     plys = sorted((result / "ply").glob("point_cloud_*.ply"), key=lambda p: int(p.stem.rsplit("_", 1)[1]))
     if not plys:
         raise RuntimeError(f"the fine-tune finished but left no PLY in {result / 'ply'}")
+    return plys[-1]
+
+
+def finetune(ctx: Ctx, ply: Path, steps: int, sh_degree: int, stage: str = "export") -> dict:
+    """The phone file's fine-tune (train_on). Returns the fitted PLY's path and the trainer's held-out scores.
+    <out>/train-lite is this run's alone."""
+    result = ctx.out / "train-lite"
+    fitted = train_on(ctx, ply, steps, sh_degree, result, stage)
     scores = held_out_scores(result, ctx.out / "eval" / "lite")
-    held = held_out_scores(result, ctx.out / "eval" / "lite", stage="block") if block else None
-    return {"ply": plys[-1], **({"eval": scores} if scores else {}), **({"evalBlock": held} if held else {})}
+    held = held_out_scores(result, ctx.out / "eval" / "lite", stage="block") if split_flags(ctx)[1] else None
+    return {"ply": fitted, **({"eval": scores} if scores else {}), **({"evalBlock": held} if held else {})}
+
+
+def fold_exposure(ctx: Ctx, result: Path, ply: Path, steps: int, block: int) -> tuple[Path, Path, dict]:
+    """Variant Q1 (plypipe.exposure) on the model the trainer left in `ply`: fit the colour map from its raw render to
+    the training photos, fold the map into the splats' colours (<result>/folded.ply), and train on for `steps` with
+    no appearance model (<result>/settle), so the model settles in the colours the viewer shows.
+
+    Returns the model to ship, the run whose held-out scores are that model's, and the record for the report. A fit
+    that cannot be made, is refused or fails ships the model as trained; a settling run that fails ships the folded
+    model. Both say why."""
+    from plypipe import exposure
+    out: dict = {"steps": steps, "folded": False, "settled": False}
+    if not (ctx.opt("bilateral_grid") or ctx.opt("ppisp")):
+        ctx.log.emit("train", "warn", "--exposure-fold without an appearance model: the colours are the photos' already, so the map is "
+                     "near the identity and the steps after it are plain extra training")
+    t0 = time.time()
+    try:
+        held = []
+        if block:  # the trainer's own list: a block it did not name is a block the fit could read by mistake
+            try:
+                held = json.loads((result / "ply_block.json").read_text())["frames"]
+            except (OSError, ValueError, KeyError):
+                raise RuntimeError("the trainer left no list of the held-out block's views, which the fit must not read") from None
+        fit = exposure.fit_views(ply, ctx.data_dir, int(ctx.opt("holdout", 30) or 0), held, antialiased=not ctx.opt("no_antialias"))
+        if fit is None:
+            fit = {"why": "not fitted: needs a GPU with gsplat, and PINHOLE cameras"}
+        out.update(fit)
+        if "why" not in fit:
+            model = exposure.fold_ply(ply, result / "folded.ply", fit["matrix"], fit["offset"])
+    except Exception as e:
+        out["why"] = f"the fit failed: {str(e)[-160:]}"
+    out["fitSeconds"] = round(time.time() - t0, 1)
+    if "why" in out:
+        ctx.log.emit("train", "warn", f"exposure fold skipped, the model ships as trained: {out['why']}")
+        return ply, result, out
+    out["folded"] = True
+    ctx.log.emit("train", "progress", f"exposure fold: gains {', '.join(f'{g:.3f}' for g in fit['gains'])} from {fit['views']} training views; "
+                 f"brightness there x{fit.get('brightnessBefore')} -> x{fit.get('brightnessAfter')} of the photos")
+    if steps <= 0:
+        return result / "folded.ply", result, out
+    try:  # the fit leaves this process holding cached GPU memory, which the trainer would go without
+        import torch
+        torch.cuda.empty_cache()
+    except Exception:
+        pass
+    t0 = time.time()
+    try:
+        settled = train_on(ctx, result / "folded.ply", steps, model["shDegree"], result / "settle", "train")
+    except Exception as e:
+        ctx.log.emit("train", "warn", f"exposure fold: the {steps} steps after it failed, the folded model ships without them: {str(e)[-160:]}")
+        return result / "folded.ply", result, {**out, "why": f"the {steps} steps after the fold failed: {str(e)[-160:]}"}
+    return settled, result / "settle", {**out, "settled": True, "settleSeconds": round(time.time() - t0, 1)}
 
 
 def run_stage(ctx: Ctx) -> dict:
@@ -131,19 +191,26 @@ def run_stage(ctx: Ctx) -> dict:
     plys = sorted((result / "ply").glob("point_cloud_*.ply"), key=lambda p: int(p.stem.rsplit("_", 1)[1]))
     if not plys:
         raise RuntimeError(f"training finished but no PLY in {result / 'ply'}")
-    shutil.copy2(plys[-1], ctx.out / "scene.ply")
+    ship, scored, fold = plys[-1], result, None
+    if ctx.opt("exposure_fold") is not None:
+        ship, scored, fold = fold_exposure(ctx, result, plys[-1], int(ctx.opt("exposure_fold")), block)
+    shutil.copy2(ship, ctx.out / "scene.ply")
     preset_info = json.loads((result / "ply_preset.json").read_text()) if (result / "ply_preset.json").exists() else {}
-    scores = held_out_scores(result, ctx.out / "eval")
+    keep = ctx.out / "eval"
+    if scored != result:  # the scores below are the settled model's: the trainer's scores of the model before the fold go beside the fit
+        before = {"eval": held_out_scores(result, keep / "trained"), "evalBlock": held_out_scores(result, keep / "trained", stage="block") if block else None}
+        fold["trained"] = {k: v for k, v in before.items() if v}
+    scores = held_out_scores(scored, keep)
     if scores:
         ctx.log.emit("train", "progress", f"held-out views: PSNR {scores['psnr']:.2f}, SSIM {scores['ssim']:.3f}, "
                      f"LPIPS {scores['lpips']:.3f} over {scores['views']} views")
-    extra = block_report(result, ctx.out / "eval") if block else {}
+    extra = block_report(scored, keep) if block else {}
     if block and not extra.get("evalBlock"):
         ctx.log.emit("train", "warn", "the held-out block was requested but the trainer left no scores for it")
     return {"ply": "scene.ply", "sizeMB": round((ctx.out / "scene.ply").stat().st_size / 2**20, 1),
             "fromStep": int(plys[-1].stem.rsplit("_", 1)[1]), **preset_info,
             "plan": {k: budget[k] for k in ("iterations", "capMax", "why")},
-            **({"eval": scores} if scores else {}), **extra}
+            **({"eval": scores} if scores else {}), **extra, **({"exposureFold": fold} if fold else {})}
 
 
 def camera_spread(sparse: Path) -> dict | None:

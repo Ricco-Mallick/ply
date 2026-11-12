@@ -128,6 +128,10 @@ def build_parser() -> argparse.ArgumentParser:
     g.add_argument("--depth-loss", action="store_true", help="supervise depth at the SfM track points (A/B option)")
     g.add_argument("--bilateral-grid", action="store_true",
                    help="exposure/white balance per photo with bilateral grids instead of PPISP (the twin keeps the photos' brightness)")
+    g.add_argument("--exposure-fold", type=int, metavar="STEPS",
+                   help="after training (meant for --bilateral-grid): fit the colour map from the twin's own colours to the photos on "
+                        "training views, fold it into the splats, and train on for STEPS with no appearance model, so the viewer "
+                        "shows the photos' brightness (A/B option; 0 folds without the steps)")
     g.add_argument("--random-bkgd", action="store_true", help="random training backgrounds: no see-through splats")
     g.add_argument("--scale-mcmc", action="store_true",
                    help="scale gsplat's MCMC noise and scale_reg to the room size (A/B: no gain measured on Dr Johnson)")
