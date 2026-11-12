@@ -31,6 +31,12 @@ def held_out(names: list[str], every: int) -> list[int]:
     return [i for i in range(len(names)) if every > 1 and i % every == 0]
 
 
+def training_views(names: list[str], every: int, block=()) -> list[int]:
+    """The views a job trains on, as positions in name order: gsplat's split without the held-out block (image names)."""
+    held, block = set(held_out(names, every)), set(block)
+    return [i for i, name in enumerate(names) if i not in held and name not in block]
+
+
 def evaluate(ply: Path, data_dir: Path, every: int = 30, antialiased: bool = True, max_views: int = 12) -> dict | None:
     try:
         import cv2
