@@ -44,6 +44,9 @@ VARIANTS: dict[str, dict] = {
     "q5b": {"add": ["--opacity-reg", "0.002"], "note": "opacity regulariser 0.002"},
     "q5c": {"add": ["--opacity-reg", "0.001"], "note": "opacity regulariser 0.001"},
     "q5d": {"add": ["--opacity-reg", "0"], "note": "no opacity regulariser"},
+    # the small twin is under the phone size as trained: its phone file is cut to 240k, the chapel's 2M -> 800k ratio
+    "q6": {"add": ["--lite-finetune", "3000"], "scenario_add": {"drjohnson": ["--lite-max", "240000"]},
+           "note": "phone file trained on for 3k steps at its own size after it is cut down; scored against the cut-down one"},
 }
 
 # Modal list prices per hour, 2026-11. Only L4 and L40S match the CI wheels (sm_89).
@@ -74,7 +77,7 @@ def variant_args(name: str, scenario: str = "chapel") -> list[str]:
     v, base = VARIANTS[name], list(SCENARIOS[scenario]["base"])
     if v.get("steps"):
         base[base.index("--iterations") + 1] = str(v["steps"])
-    return base + v["add"]
+    return base + v["add"] + v.get("scenario_add", {}).get(scenario, [])
 
 
 for _name, _variant in VARIANTS.items():
@@ -90,7 +93,7 @@ IMAGES_LINK = ("data/images", "dense/images")                       # `modal vol
 STALE_REPORT_SECTIONS = ("train", "export", "mesh", "quality")      # what the old run's stages wrote into report.json
 
 # What is kept on the Volume after each stage: everything the job made except the shared inputs and re-creatable bulk.
-SAVE_SKIP_DIRS = ("data", "dense", "frames", "frames_raw", "colmap", "train", "train-snapshot")
+SAVE_SKIP_DIRS = ("data", "dense", "frames", "frames_raw", "colmap", "train", "train-lite", "train-snapshot")
 SAVE_SKIP_FILES = ("scene_clean.ply", "scene_lite.ply")
 
 INPUT = "saved-solve"  # the CLI wants an input path; train and export never read it
@@ -118,9 +121,13 @@ def resolve(variant: str, extra: str = "", scenario: str = "chapel") -> dict:
             "timeoutMin": None}
 
 
-def steps_of(args: list[str]) -> int | None:
-    found = [args[i + 1] for i, a in enumerate(args[:-1]) if a == "--iterations"]
+def _int_option(args: list[str], flag: str) -> int | None:
+    found = [args[i + 1] for i, a in enumerate(args[:-1]) if a == flag]
     return int(found[-1]) if found else None
+
+
+def steps_of(args: list[str]) -> int | None:
+    return _int_option(args, "--iterations")
 
 
 # ------------------------------------------------------------------ price, estimate, stop-loss
@@ -144,11 +151,15 @@ def estimate(args: list[str], gpu: str = "L40S", timeout_min: int | None = None,
     steps, s = steps_of(args), SCENARIOS[scenario]
     if steps is None or gpu_key(gpu) not in s["seconds_per_step"]:
         raise ValueError(f"cannot estimate '{' '.join(args)}' on {gpu}: needs --iterations and an L4 or L40S")
-    train_min = math.ceil(steps * s["seconds_per_step"][gpu_key(gpu)] / 60)
+    # the phone file's fine-tune counts at the full model's pace: fewer splats train faster, and the difference pays
+    # for starting the trainer a second time and scoring both phone models
+    tune = _int_option(args, "--lite-finetune") or 0
+    train_min = math.ceil((steps + tune) * s["seconds_per_step"][gpu_key(gpu)] / 60)
     total_min = train_min + s["overhead_min"]
     timeout = timeout_min or math.ceil(STOP_LOSS * total_min)
     rate = per_hour(gpu, s["cpu"], s["memory_gib"])
-    return {"gpu": gpu, "steps": steps, "trainMin": train_min, "overheadMin": s["overhead_min"], "totalMin": total_min,
+    return {"gpu": gpu, "steps": steps, **({"fineTuneSteps": tune} if tune else {}), "trainMin": train_min, "overheadMin": s["overhead_min"],
+            "totalMin": total_min,
             "timeoutMin": timeout, "usd": round(total_min / 60 * rate, 2), "maxUsd": round(timeout / 60 * rate, 2), "perHour": rate}
 
 
@@ -192,7 +203,8 @@ def describe(job: dict, job_dir: str = "/tmp/work/job") -> str:
            f"scenario {job['scenario']}, saved solve /vol/{job['src']}, results /vol/{variant_dir(job['scenario'], job['variant'])}/",
            f"{job.get('cpu', CPU)} cores, {job.get('memoryGib', MEMORY_GIB)} GiB; GPU {' then '.join(job['gpus'])}" + (" (a fallback: timings differ)" if len(job["gpus"]) > 1 else "")]
     for e in job["estimates"].values():
-        out.append(f"  {e['gpu']}: {e['steps']} steps = {e['trainMin']} min training + {e['overheadMin']} min restore/export/scoring = "
+        out.append(f"  {e['gpu']}: {e['steps']} steps{' + ' + str(e['fineTuneSteps']) + ' for the phone file' if e.get('fineTuneSteps') else ''}"
+                   f" = {e['trainMin']} min training + {e['overheadMin']} min restore/export/scoring = "
                    f"{e['totalMin']} min, about ${e['usd']:.2f} at ${e['perHour']:.2f}/h; stop-loss {e['timeoutMin']} min, at most ${e['maxUsd']:.2f}")
     out += [f"the stop-loss is 1.5x the estimate unless the table sets one; the Modal function times out {GRACE_MIN} min later "
             f"({job['ceilingMin'] + GRACE_MIN} min), to save what a stopped run has",
@@ -375,7 +387,8 @@ def assemble(job: dict, report: dict, *, gpu: dict, seconds: dict, sizes: dict, 
         "gpu": gpu, "steps": train.get("maxSteps") or steps_of(job["args"]), "capMax": train.get("capMax"),
         "complete": not missing, "missing": missing,
         "scores": {"every": every, "block": block},
-        "viewer": {"desktop": shipped.get("full"), "phone": shipped.get("lite"), "cleaned": export.get("viewerEval")},
+        "viewer": {"desktop": shipped.get("full"), "phone": shipped.get("lite"), "cleaned": export.get("viewerEval"),
+                   **({"phoneFinetune": export["liteFinetune"]} if export.get("liteFinetune") else {})},
         "splats": {"atEval": (train.get("eval") or {}).get("gaussians"), "trained": export.get("gaussiansIn"),
                    "shipped": export.get("gaussiansOut"), "keptFraction": export.get("keptFraction"), "phone": export.get("liteGaussians")},
         "files": sizes, "seconds": {**seconds, "train": train.get("seconds"), "export": export.get("seconds")},
@@ -412,10 +425,14 @@ def summary(m: dict) -> str:
     def row(s: dict | None) -> str:
         return "n/a" if not s else f"cc-PSNR {s.get('ccPsnr')} cc-SSIM {s.get('ccSsim')} cc-LPIPS {s.get('ccLpips')} ({s.get('views')} views)"
     viewer = m.get("viewer") or {}
+    tune = viewer.get("phoneFinetune") or {}
     return "\n".join([f"{m['variant']}: {'complete' if m['complete'] else 'INCOMPLETE, missing ' + ', '.join(m['missing'])}",
                       f"  every-Nth hold-out: {row(m['scores']['every'])}", f"  block hold-out:     {row(m['scores']['block'])}",
                       f"  viewer PSNR desktop {(viewer.get('desktop') or {}).get('psnr')}, phone {(viewer.get('phone') or {}).get('psnr')}; "
                       f"splats shipped {m['splats']['shipped']} of {m['splats']['trained']} (kept {m['splats']['keptFraction']})",
+                      *([f"  phone file, {tune.get('steps')} fine-tune steps: PSNR {(tune.get('before') or {}).get('psnr')} cut down, "
+                         f"{(tune.get('after') or {}).get('psnr')} fine-tuned; shipped the {tune.get('shipped')} one"
+                         + (f" ({tune['why']})" if tune.get("why") else "")] if tune else []),
                       f"  {m['wallMinutes']} min wall, about ${m['costUsd']}"])
 
 
