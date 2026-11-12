@@ -1,6 +1,6 @@
 """The walking grid from depth (stages/occupancy.grid_from_depth, IMPROVEMENT-PLAN 2.3) on two rooms joined by a
 0.8 m door through a plain partition 10 cm thick, with depth ray-cast from the solid scene: numpy only, no GPU.
-"""
+The last tests run export's step around a stand-in for the renderer."""
 import json
 
 import cv2
@@ -154,3 +154,90 @@ def test_a_hole_is_not_filled_over_a_cell_that_was_seen_blocked():
     veto[6, 6] = True
     assert occupancy.fill_holes(grid, 10, veto) == 4
     assert (grid[2:4, 2:4] == FREE).all() and (grid[5:7, 5:7] == UNKNOWN).all()
+
+
+# ------------------------------------------------------------------ export's step, around a stand-in for the GPU
+
+RENDERED = {}
+
+
+def job(tmp_path, floor_points):
+    """A job folder as export finds it: the aligned model, scene.json, and the sparse grid the occupancy stage wrote."""
+    colmap_txt.write_model(nav_model(floor_points), tmp_path / "data" / "sparse" / "0")
+    ctx = Ctx(out=tmp_path, log=Log(tmp_path, quiet=True), opts={"dense_occupancy": True})
+    occupancy.run_stage(ctx)
+    return ctx
+
+
+def ray_cast(ply, views, antialiased=True):
+    """What dense.render_views yields, from the solid rooms instead of a splat."""
+    for v in views:
+        if v.name not in RENDERED:
+            RENDERED[v.name] = cast_depth(nav_boxes(), v.K, v.R, v.t, v.width, v.height)
+        v.depth, v.alpha = RENDERED[v.name]
+        yield v
+
+
+def test_export_swaps_in_the_grid_from_depth_when_it_walks_at_least_as_well(tmp_path, monkeypatch):
+    ctx = job(tmp_path, floor_points=200)                                       # a plain floor: the sparse grid is a corridor
+    sparse = json.loads((tmp_path / "occupancy.json").read_text())
+    assert sparse["source"] == "sparse" and not sparse["walk"]["pass"]
+    monkeypatch.setattr(dense, "render_views", ray_cast)
+    rep = export._dense_occupancy(ctx, tmp_path / "scene_clean.ply", 30, True)
+    meta = json.loads((tmp_path / "occupancy.json").read_text())
+    grid = cv2.imread(str(tmp_path / "occupancy.png"), cv2.IMREAD_GRAYSCALE)
+    assert rep["used"] == "depth" and rep["walk"] == meta["walk"] and rep["sparseWalk"] == sparse["walk"] and rep["seconds"] >= 0
+    assert meta["source"] == "depth" and meta["walk"]["pass"] and meta["walk"]["standableM2"] > 10 * sparse["walk"]["standableM2"]
+    assert rep["views"] == meta["depth"]["views"] == len(dense.training_views(ctx.data_dir, 30))
+    assert grid.shape == (meta["height"], meta["width"]) == (2 * sparse["height"], 2 * sparse["width"]) and meta["origin"] == sparse["origin"]
+    assert set(sparse) <= set(meta)                                             # nothing a reader of the old file looks for is gone
+    assert standable_in_partition(grid, meta) == 0
+    assert json.loads((tmp_path / "scene.json").read_text())["occupancy"] == {"image": "occupancy.png", "meta": "occupancy.json"}
+    saved = np.load(tmp_path / dense.FILE)
+    assert len(saved["points"]) == len(saved["normals"]) == meta["depth"]["points"]["points"] > 50_000
+    assert meta["depth"]["pixels"]["kept"] > 0.7 * meta["depth"]["pixels"]["usable"]
+
+
+def test_export_keeps_the_sparse_grid_when_the_grid_from_depth_walks_worse(tmp_path, monkeypatch):
+    """A floor with a point in every cell: the sparse grid has all of it, the depth grid only what three views saw."""
+    ctx = job(tmp_path, floor_points=5000)
+    before = (tmp_path / "occupancy.png").read_bytes()
+    monkeypatch.setattr(dense, "render_views", ray_cast)
+    rep = export._dense_occupancy(ctx, tmp_path / "scene_clean.ply", 30, True)
+    meta = json.loads((tmp_path / "occupancy.json").read_text())
+    assert rep["used"] == "sparse" and "walks worse" in rep["why"] and rep["walk"]["standableM2"] < rep["sparseWalk"]["standableM2"]
+    assert (tmp_path / "occupancy.png").read_bytes() == before and meta["source"] == "sparse" and meta["cellSize"] == 0.1
+    assert meta["depth"]["rejected"] == rep["why"] and meta["depth"]["walk"] == rep["walk"]
+    lost = cv2.imread(str(tmp_path / "occupancy_depth.png"), cv2.IMREAD_GRAYSCALE)   # kept beside it, to look at
+    assert lost.shape == (2 * meta["height"], 2 * meta["width"])
+
+
+def test_a_failing_dense_pass_does_not_fail_the_export(tmp_path, monkeypatch):
+    ctx = job(tmp_path, floor_points=200)
+    before = {f: (tmp_path / f).read_bytes() for f in ("occupancy.png", "occupancy.json", "scene.json")}
+
+    def out_of_memory(ply, views, antialiased=True):
+        yield next(ray_cast(ply, views))
+        raise RuntimeError("CUDA out of memory")
+
+    monkeypatch.setattr(dense, "render_views", out_of_memory)
+    rep = export._dense_occupancy(ctx, tmp_path / "scene_clean.ply", 30, True)
+    assert rep["used"] == "sparse" and rep["why"] == "failed: CUDA out of memory"
+    assert {f: (tmp_path / f).read_bytes() for f in before} == before
+    logged = [json.loads(ln) for ln in (tmp_path / "log.jsonl").read_text().splitlines()]
+    assert [e["event"] for e in logged if "CUDA out of memory" in e["msg"]] == ["warn"]
+
+
+def test_the_grid_from_depth_is_off_unless_asked_for():
+    from plypipe import cli
+    run = ["run", "walk.mp4", "--out", "o"]
+    assert cli.build_parser().parse_args(run).dense_occupancy is False
+    assert cli.build_parser().parse_args([*run, "--dense-occupancy"]).dense_occupancy is True
+
+
+def test_without_a_gpu_the_flag_changes_nothing_and_says_so(tmp_path):
+    ctx = job(tmp_path, floor_points=200)
+    before = {f: (tmp_path / f).read_bytes() for f in ("occupancy.png", "occupancy.json", "scene.json")}
+    rep = export._dense_occupancy(ctx, tmp_path / "scene_clean.ply", 30, True)
+    assert rep["used"] == "sparse" and rep["why"].startswith("not built: needs a GPU")
+    assert {f: (tmp_path / f).read_bytes() for f in before} == before and not (tmp_path / dense.FILE).exists()
