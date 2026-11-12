@@ -4,8 +4,9 @@
     python scripts/eval_table.py /tmp/ply-eval [--baselines q0a,q0b]
 
 Reads <folder>/<variant>/metrics.json (what `ply_eval.py collect` fetches). One row per variant: steps, the colour-corrected
-scores on both hold-outs (every-Nth views, and the block of consecutive frames), viewer PSNR of the desktop and phone files,
-the share of trained splats that survived export, wall minutes and estimated cost. With two or more complete baselines
+scores on both hold-outs (every-Nth views, and the block of consecutive frames), viewer PSNR and brightness of the desktop
+and phone files, the share of trained splats that survived export, wall minutes and estimated cost. Runs with an exposure
+fold, a walking grid from depth or an export-only origin get a second table of those. With two or more complete baselines
 (runs with role "baseline", or the names given) it also prints the noise floor, the spread of each metric across them, and
 each other variant's change against their mean, flagged inside or outside twice the noise floor.
 """
@@ -68,13 +69,59 @@ def kept(run: dict) -> str:
     return f"{s['keptFraction']:.0%}" + (f" ({s['shipped'] / 1e6:.2f}M)" if s.get("shipped") else "")
 
 
+def brightness(run: dict) -> str:
+    """Desktop / phone file against the photos; the ship rule wants each within x0.95 to x1.05 (IMPROVEMENT-PLAN, phase 4)."""
+    def one(file: str) -> str:
+        v = value(run, ("viewer", file, "brightness"))
+        return "–" if v is None else f"x{v:.3f}" + ("" if 0.95 <= v <= 1.05 else " (!)")
+    return f"{one('desktop')} / {one('phone')}"
+
+
+def fold_cell(run: dict) -> str:
+    f = run.get("exposureFold")
+    if not f:
+        return "–"
+    if not f.get("folded"):
+        return "not folded" + (f": {f['why']}" if f.get("why") else "")
+    settled = f"{f.get('steps')} steps after" if f.get("settled") else "no steps after" + (f" ({f['why']})" if f.get("why") else "")
+    return f"x{f.get('brightnessBefore')} -> x{f.get('brightnessAfter')} on {f.get('views')} views, {settled}"
+
+
+def details(runs: dict[str, dict], names: list[str]) -> list[str]:
+    """Exposure fold, walking grid from depth and export-only origin, for the runs that have any of them."""
+    shown = [n for n in names if any(runs[n].get(k) for k in ("exposureFold", "denseOccupancy", "exportFrom"))]
+    if not shown:
+        return []
+    out = ["## Exposure fold, walking grid, origin", "", "| variant | model from | exposure fold | walking grid |", "|---|---|---|---|"]
+    for n in shown:
+        r = runs[n]
+        dense = r.get("denseOccupancy")
+        grid = "–" if not dense else dense_cell(dense)
+        out.append(f"| {n} | {r.get('exportFrom') or 'its own training'} | {fold_cell(r)} | {grid} |")
+    return [*out, ""]
+
+
+def dense_cell(d: dict) -> str:
+    """Kept in step with plypipe.evalrun.dense_cell; this script reads metrics files and does not import the pipeline."""
+    def walk(w: dict | None) -> str:
+        w = w or {}
+        cams = w.get("cameras")
+        return f"{'–' if cams is None else f'{cams:.0%}'} of capture positions walkable, {w.get('standableM2')} m2 to stand on"
+    if d.get("used") == "depth":
+        head = f"from depth ({d.get('views')} views)"
+    else:
+        head = f"sparse kept: {d.get('why') or 'no reason given'}"
+    tail = f"; depth {walk(d['walk'])}, sparse {walk(d.get('sparseWalk'))}" if d.get("walk") and d.get("used") == "depth" else ""
+    return head + tail + (f"; {d['seconds']} s" if d.get("seconds") is not None else "")
+
+
 def main_table(runs: dict[str, dict], names: list[str]) -> list[str]:
-    head = ["variant", "steps", *(m[0] for m in METRICS), "splats kept", "minutes", "cost"]
+    head = ["variant", "steps", *(m[0] for m in METRICS), "brightness desktop / phone", "splats kept", "minutes", "cost"]
     out = ["| " + " | ".join(head) + " |", "|" + "|".join(["---"] + ["---:"] * (len(head) - 1)) + "|"]
     for name in names:
         r = runs[name]
         cells = [name + ("" if r.get("complete") else " (incomplete)"), str(r.get("steps") or "–"),
-                 *(fmt(value(r, path), places) for _, path, places, _ in METRICS), kept(r),
+                 *(fmt(value(r, path), places) for _, path, places, _ in METRICS), brightness(r), kept(r),
                  fmt(r.get("wallMinutes"), 1), f"${r['costUsd']:.2f}" if r.get("costUsd") is not None else "–"]
         out.append("| " + " | ".join(cells) + " |")
     return out
@@ -98,7 +145,7 @@ def verdict(delta: float, floor: float, higher_better: bool) -> str:
 def render(runs: dict[str, dict], given: list[str] | None = None) -> str:
     bases = baseline_names(runs, given)
     names = order(runs, bases)
-    out = ["## Results", "", *main_table(runs, names), ""]
+    out = ["## Results", "", *main_table(runs, names), "", *details(runs, names)]
     if len(bases) < 2:
         have = ", ".join(bases) or "none"
         out += [f"Noise floor: needs two complete baselines (found: {have}). Run q0a and q0b first.", ""]

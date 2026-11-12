@@ -326,6 +326,76 @@ def test_a_relaunch_layers_the_saved_variant_over_the_restore_but_not_snapshots(
     assert evalrun.stages_to_run(job) == ["export"]
 
 
+# ------------------------------------------------------------------ export only (--export-from)
+
+def test_an_export_only_run_takes_a_table_variants_model_and_export_options_only():
+    job = evalrun.make_job("drjohnson", "", "q0a-dense", "--dense-occupancy", gpus=("L4", "L40S"), export_from="q0a")
+    assert job["exportFrom"] == "q0a" and job["trainArgs"] == evalrun.variant_args("q0a", "drjohnson")
+    assert job["args"] == evalrun.variant_args("q0a", "drjohnson") + ["--dense-occupancy"] and job["argsSource"] == "--export-from q0a"
+    l40s = job["estimates"]["L40S"]
+    # no training steps: the phone file's 3k at Dr Johnson's 13.8 ms (1 min), the 4 min overhead and 3 for the depth grid
+    assert (l40s["steps"], l40s["exportOnly"], l40s["trainMin"], l40s["overheadMin"], l40s["timeoutMin"]) == (0, True, 1, 7, 12)
+    assert "gridSlowdown" not in evalrun.make_job("drjohnson", "", "q1-again", export_from="q1")["estimates"]["L40S"]   # q1's grid trained already
+    with pytest.raises(ValueError, match="not a table variant"):
+        evalrun.make_job("drjohnson", "", "x-dense", export_from="q0a-30k-b")
+    for name in ("q0a", "q5a", "Bad Name"):                                          # its folder must not be one a training run owns
+        with pytest.raises(ValueError, match="new variant name"):
+            evalrun.make_job("drjohnson", "", name, export_from="q0a")
+    for extra in ("--iterations 30000", "--dense-occupancy --opacity-reg 0.005", "--exposure-fold=2000"):
+        with pytest.raises(ValueError, match="would not reach the model"):
+            evalrun.make_job("drjohnson", "", "q0a-x", extra, export_from="q0a")
+    tuned = evalrun.make_job("drjohnson", "", "q0a-x", "--min-opacity=0.02 --lite-max 300000", export_from="q0a")
+    assert tuned["args"][-3:] == ["--min-opacity=0.02", "--lite-max", "300000"]
+
+
+def test_export_only_options_are_read_by_the_export_and_not_by_training():
+    root = Path(evalrun.__file__).resolve().parent
+    export, train = (root / "stages" / "export.py").read_text(), (root / "stages" / "train.py").read_text()
+    dests = {a.dest: a for a in cli.build_parser()._subparsers._group_actions[0].choices["run"]._actions}
+    for flag in evalrun.EXPORT_ONLY_OPTIONS:
+        dest = flag[2:].replace("-", "_")
+        assert dest in dests and flag in dests[dest].option_strings, flag
+        assert f'opt("{dest}"' in export and f'opt("{dest}"' not in train, flag
+
+
+def test_an_export_only_run_checks_the_model_it_takes_and_takes_nothing_its_export_made(tmp_path):
+    origin = tmp_path / "eval" / "q0a"
+    args = evalrun.variant_args("q0a", "drjohnson")
+    for rel, data in ((".done/train.json", "{}"), (".done/export.json", "{}"), ("scene.ply", "ply"), ("scene.spz", "x"), ("scene_lite.spz", "x"),
+                      ("eval/per_view.json", "{}"), ("eval/trained/stats.json", "{}"), ("eval/lite/stats.json", "{}"), ("eval/x.json.part", "x"),
+                      ("occupancy.json", '{"from": "depth"}'), ("topview.webp", "w"), ("scene.json", '{"splat": {}}'),
+                      ("metrics.json", json.dumps({"schema": evalrun.SCHEMA, "args": args})),
+                      ("report.json", json.dumps({"train": {"eval": {"psnr": 29.2}}, "export": {"x": 1}, "quality": {"ok": True}}))):
+        (origin / rel).parent.mkdir(parents=True, exist_ok=True)
+        (origin / rel).write_text(data)
+    assert evalrun.check_training(origin, args) == []
+    assert any("other arguments" in p for p in evalrun.check_training(origin, args + ["--pose-opt"]))
+    job = tmp_path / "job"
+    job.mkdir()
+    (job / "report.json").write_text('{"frames": {"kept": 3}}')
+    (job / "occupancy.json").write_text('{"from": "sparse"}')
+    assert evalrun.take_training(origin, job) == 4
+    assert files_under(job) == {"report.json", "occupancy.json", "scene.ply", ".done/train.json", "eval/per_view.json", "eval/trained/stats.json"}
+    assert json.loads((job / "report.json").read_text()) == {"frames": {"kept": 3}, "train": {"eval": {"psnr": 29.2}}}
+    assert json.loads((job / "occupancy.json").read_text()) == {"from": "sparse"}       # the solve's grid, not the one origin's export wrote
+    assert evalrun.stages_to_run(job) == ["export"]
+    (origin / "scene.ply").unlink()
+    (origin / "metrics.json").unlink()
+    (origin / "report.json").write_text('{"export": {}}')
+    assert evalrun.check_training(origin, args) == ["scene.ply", "report.json with a train section", "metrics.json (which arguments trained the model)"]
+    assert evalrun.check_training(tmp_path / "eval" / "missing", args)[:2] == ["scene.ply", ".done/train.json"]
+
+
+def test_the_plan_of_an_export_only_run_shows_one_export_and_no_training(capsys):
+    assert evalrun.main(["plan", "--variant", "q0a-dense", "--export-from", "q0a", "--args=--dense-occupancy", "--scenario", "drjohnson"]) == 0
+    text = capsys.readouterr().out
+    for needle in ("--export-from q0a, export only, of the model q0a trained, with --dense-occupancy", "no training (the model q0a trained) + 3000 for the phone file",
+                   "and the depth grid (an estimate)", "/vol/drjohnson/eval/q0a/ must hold a finished training", "--only export"):
+        assert needle in text, needle
+    assert "--only train" not in text
+    assert evalrun.main(["plan", "--variant", "q0a", "--export-from", "q0a", "--scenario", "drjohnson"]) == 2
+
+
 def test_save_skips_the_shared_inputs_and_bulk_and_writes_markers_last(tmp_path, monkeypatch):
     job = saved_job(tmp_path / "job")
     (job / "metrics.json").write_text("{}")
@@ -419,6 +489,17 @@ def test_metrics_carry_the_exposure_folds_fit_and_the_summary_shows_it_with_the_
     assert "no steps after it (the 2000 steps after the fold failed: CUDA out of memory)" in evalrun.summary(m)
     assert not evalrun.savable(Path("train/settle/ckpts/ckpt_1999_rank0.pt")) and not evalrun.savable(Path("train/folded.ply"))
     assert evalrun.savable(Path("eval/trained/val_stats.json"))                    # the scores of the model before the fold are kept
+
+
+def test_metrics_carry_the_walking_grid_from_depth_and_the_summary_names_the_grid_used():
+    report = finished_report()
+    report["export"]["denseOccupancy"] = {"used": "depth", "views": 52, "seconds": 41.5, "walk": {"cameras": 1.0, "standableM2": 61.2},
+                                          "sparseWalk": {"cameras": 0.97, "standableM2": 48.0}}
+    gpu = {"name": "NVIDIA L40S", "priced": "L40S"}
+    m = evalrun.assemble(job_for(), report, gpu=gpu, seconds={}, sizes={}, invocation={"costUsd": 0.1, "wallSeconds": 60})
+    assert m["denseOccupancy"]["used"] == "depth" and "walking grid: from depth (52 views); depth 100%" in evalrun.summary(m)
+    plain = evalrun.assemble(job_for(), finished_report(), gpu=gpu, seconds={}, sizes={}, invocation={"costUsd": 0.1, "wallSeconds": 60})
+    assert "denseOccupancy" not in plain and "walking grid" not in evalrun.summary(plain)
 
 
 def test_a_stopped_run_still_gets_metrics_that_say_what_is_missing():

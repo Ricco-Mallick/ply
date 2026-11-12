@@ -107,15 +107,18 @@ run needs the owner's go-ahead and follows plan section 13: one launch, its log 
    appearance model. In between: stop and report, with the score of the model as it left training, before the fold
    (`q1` was 2.3 dB under the baseline there). Record the result in `EXPERIMENTS.md` and replace the one-cell grid's
    budget in `evalrun.estimate` with the measured pace. (Thresholds set by the agent; the owner can overturn them.)
-2. **An export-only rerun in `ply_eval.py`** (`MISTAKES.md`, 2026-11-12): it takes the variant whose training is on
-   the Volume and extra export options, checks inside the function that the training is there, and runs `export`
-   alone. Tests beside the other launch tests in `test_evalrun.py`.
-3. **`--dense-occupancy` on a GPU**, using item 2: Dr Johnson first, then the saved chapel twin. Read
-   `report.export.denseOccupancy`: `used`, `why`, `views`, `walk` against `sparseWalk`, `seconds`. Report the
+2. ~~An export-only rerun in `ply_eval.py`~~ Done 2026-11-12: `--export-from VARIANT` with a new variant name and
+   `--args=` export options only. The function stops before restoring anything unless the variant's folder holds a
+   finished training with its table arguments, takes only what training left there, and never runs `train`.
+3. **`--dense-occupancy` on a GPU**: `PLY_EVAL_SCENARIO=drjohnson PLY_EVAL_GPU=L4,L40S MODAL_PROFILE=opservemakesalt
+   modal run --detach pipeline/modal/ply_eval.py --variant q0a-dense --export-from q0a --args=--dense-occupancy`
+   (about 9 minutes and $0.17 on an L4), then the same on the chapel (`PLY_EVAL_SCENARIO=chapel`). Read
+   `denseOccupancy` in its `metrics.json` (or the second table of `eval_table.py`): `used`, `why`, `views`, `walk`
+   against `sparseWalk`, `seconds`, and put the measured seconds in place of `evalrun.DENSE_MIN`. Report the
    numbers; whether the depth grid becomes the default is a decision (below).
-4. **`scripts/eval_table.py`**: columns for the viewer's brightness, `exposureFold` and `denseOccupancy.used`.
-5. **`pipeline/README.md`**: `--exposure-fold`, `--exposure-affine` and `--dense-occupancy` in the `train` and
-   `export` rows.
+4. ~~`scripts/eval_table.py`~~ Done 2026-11-12: a brightness column for both files, flagged outside ×0.95 to ×1.05,
+   and a second table with the exposure fold, the walking grid and an export-only run's origin.
+5. ~~`pipeline/README.md`~~ Done 2026-11-12.
 6. **Walk on the live site**: open a real twin (`chapel-high-2`) in a browser, walk into walls and through a door,
    and write the plan's guided-route test (2.1).
 7. **Mesh (2.4) and layout (2.5)** from the dense points, as the plan specifies them, with `test_mesh_fusion.py` and
@@ -137,6 +140,8 @@ Not for hand-off, because each needs a judgement or the owner:
 
 ## Known and left alone
 
+- The export reads a `no_clean` option and its docstring names `--no-clean`, but the CLI defines no such flag, so the
+  cleanup cannot be turned off from the command line (found 2026-11-12; `--export-from` does not offer it).
 - The capture app cannot ask for the global mapper on a long video: it sends `--mapper` only for `incremental`, and
   its "Global (fast, default)" label no longer describes what a 400-frame walk gets (`app/src/capture/lib/backend.ts`).
 - `chapel_e2e.py`, `sfm_cpu.py` and `ply_bench.py` wait on their run with `.remote()`: a killed client cancels them (`MISTAKES.md`, 2026-11-11).

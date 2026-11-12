@@ -174,3 +174,31 @@ def test_a_volume_without_the_saved_job_fails_before_any_gpu_work(tmp_path, monk
     with pytest.raises(FileNotFoundError, match="lacks"):
         rig.m.run_variant.local(evalrun.make_job("chapel", "chapel/missing/job", "q0a"))
     assert rig.stages == []
+
+
+def test_an_export_only_run_exports_another_variants_model_and_never_trains(tmp_path, monkeypatch):
+    rig = Rig(tmp_path, monkeypatch)
+    with pytest.raises(FileNotFoundError, match="cannot give q0a-dense its model"):    # nothing trained yet: it stops before the restore
+        rig.go("q0a-dense", args="--dense-occupancy", export_from="q0a")
+    assert rig.stages == [] and not (tmp_path / "job").exists()
+    rig.go()                                                                         # q0a trains and exports
+    rig.stages.clear()
+    result = rig.go("q0a-dense", args="--dense-occupancy", export_from="q0a")
+    assert [s[0] for s in rig.stages] == ["export"] and rig.stages[0][1] == evalrun.VARIANTS["q0a"]["args"] + ["--dense-occupancy"]
+    assert result["complete"] and result["exportFrom"] == "q0a" and [i["ran"] for i in result["invocations"]] == [["export"]]
+    assert result["scores"]["every"] == json.loads((rig.saved() / "metrics.json").read_text())["scores"]["every"]   # q0a's model, q0a's scores
+    assert (rig.saved("q0a-dense") / "scene.ply").exists() and (rig.saved("q0a-dense") / ".done" / "export.json").exists()
+    assert "export only" in evalrun.summary(result)
+    (rig.saved() / "metrics.json").write_text(json.dumps({**json.loads((rig.saved() / "metrics.json").read_text()), "args": ["--other"]}))
+    with pytest.raises(FileNotFoundError, match="other arguments"):
+        rig.go("q0a-again", export_from="q0a")
+
+
+def test_an_export_only_run_whose_model_does_not_arrive_stops_before_training(tmp_path, monkeypatch):
+    rig = Rig(tmp_path, monkeypatch)
+    rig.go()
+    rig.stages.clear()
+    monkeypatch.setattr(evalrun, "take_training", lambda origin, job: 0)            # a copy that silently brought nothing
+    with pytest.raises(RuntimeError, match="did not arrive"):
+        rig.go("q0a-dense", args="--dense-occupancy", export_from="q0a")
+    assert rig.stages == []

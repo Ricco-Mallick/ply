@@ -10,6 +10,9 @@
     PLY_EVAL_SCENARIO=drjohnson PLY_EVAL_GPU=L4,L40S MODAL_PROFILE=<account> modal run --detach pipeline/modal/ply_eval.py \\
         --variant q0a                                           # the same variant on the small scenario, at about half the cost
 
+    ... modal run --detach pipeline/modal/ply_eval.py --variant q0a-dense --export-from q0a --args=--dense-occupancy
+                                                                # export only: q0a's trained model, exported again with export options
+
 A scenario (evalrun.SCENARIOS) is a saved solve, its baseline and its container. Try a variant on the small one first.
 
 Runs on the worker's image (same cached layers) in its own app, never touching the job queue. The saved job is read
@@ -109,6 +112,11 @@ def run_variant(job: dict) -> dict:
     absent = [p for p in ("data/sparse/0/images.bin", "dense/images", "scene.json") if not (src / p).exists()]
     if absent:
         raise FileNotFoundError(f"{src} lacks {', '.join(absent)}: seed the Volume with the saved job (modal volume ls ply-bench {job['src']})")
+    origin = VOL / evalrun.variant_dir(job["scenario"], job["exportFrom"]) if job.get("exportFrom") else None
+    if origin:  # an export-only run checks its model before anything else: it must never train
+        problems = evalrun.check_training(origin, job["trainArgs"])
+        if problems:
+            raise FileNotFoundError(f"{origin} cannot give {job['variant']} its model, missing: {', '.join(problems)}")
     if job["force"]:
         shutil.rmtree(saved / ".done", ignore_errors=True)
         (saved / "metrics.json").unlink(missing_ok=True)
@@ -121,14 +129,18 @@ def run_variant(job: dict) -> dict:
     t = time.time()
     shutil.rmtree(JOB, ignore_errors=True)  # a warm container may be reused by the next launch
     got = evalrun.restore(src, JOB)
+    took = evalrun.take_training(origin, JOB) if origin else 0
     layered = evalrun.layer(saved, JOB) if saved.exists() and not job["force"] else 0
     problems = evalrun.check_job(JOB, job.get("needsIndex", True))
     if problems:
         raise RuntimeError(f"the restored job is unusable, missing: {', '.join(problems)}")
     todo = evalrun.stages_to_run(JOB)
+    if origin and "train" in todo:
+        raise RuntimeError(f"{job['variant']}: the model {job['exportFrom']} trained did not arrive in the job; nothing was run")
     evalrun.clear_stale(JOB, todo)
     seconds = {"restore": round(time.time() - t, 1), "save": 0.0}
-    print(f"[eval] restored {got['files']} files ({got['bytes'] / 2**20:.0f} MB) in {seconds['restore']} s, {layered} from an earlier run; "
+    print(f"[eval] restored {got['files']} files ({got['bytes'] / 2**20:.0f} MB) in {seconds['restore']} s, "
+          + (f"{took} of {job['exportFrom']}'s model, " if origin else "") + f"{layered} from an earlier run; "
           f"running {todo or 'nothing'}", flush=True)
 
     deadline = started + evalrun.stop_loss_min(job, gpu) * 60
@@ -181,10 +193,11 @@ def run_variant(job: dict) -> dict:
 
 @app.local_entrypoint()
 def main(src: str = "", scenario: str = SCENARIO, variant: str = "", args: str = "", force: bool = False,
-         wait: bool = False):
+         wait: bool = False, export_from: str = ""):
     if scenario != SCENARIO:  # the function was sized for SCENARIO when this file was loaded
         raise SystemExit(f"--scenario {scenario}: launch it with PLY_EVAL_SCENARIO={scenario}, which sets the container and the timeout")
-    job = evalrun.make_job(scenario, src, variant, args, force, tuple(GPUS), CEILING_MIN, evalrun.code_revision(HERE.parent.parent))
+    job = evalrun.make_job(scenario, src, variant, args, force, tuple(GPUS), CEILING_MIN, evalrun.code_revision(HERE.parent.parent),
+                           export_from=export_from)
     print(evalrun.describe(job), flush=True)
     if wait:
         print(evalrun.summary(run_variant.remote(job)), flush=True)
