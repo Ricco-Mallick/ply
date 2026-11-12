@@ -347,3 +347,37 @@ fine-tuned file scored 19.21 dB against 17.69 dB, but with 5.6% of its pixels se
 the one point the export allows. A 2,000-step model of a 30-second clip is not a twin (the gate fails it as `tiny`),
 so this shows the path and the guard on the worker, not the gain. The GPU type the job got is not in its report.
 Not yet seen on the worker: a phone file of 800k splats on an L4, in time and in memory.
+
+### Q1: exposure correction, folded back (2026-11-12)
+
+`--exposure-fold STEPS` (`plypipe/exposure.py`): after training with an appearance model, one affine colour map from
+the twin's own render to the training photos is fitted on training views (pixels the model covers and the photo did
+not clip), checked, folded into the splats' SH colours, and the model trains on for STEPS with no appearance model.
+One run, `q1` on Dr Johnson (`--bilateral-grid --exposure-fold 2000`, L40S, code `514233f`, 7.9 minutes, billed
+$0.33), against the mean of `q0a` and `q0b`:
+
+| | every cc-PSNR | every cc-SSIM | every cc-LPIPS | block cc-PSNR | block cc-SSIM | block cc-LPIPS | viewer desktop | brightness | see-through (worst view) | splats kept |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| baseline mean | 29.25 | 0.8835 | 0.2412 | 27.58 | 0.8609 | 0.2655 | 29.37 | ×1.014 | 0.27% (2.5%) | 74% (0.44M) |
+| q1 | 28.75 | 0.8800 | 0.2427 | 27.45 | 0.8597 | 0.2628 | 28.47 | ×1.006 | 0.08% (0.8%) | 87% (0.52M) |
+| change | −0.50 | −0.0035 | +0.0015 | −0.12 | −0.0012 | −0.0027 | −0.90 | | | |
+| floor | 0.02 | 0.0009 | 0.0004 | 0.05 | 0.0022 | 0.0029 | 0.01 | | | |
+
+- **The mechanism works on a GPU.** The map was fitted on 73 training views (18.8M pixels, 88% of those rendered),
+  folded, and the 2,000 steps ran; the viewer shows the twin at ×1.006 of the photos' brightness. The fit took 13 s
+  and the steps 65 s including the trainer's second start. A step with the grid costs 1.6 times a plain one (255 s
+  for 15,000 against 159 s).
+- **It loses 0.50 dB on held-out views and 0.90 dB in the viewer.** Dr Johnson's photos do not differ in exposure,
+  so this is what the method costs where there is nothing to correct. Q1 as built is not shipped and is not repeated
+  on the chapel.
+- **Why: the grid leaves free far more than one colour map.** The model as it left training, shown without its
+  grid, scores 26.92 dB on the every-8th set, 2.3 dB under the baseline, and that score already corrects colour per
+  view. The fitted map moves the error on the fitted pixels only from 0.0347 to 0.0337, and it mixes channels (red
+  takes −0.26 of green). What recovers the model is the training after the fold: 26.92 to 28.75 dB in 2,000 steps,
+  and the phone file, trained 3,000 more at export, reads 28.94 dB. A bilateral grid is 16×16×8 cells of affine
+  transforms per photo, enough to carry low-frequency image content that the splats then never learn.
+- **Next: `q1b`, an appearance model no larger than what the fold undoes.** One affine colour transform per photo:
+  the trainer's own grid at 1×1×1 (`--exposure-affine`). On a CPU with the pinned trainer, a perturbed 1×1×1 grid is
+  one affine map of its input to 2e-7, where the default grid leaves a residual of 0.23. It can absorb a photo's
+  exposure and white balance and nothing else, so the fold should return the model to the photos' colours with
+  little left for the extra steps to repair.
