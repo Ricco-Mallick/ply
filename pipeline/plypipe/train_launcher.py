@@ -38,7 +38,7 @@ def build_config(st, data: str, result: str, preset: str, ppisp: bool | None, an
                  iterations: int | None = None, sh_degree: int | None = None, cap_max: int | None = None,
                  holdout: int = 0, pose_opt: bool = False, depth_loss: bool = False, world_scale: float | None = None,
                  bilateral_grid: bool = False, random_bkgd: bool = False, opacity_reg: float = OPACITY_REG, holdout_block: int = 0,
-                 from_splats: int = 0):
+                 from_splats: int = 0, exposure_affine: bool = False):
     p = dict(PRESETS[preset])
     # the capture app's advanced settings: explicit values win over the preset
     for k, v in (("max_steps", iterations), ("sh_degree", sh_degree), ("cap_max", cap_max)):
@@ -90,16 +90,25 @@ def build_config(st, data: str, result: str, preset: str, ppisp: bool | None, an
     # random backgrounds: a splat cannot pass as "dark" by being transparent over the black training background,
     # which is what shows as see-through gaps in the viewer
     cfg.random_bkgd = bool(random_bkgd)
-    if bilateral_grid and has_ppisp:
+    if (bilateral_grid or exposure_affine) and has_ppisp:
         # per-photo affine colour grids, identity-initialised: they absorb exposure and white balance while the splats
         # stay at the photos' average exposure. PPISP's splats live in pre-ISP radiance and open brighter in the viewer
         use_ppisp = False
         cfg.post_processing = "bilateral_grid"
-        try:
-            import fused_bilagrid  # noqa: F401
-            cfg.bilateral_grid_fused = True
-        except ImportError:
+        if exposure_affine:
+            # one affine colour transform per photo, exactly what plypipe.exposure's fold can undo: the grid at 1x1x1.
+            # Q1 (Dr Johnson): the default 16x16x8 grid carries low-frequency image content one map cannot undo (a
+            # perturbed grid leaves a 0.23 residual against one affine map) and the fold cost 0.50 dB. A 1x1x1 grid is
+            # one map to 2e-7, the identity at initialisation, and its total_variation_loss is 0.0. That was verified
+            # on the pure-torch lib_bilagrid, so the fused CUDA grid stays off; at 1x1x1 there is nothing to fuse
+            cfg.bilateral_grid_shape = (1, 1, 1)
             cfg.bilateral_grid_fused = False
+        else:
+            try:
+                import fused_bilagrid  # noqa: F401
+                cfg.bilateral_grid_fused = True
+            except ImportError:
+                cfg.bilateral_grid_fused = False
     elif use_ppisp and not has_ppisp:  # gsplat <= 1.5.x: exposure drift handled by the appearance embedding instead
         use_ppisp = False
         cfg.app_opt = True
@@ -116,7 +125,8 @@ def build_config(st, data: str, result: str, preset: str, ppisp: bool | None, an
                  "randomBkgd": bool(random_bkgd),
                  **({"opacityReg": opacity_reg} if opacity_reg != OPACITY_REG else {}),
                  **({"holdoutBlock": holdout_block} if holdout_block else {}),
-                 **({"fromSplats": from_splats} if from_splats else {})}
+                 **({"fromSplats": from_splats} if from_splats else {}),
+                 **({"exposureAffine": True} if exposure_affine and getattr(cfg, "post_processing", None) == "bilateral_grid" else {})}
 
 
 def depth_l1_loss(pred_depth, gt_depth, scene_scale: float = 1.0):
@@ -157,6 +167,7 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--pose-opt", action="store_true")
     ap.add_argument("--depth-loss", action="store_true")
     ap.add_argument("--bilateral-grid", action="store_true")
+    ap.add_argument("--exposure-affine", action="store_true", help="the bilateral grid at 1x1x1: one affine colour transform per photo")
     ap.add_argument("--random-bkgd", action="store_true")
     ap.add_argument("--from-ply", help="fine-tune: start from this trained model instead of the SfM points, the splat cap at its own "
                                        "count (its SH is cut to --sh-degree)")
@@ -182,7 +193,8 @@ def main(argv: list[str] | None = None) -> int:
 
     cfg, summary = build_config(st, os.path.abspath(a.data), os.path.abspath(a.result), a.preset, a.ppisp, a.antialiased,
                                 a.iterations, a.sh_degree, a.cap_max, a.holdout, a.pose_opt, a.depth_loss, a.world_scale,
-                                a.bilateral_grid, a.random_bkgd, a.opacity_reg, a.holdout_block, len(start["means"]) if start else 0)
+                                a.bilateral_grid, a.random_bkgd, a.opacity_reg, a.holdout_block, len(start["means"]) if start else 0,
+                                exposure_affine=a.exposure_affine)
     block = None
     patched = [flag for flag, on in (("--holdout-block", a.holdout_block), ("--depth-loss", a.depth_loss), ("--from-ply", start)) if on]
     if patched:

@@ -43,6 +43,9 @@ VARIANTS: dict[str, dict] = {
     "q1": {"add": ["--bilateral-grid", "--exposure-fold", "2000"],
            "note": "exposure correction folded back: trained with the bilateral grid, the colour map to the photos folded into the "
                    "splats, then 2k steps without the grid"},
+    "q1b": {"add": ["--exposure-affine", "--exposure-fold", "2000"],
+            "note": "exposure correction the fold undoes exactly: trained with one affine colour transform per photo (the grid "
+                    "at 1x1x1), folded into the splats, then 2k steps without it"},
     "q2": {"add": ["--pose-opt"], "note": "pose refinement"},
     "q4a": {"add": ["--depth-loss"], "note": "sparse depth loss at the SfM track points"},
     "q5a": {"add": ["--opacity-reg", "0.005"], "note": "opacity regulariser 0.005 (baseline 0.01)"},
@@ -167,8 +170,9 @@ def estimate(args: list[str], gpu: str = "L40S", timeout_min: int | None = None,
     # second time and scoring both phone models
     tune = _int_option(args, "--lite-finetune")
     tune = LITE_FINETUNE_STEPS if tune is None else tune
-    # --exposure-fold trains the full model on, with no appearance model: its steps count at the plain pace
-    grid, fold = "--bilateral-grid" in args, _int_option(args, "--exposure-fold")
+    # --exposure-fold trains the full model on, with no appearance model: its steps count at the plain pace. The 1x1x1
+    # grid slices in pure torch; until a q1b run times it, it is budgeted like the full grid rather than ended early
+    grid, fold = "--bilateral-grid" in args or "--exposure-affine" in args, _int_option(args, "--exposure-fold")
     paced = steps * (GRID_SLOWDOWN if grid else 1) + max(fold or 0, 0) + tune
     train_min = math.ceil(paced * s["seconds_per_step"][gpu_key(gpu)] / 60)
     overhead = s["overhead_min"] + (FOLD_MIN if fold is not None else 0)

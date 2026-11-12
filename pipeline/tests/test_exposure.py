@@ -393,3 +393,28 @@ def test_the_pinned_trainers_bilateral_grid_is_not_part_of_the_model_it_saves(tr
     source = inspect.getsource(trainer.Runner.train)
     assert 'data["post_processing"] = self.post_processing_module.state_dict()' in source and '"splats": self.splats.state_dict()' in source
     assert "sh0 = self.splats[\"sh0\"]" in source and "export_splats(" in source
+
+
+def test_a_one_cell_grid_is_exactly_one_affine_colour_transform_per_photo(trainer):
+    """--exposure-affine trains the pinned trainer's own bilateral grid at 1x1x1, so the appearance model holds exactly
+    what plypipe.exposure's fold can undo: the identity at initialisation, zero total variation (the TV regulariser is
+    a no-op on it), and after a perturbation one affine map explains its output, where the default 16x16x8 grid leaves
+    a residual two orders of magnitude outside one map."""
+    import lib_bilagrid
+    import torch
+    g = torch.Generator().manual_seed(7)
+    xy, rgb = torch.rand(4096, 2, generator=g), torch.rand(4096, 3, generator=g)
+    idx = torch.zeros(4096, 1, dtype=torch.long)
+    residual = {}
+    for shape in ((1, 1, 1), (16, 16, 8)):
+        grid = lib_bilagrid.BilateralGrid(2, grid_X=shape[0], grid_Y=shape[1], grid_W=shape[2])
+        assert torch.allclose(lib_bilagrid.slice(grid, xy, rgb, idx)["rgb"], rgb, atol=1e-6)    # identity at initialisation
+        with torch.no_grad():
+            grid.grids += 0.1 * torch.randn(grid.grids.shape, generator=g)
+        out = lib_bilagrid.slice(grid, xy, rgb, idx)["rgb"]
+        ones = torch.cat([rgb, torch.ones(4096, 1)], 1)
+        fit = torch.linalg.lstsq(ones, out).solution                       # the one affine map closest to what the grid did
+        residual[shape] = (ones @ fit - out).abs().max().item()
+        tv = grid.tv_loss()
+        assert torch.isfinite(tv) and (tv.item() == 0.0) == (shape == (1, 1, 1))
+    assert residual[(1, 1, 1)] < 1e-5 < 1e-2 < residual[(16, 16, 8)]

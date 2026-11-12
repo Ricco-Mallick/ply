@@ -223,6 +223,30 @@ def test_bilateral_grid_replaces_ppisp_and_random_backgrounds_reach_gsplat():
     assert cfg.post_processing == "ppisp" and info["ppisp"] is True
 
 
+def test_exposure_affine_is_the_bilateral_grid_cut_to_one_affine_transform_per_photo():
+    import dataclasses
+
+    @dataclasses.dataclass
+    class NewConfig:
+        strategy: object = None
+        init_opa: float = 0.1
+        init_scale: float = 1.0
+        opacity_reg: float = 0.0
+        scale_reg: float = 0.0
+        post_processing: object = None
+        app_opt: bool = False
+
+    st2 = types.SimpleNamespace(Config=NewConfig, MCMCStrategy=FakeMCMC)
+    cfg, info = train_launcher.build_config(st2, "/d", "/r", "high", None, True, exposure_affine=True)
+    # the trainer's own grid at one cell: exactly what the exposure fold can undo (docs/EXPERIMENTS.md, Q1)
+    assert cfg.post_processing == "bilateral_grid" and cfg.bilateral_grid_shape == (1, 1, 1)
+    assert cfg.bilateral_grid_fused is False          # the one-cell grid runs on the pure-torch lib_bilagrid, the path verified on a CPU
+    assert info["appearance"] == "bilateral_grid" and info["exposureAffine"] is True and info["ppisp"] is False
+    cfg, info = train_launcher.build_config(st2, "/d", "/r", "high", None, True, bilateral_grid=True)
+    assert not hasattr(cfg, "bilateral_grid_shape") and "exposureAffine" not in info   # --bilateral-grid keeps the trainer's default shape
+    assert "exposureAffine" not in train_launcher.build_config(st2, "/d", "/r", "high", None, True)[1]
+
+
 # ------------------------------------------------------------------ the held-out block and opacity options
 
 def test_defaults_are_exactly_what_the_launcher_built_before_the_block_and_opacity_options():
@@ -293,6 +317,12 @@ def test_train_stage_passes_the_block_and_opacity_options_on(tmp_path, monkeypat
     assert cmd[cmd.index("--opacity-reg") + 1] == "0.005" and cmd[cmd.index("--iterations") + 1] == "15000"
     with pytest.raises(RuntimeError, match="needs --holdout"):
         _stage_command(tmp_path, monkeypatch, holdout_block=20, holdout=0)
+
+
+def test_train_stage_passes_the_affine_exposure_model_on(tmp_path, monkeypatch):
+    cmd = _stage_command(tmp_path, monkeypatch, exposure_affine=True)
+    assert "--exposure-affine" in cmd and "--bilateral-grid" not in cmd
+    assert "--exposure-affine" not in _stage_command(tmp_path, monkeypatch)
 
 
 def test_train_report_carries_both_score_sets_the_block_images_and_the_per_view_file(tmp_path):

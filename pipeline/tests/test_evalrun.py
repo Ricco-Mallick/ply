@@ -42,6 +42,10 @@ def test_each_variant_changes_one_thing_against_the_baseline():
     assert evalrun.VARIANTS["q5a"]["args"][-2:] == ["--opacity-reg", "0.005"]
     assert diff("q1") == {"bilateral_grid": True, "exposure_fold": 2000}       # the fold is what makes the grid's twin shippable: one change
     assert evalrun.VARIANTS["q1"]["args"][-3:] == ["--bilateral-grid", "--exposure-fold", "2000"]
+    assert diff("q1b") == {"exposure_affine": True, "exposure_fold": 2000}     # q1 with the grid cut to what the fold undoes exactly
+    assert evalrun.VARIANTS["q1b"]["args"][-3:] == ["--exposure-affine", "--exposure-fold", "2000"]
+    # the one-cell grid is budgeted like the full one until a run times it, so q1b fits the same function timeout as q1
+    assert evalrun.estimate(evalrun.VARIANTS["q1b"]["args"], "L40S") == evalrun.estimate(evalrun.VARIANTS["q1"]["args"], "L40S")
 
 
 def test_resolve_names_and_the_args_escape_hatch():

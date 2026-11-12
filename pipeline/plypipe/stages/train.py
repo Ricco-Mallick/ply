@@ -96,7 +96,7 @@ def fold_exposure(ctx: Ctx, result: Path, ply: Path, steps: int, block: int) -> 
     model. Both say why."""
     from plypipe import exposure
     out: dict = {"steps": steps, "folded": False, "settled": False}
-    if not (ctx.opt("bilateral_grid") or ctx.opt("ppisp")):
+    if not (ctx.opt("bilateral_grid") or ctx.opt("exposure_affine") or ctx.opt("ppisp")):
         ctx.log.emit("train", "warn", "--exposure-fold without an appearance model: the colours are the photos' already, so the map is "
                      "near the identity and the steps after it are plain extra training")
     t0 = time.time()
@@ -182,7 +182,7 @@ def run_stage(ctx: Ctx) -> dict:
         cmd += ["--sh-degree", str(ctx.opt("sh_degree"))]
     flags, block = split_flags(ctx)
     cmd += flags
-    for flag in ("pose_opt", "depth_loss", "bilateral_grid", "random_bkgd"):
+    for flag in ("pose_opt", "depth_loss", "bilateral_grid", "exposure_affine", "random_bkgd"):
         if ctx.opt(flag):
             cmd.append("--" + flag.replace("_", "-"))
     run(cmd, ctx, "train", env=launcher_env(), progress_every=50)
