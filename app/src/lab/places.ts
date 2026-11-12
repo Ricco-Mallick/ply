@@ -66,8 +66,9 @@ export function clearance(g: OccupancyGrid) {
 }
 
 export class Navigator {
-  clr: Float32Array; w: number; h: number; cell: number; ox: number; oz: number;
-  constructor(public grid: OccupancyGrid) {
+  clr: Float32Array; w: number; h: number; cell: number; ox: number; oz: number; grid: OccupancyGrid;
+  constructor(grid: OccupancyGrid) {
+    this.grid = grid;
     this.clr = clearance(grid); const m = grid.meta; this.w = m.width; this.h = m.height; this.cell = m.cell; this.ox = m.origin[0]; this.oz = m.origin[1];
   }
   idx(x: number, z: number) { return [Math.floor((x - this.ox) / this.cell), Math.floor((z - this.oz) / this.cell)] as const; }

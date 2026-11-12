@@ -2,6 +2,7 @@
    runs every frame. Run: node --experimental-strip-types test/walk.test.mts */
 import { GridCollider, moveCircle, type Grid } from '../src/walk/collider.ts';
 import { RADIUS as R, REACH, SPEED, WHEEL, WHEEL_WALK, pace, recover, walkFrame, type Walker } from '../src/walk/walker.ts';
+import { Navigator } from '../src/lab/places.ts';
 
 let fail = 0; const check = (name: string, ok: boolean) => { console.log(ok ? 'ok  ' : 'FAIL', name); if (!ok) fail++; };
 let seed = 1; const rnd = () => (seed = (seed * 1664525 + 1013904223) >>> 0) / 2 ** 32;
@@ -172,5 +173,31 @@ for (const cell of [.1, .05]) {
 
   { const big = grid(n(8), n(4), cell, (i, j) => i === 0 || j === 0 || i === n(8) - 1 || j === n(4) - 1 || (i >= n(2) && i < n(2.2))), p = new GridCollider(big).openSpot()!;
     check(`the most open place is in the larger room, ${gap(big, p.x, p.z).toFixed(2)} m from its walls ${tag}`, p.x - O[0] > 2.2 && gap(big, p.x, p.z) > 1.8 && new GridCollider(grid(4, 4, cell, () => true)).openSpot() === null); }
+  // the plan's guided-route test: "Take me there" between places in two rooms finishes without getting stuck. The route
+  // is the one Places.tsx asks the Navigator for; the guide moves the visitor along it directly, so every point of it
+  // must be a place the walker fits, or Walk starts the next frame inside a wall
+  { const W = n(9), H = n(5), wall = n(4.5), door = (lo: number, hi: number) => (j: number) => j >= n(lo) && j < n(hi);
+    for (const [label, opening] of [['a 0.7 m door', door(2, 2.7)], ['a 1.2 m door', door(1.5, 2.7)]] as const) {
+      const rooms = grid(W, H, cell, (i, j) => i === 0 || j === 0 || i === W - 1 || j === H - 1 || (i === wall && !opening(j)));
+      const nav = new Navigator(rooms as never), gc = new GridCollider(rooms);
+      // a place in the open, one against the far wall, and one in a corner, as the labelling stage pins them
+      const from: [number, number] = [O[0] + 1.5, O[1] + 2.5], ends: [number, number][] = [[O[0] + 7, O[1] + 3], [O[0] + 8.95, O[1] + 2.5], [O[0] + 8.9, O[1] + .1]];
+      let routed = 0, clear = 0, walked = 0, closest = Infinity;
+      for (const to of ends) {
+        const path = nav.route(from, to); if (!path) continue; routed++;
+        let ok = true;
+        for (let s = 1; s < path.length; s++) {
+          const [ax, az] = path[s - 1], [bx, bz] = path[s], k = Math.ceil(Math.hypot(bx - ax, bz - az) / .01);
+          for (let t = 0; t <= k; t++) { const x = ax + (bx - ax) * t / k, z = az + (bz - az) * t / k; closest = Math.min(closest, gap(rooms, x, z)); if (!fits(rooms, x, z)) ok = false; }
+        }
+        if (ok) clear++;
+        const w: Walker = { x: path[0][0], z: path[0][1], vx: 0, vz: 0 };
+        if (follow(gc, w, path.map(([x, z]) => [x - O[0], z - O[1]] as [number, number]), SPEED, .016, 20) >= 0) walked++;
+      }
+      check(`a guided route through ${label} to each of three places is found (${routed}/3) ${tag}`, routed === 3);
+      check(`every point of those routes fits the walker (closest ${closest.toFixed(3)} m to a wall, radius ${R}) ${tag}`, clear === routed && routed === 3);
+      check(`Walk follows each route to its end without getting stuck (${walked}/3) ${tag}`, walked === 3);
+    }
+  }
 }
 process.exit(fail ? 1 : 0);
