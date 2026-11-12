@@ -1,4 +1,5 @@
-"""Ply GPU worker on Modal: an L4 that wakes when a job is queued and stops when the queue is empty.
+"""Ply GPU worker on Modal: an L4 (an L40S when Modal has no L4 free) that wakes when a job is queued and stops when
+the queue is empty. PLY_MODAL_GPU=L4 at deploy time pins it to one type.
 
     modal secret create ply-worker PLY_API=https://ply-api.ricco-ply.workers.dev PLY_WORKER_TOKEN=... PLY_TRIGGER_TOKEN=...
     modal deploy pipeline/modal/ply_modal.py          # prints the trigger URL for the Cloudflare API (MODAL_TRIGGER)
@@ -19,7 +20,10 @@ from pathlib import Path
 import modal
 
 PIPE = Path(__file__).resolve().parents[1]
-GPU = os.environ.get("PLY_MODAL_GPU", "L4")
+# tried in this order. An L4 alone left a queued job waiting with no container whenever Modal had none free
+# (docs/MISTAKES.md, 2026-11-04 and 2026-11-12); both types run the pinned wheels (sm_89)
+GPUS = [g.strip() for g in os.environ.get("PLY_MODAL_GPU", "L4,L40S").split(",") if g.strip()]
+GPU = GPUS if len(GPUS) > 1 else GPUS[0]
 HF_REPO = os.environ.get("PLY_HF_REPO", "Ricco-Marcelino/ply-data")  # results storage (private dataset repo)
 # read HERE, at deploy time on the developer's machine: values read inside work() see the container's env,
 # which never has these, so deploy-time flags like PLY_STAGE_LIMITS were silently ignored before.
@@ -29,7 +33,7 @@ JOB_MAX_MIN = os.environ.get("PLY_JOB_MAX_MIN", "")
 MAX_INPUT_MB = os.environ.get("PLY_MAX_INPUT_MB", "")
 DEPLOY_LIMITS = {k: v for k, v in (("PLY_STAGE_LIMITS", STAGE_LIMITS), ("PLY_JOB_MAX_MIN", JOB_MAX_MIN), ("PLY_MAX_INPUT_MB", MAX_INPUT_MB)) if v}
 EXPORT_PROBES = os.environ.get("PLY_EXPORT_PROBES", "1")
-WORKER_NAME = os.environ.get("PLY_WORKER_NAME", f"modal-{GPU.lower()}")  # deploy-time: a second account needs its own row
+WORKER_NAME = os.environ.get("PLY_WORKER_NAME", f"modal-{GPUS[0].lower()}")  # deploy-time: a second account needs its own row
 
 # CUDA extensions come prebuilt from CI (.github/workflows/wheels.yml, python 3.12, sm_89 for L4 / L40S). CI's
 # artifacts expire after 30 days, so the copy that counts is on Hugging Face:
@@ -114,7 +118,7 @@ def work(worker_name: str = WORKER_NAME):
     """Claim and run jobs until the queue has been empty for 3 minutes. The worker only starts a job it can finish
     before this container's timeout (PLY_DEADLINE); later work waits for the next wake-up (API trigger or cron)."""
     import time
-    env = dict(os.environ, PYTHONPATH="/root/pipeline", PLY_WORKER_NAME=worker_name, PLY_WORK_DIR="/tmp/work", PLY_HF_REPO=HF_REPO, PLY_MODAL_GPU=GPU,
+    env = dict(os.environ, PYTHONPATH="/root/pipeline", PLY_WORKER_NAME=worker_name, PLY_WORK_DIR="/tmp/work", PLY_HF_REPO=HF_REPO, PLY_MODAL_GPU=",".join(GPUS),
                PLY_IDLE_EXIT_MIN="3", MPLBACKEND="Agg", PLY_DEADLINE=str(time.time() + TIMEOUT_S - DEADLINE_MARGIN_S),
                PLY_CPU_SFM=CPU_SFM, PLY_CPU_SFM_MIN=CPU_SFM_MIN, **HANDOFF_ENV)
     subprocess.run(["nvidia-smi", "--query-gpu=name,memory.total", "--format=csv,noheader"], check=False)

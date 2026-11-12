@@ -3,6 +3,29 @@
 What changed in the pipeline, why, and how it was measured. The newest work is first. Each entry names the defect,
 the evidence for it, the change, and what the change was checked against. Costs are from `modal billing report`.
 
+## 2026-11-12: the worker redeployed, a smoke test for every deploy, a GPU to fall back on
+
+**Evidence.** Nothing merged since PR #21 had reached a real job: the worker ran the code of 2026-11-06. There was no
+way to tell whether a deploy worked short of a real capture (plan 0.6). The first job after the deploy then waited
+17 minutes for an L4 that Modal did not have.
+
+**Change.**
+- `scripts/plyctl.py`: `status` (workers, queue, newest jobs) and `smoke`, which uploads a 30-second clip in parts as
+  the capture app does, queues a Quick job of 2,000 steps, waits, and checks every stage's report, the gate and that
+  the API serves each result file. The clip (`smoke/smoke-chapel-30s.mp4`, 15 MB, cut from a chapel clip at 1080p)
+  is on both accounts' `ply-bench` Volume, not in the repository.
+- `modal/ply_modal.py`: `PLY_MODAL_GPU` is a list tried in order, `L4,L40S` by default.
+- The worker is deployed from this change (Modal app `ply` v18).
+
+**Measured.** The smoke job passed on the live service in 6 minutes on an L40S: 65 of 65 views solved, 2,000 steps,
+all seven stages reported, ten result files served, the top view and the evidence folder among them. The export
+rule of 2026-11-11 mattered on its first real job: the filter the splat count picks would have shipped the twin at
+14.6 dB with 54% of its pixels see-through, and the looser one it now falls back to gives 19.2 dB and 2.6%. The gate
+fails the twin as too small, as it should at 2,000 steps. About $0.55 of L40S time by estimate, three minutes of it
+an avoidable second idle wait (`MISTAKES.md`). Not covered: the hand-off to the CPU solver (under 400 frames), and
+the mapper choice for a long video. Hugging Face refused the 3.6 MB model files as binary and the worker stored them
+on the bucket (`STATUS.md`, known and left alone).
+
 ## 2026-11-11: a small test scene, and an export filter that was eating the twin
 
 **Evidence.** The owner: experiments must not use up the credit before the work is done, so try them on small twins.

@@ -44,6 +44,15 @@ def test_the_deployed_limits_fit_their_containers():
     assert fit() == []
 
 
+def test_the_worker_has_a_second_gpu_to_fall_back_on():
+    """An L4 alone left a queued job waiting with no container when Modal had none free (docs/MISTAKES.md, twice)."""
+    gpus = env_default("PLY_MODAL_GPU").split(",")
+    assert gpus[0] == "L4" and len(gpus) > 1 and set(gpus) <= {"L4", "L40S"}       # the pinned wheels are built for these two
+    asked = [kw.value.id for n in ast.walk(TREE) if isinstance(n, ast.FunctionDef) and n.name in ("work", "check") for d in n.decorator_list
+             if isinstance(d, ast.Call) for kw in d.keywords if kw.arg == "gpu" and isinstance(kw.value, ast.Name)]
+    assert asked == ["GPU", "GPU"]                                                  # the worker and its image check ask for the same list
+
+
 def test_both_containers_take_their_timeout_from_the_constants_that_are_checked():
     assert timeouts()["work"] == "TIMEOUT_S" and timeouts()["solve"] == "CPU_SOLVE_TIMEOUT_S"
     src = MODAL.read_text()
