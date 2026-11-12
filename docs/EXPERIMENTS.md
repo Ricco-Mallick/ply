@@ -79,8 +79,91 @@ Bold is better than the baseline by more than twice the noise floor.
   frame this happens in 1 to 5 steps of 300 (by how much of the frame is rendered), so first somewhere between step
   60 and 300. The scene's scale is not the cause: disparity times scene scale is the same in metres as in a
   normalised scene. `train_launcher.py` now swaps in a loss with the same value and a finite gradient.
-  **Not confirmed on a GPU:** Q4a has to be run again before it counts, and before Q4b.
+  **Confirmed on a GPU on Dr Johnson** (below): it trains to the end. Not run again on the chapel.
 
 **Cost.** Modal's billing for the day on opservemakesalt: $3.17 ($2.88 for the eval runs, one cancelled export among
 them, and $0.29 for the image and wheel checks). The runner's own estimates for the same runs add up to $2.32, so billing
 runs about a quarter above them.
+
+## Small scenario: Dr Johnson (2026-11-11, night)
+
+From here on a variant is tried on a small twin first, and only a winner is repeated on the chapel (plan decision 8).
+Dr Johnson's saved solve (260 photos at 1330×874, the `ply_bench` solve of 2026-11-02), High settings, 15,000 steps,
+600k cap, 4 cores and 16 GiB, on an L4 or an L40S, whichever Modal had (account opservemakesalt;
+`PLY_EVAL_SCENARIO=drjohnson`). Hold-outs: every 8th view (32 views) and a block of 10 photos in a row (`000128` to
+`000137`). Code `7689f02` for the first four runs, `47dfbf2` (the export fix below) for the rest.
+
+| variant | change | every cc-PSNR | every cc-SSIM | every cc-LPIPS | block cc-PSNR | block cc-SSIM | block cc-LPIPS | viewer desktop | viewer phone | splats kept | see-through (worst view) | desktop file | GPU | minutes | billed |
+|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---|---:|---:|
+| q0a | baseline | 29.26 | 0.8830 | 0.2410 | 27.55 | 0.8598 | 0.2669 | 29.37 | 28.79 | 74% (0.44M) | 0.12% (1.4%) | 12.5 MB | L40S | 3.8 | $0.19 |
+| q0b | baseline | 29.24 | 0.8839 | 0.2414 | 27.60 | 0.8620 | 0.2640 | 29.38 | 28.77 | 74% (0.44M) | 0.41% (3.5%) | 12.4 MB | L4 | 8.5 | $0.20 |
+| q4a | sparse depth loss | 29.18 | 0.8837 | 0.2399 | 27.62 | 0.8657 | 0.2628 | 29.37 | 28.74 | 73% (0.44M) | 0.51% (3.9%) | 12.6 MB | L40S | 5.0 | $0.26 |
+| q5a | opacity regulariser 0.005 | 29.26 | **0.8860** | **0.2273** | **27.97** | **0.8686** | **0.2513** | **29.44** | **28.92** | 84% (0.51M) | 0.11% (0.8%) | 14.4 MB | L4 | 7.9 | $0.17 |
+| q5b | opacity regulariser 0.002 | **29.35** | 0.8836 | **0.2181** | **27.90** | **0.8680** | **0.2485** | **29.47** | **28.95** | 90% (0.54M) | 0.12% (1.2%) | 15.2 MB | L40S | 4.0 + 1.5 | $0.20 + $0.11 |
+| q5c | opacity regulariser 0.001 | 29.25 | 0.8817 | **0.2183** | 27.54 | 0.8622 | **0.2529** | **29.39** | **28.94** | 93% (0.56M) | 0.13% (1.1%) | 15.6 MB | L40S | 4.6 | $0.24 |
+| q5d | no opacity regulariser | 28.59 | 0.8680 | **0.2331** | 27.37 | 0.8523 | 0.2653 | 28.62 | 28.22 | 96% (0.57M) | 0.07% (0.6%) | 16.0 MB | L40S | 4.5 | $0.24 |
+
+Bold is better than the baseline mean by more than twice the noise floor. `q5b` was trained once; its export was run
+a second time with the fix, and the viewer columns, splats kept and file size are from that second export.
+
+| metric | baseline mean | noise floor | twice the floor |
+|---|---:|---:|---:|
+| every cc-PSNR | 29.25 | 0.02 | 0.04 |
+| every cc-SSIM | 0.8835 | 0.0009 | 0.0018 |
+| every cc-LPIPS | 0.2412 | 0.0004 | 0.0008 |
+| block cc-PSNR | 27.58 | 0.05 | 0.10 |
+| block cc-SSIM | 0.8609 | 0.0022 | 0.0044 |
+| block cc-LPIPS | 0.2655 | 0.0029 | 0.0058 |
+| viewer PSNR desktop | 29.37 | 0.01 | 0.01 |
+| viewer PSNR phone | 28.78 | 0.02 | 0.03 |
+
+- **The small scene is the sharper instrument, at about half the price.** Its noise is 0.02 dB and 0.0004 LPIPS
+  on the every-8th set, against 0.14 dB and 0.0011 on the chapel. A run is billed $0.17 to $0.26; the chapel's were
+  estimated at $0.34 to $0.43 and billed about a quarter more. The two baselines ran on different GPUs, so the floor
+  includes that difference. It is still one pair.
+- **Q5: 0.002 is where the trend ends, on a second scene.** LPIPS falls from 0.2412 to 0.2273 (0.005), 0.2181 (0.002)
+  and 0.2183 (0.001), and rises again with no regulariser at all (0.2331, with PSNR down 0.67 dB). 0.002 is the only
+  setting that is better or equal on every metric: +0.10 dB and −0.023 LPIPS (10%) on the every-8th set, +0.32 dB and
+  −0.017 LPIPS on the block, +0.10 dB in the viewer and +0.17 dB on the phone file. It costs 22% in file size
+  (15.2 against 12.5 MB; 12.2 against 10.1 MB for the phone).
+- **Export was undoing that gain: a defect, fixed.** The first export of `q5b` shipped at 27.72 dB in the viewer with
+  7.05% see-through pixels (15% in the worst view), from a trained model that scored 29.55 dB and 0.10% before
+  cleanup. The value filter was chosen by splat count: `opacity>0.030 and scale<1.52` kept 88% of the splats, which
+  passed the 85% rule, and it removed splats the picture needed. The three cleanups were measured and all failed
+  the tolerance, and the lightest was shipped regardless. Export now loosens the filter when that happens
+  (`choose_cleanup` in `stages/export.py`): the same model exports at 29.47 dB and 0.12% under `opacity>0.020` with
+  no scale cap. Which of the two closed the holes, the lower floor or the missing cap, was not separated. The
+  baselines and `q4a` take the same path as before. This is the likely cause of the chapel's
+  see-through readings above (1.8% for `q5a`, 0.4% for `q5b`); their exports have not been run again.
+- **Q4a: the depth loss trains now, and buys nothing here.** The run that went NaN on the chapel finished: the fix in
+  `train_launcher.py` holds on a GPU. PSNR is 0.08 dB lower and LPIPS 0.0013 lower on the every-8th set, the block is
+  inside the noise but for SSIM, and training takes 40% longer (237 against 169 s on an L40S). Not a default.
+- **Not answered here:** pose refinement (not run on this scene), and whether any of this holds on the chapel.
+
+### The opacity regulariser at twice the length
+
+The same scene at 30,000 steps (ad-hoc variants: `--args "--iterations 30000 ..."`, `PLY_EVAL_TIMEOUT_MIN=27`), all
+three on an L40S, code `47dfbf2`. One run each, so the 15k noise floor above is the only guide.
+
+| variant | change | every cc-PSNR | every cc-SSIM | every cc-LPIPS | block cc-PSNR | block cc-SSIM | block cc-LPIPS | viewer desktop | viewer phone | splats kept | see-through (worst view) | desktop file | minutes | est. cost |
+|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| q0-30k | baseline | 29.27 | 0.8881 | 0.2218 | 27.52 | 0.8656 | 0.2507 | 29.21 | 28.20 | 79% (0.47M) | 0.36% (2.6%) | 14.1 MB | 7.0 | $0.26 |
+| q5a-30k | opacity regulariser 0.005 | 29.29 | 0.8880 | 0.2091 | 27.41 | 0.8599 | 0.2416 | 29.24 | 28.49 | 87% (0.52M) | 0.04% (0.2%) | 16.0 MB | 6.9 | $0.26 |
+| q5b-30k | opacity regulariser 0.002 | 29.31 | 0.8840 | 0.2029 | 27.30 | 0.8474 | 0.2388 | 29.42 | 28.76 | 94% (0.56M) | 0.23% (1.5%) | 17.2 MB | 6.1 | $0.23 |
+
+- **At length the regulariser is a dial between sharpness and fidelity, not a free gain.** 0.002 still lowers LPIPS
+  by 0.019 (8.5%) on the every-8th set and by 0.012 on the block, and the viewer shows +0.21 dB (+0.56 dB on the phone
+  file). But SSIM falls by 0.004 on the every-8th set and by 0.018 on the block, and the block loses 0.22 dB. The
+  15k runs flattered it: with twice the steps the baseline catches up in PSNR and the SSIM gap opens.
+- **0.005 keeps about two thirds of the gain for a third of the loss.** LPIPS −0.013 (5.7%) with PSNR and SSIM
+  unchanged on the every-8th set; on the block LPIPS −0.009, PSNR −0.11 dB, SSIM −0.006. Its see-through pixels are
+  the lowest of the three.
+- **The default stays at 0.01.** The plan ships a variant only if no other metric gets worse by more than the noise,
+  and both settings lose on the block by about twice the 15k floor. Whether that loss is real needs the floor at this
+  length: a second 30k baseline (about $0.30) is the next run, before any chapel run.
+
+**Cost.** Modal's billing for 2026-11-11 on opservemakesalt rose from $3.17 to $5.34: $2.17 for the small scenario
+(the smoke run, seven variants, the second export of `q5b`, and most of two 30k runs). The last minutes of those two
+and all of `q5a-30k` fall on 2026-11-12 and were not in the billing report yet: about $0.50 more. The runner's own
+estimates for the eleven runs billed so far add up to $1.75: a launch pays $0.05 to $0.08 before its function starts,
+which the estimate leaves out.

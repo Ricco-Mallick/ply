@@ -239,6 +239,8 @@ boundary and caps the gaps; registering the remaining frames leaves none unposed
 ## 8. Phase 4: splat quality
 
 Train-only runs from one saved chapel solve, one factor at a time against the baseline, at 15k steps on an L40S.
+Since 2026-11-11 each variant runs first on the small scenario (Dr Johnson, 15k steps at a 600k cap), and the chapel
+repeats only what wins there (decision 8).
 
 | Variant | Change | Why |
 |---|---|---|
@@ -387,5 +389,8 @@ Made on 2026-11-11:
 6. Free is the default mode on every twin, whatever the walk check says. This replaces decision 4. Walk stays one
    click away; making it the default again is the owner's call once 2.1 is done.
 7. Work continues down this plan with the third account's credit; quality and pipeline stability come first.
+8. Experiments run on a small twin first, so the credit lasts until the work is done: Dr Johnson
+   (`PLY_EVAL_SCENARIO=drjohnson`, about $0.20 a run by billing). The chapel repeats only a winner, and no full-length run is made
+   before the rest of the plan is in. The credentials for the three Modal accounts were given in chat for this.
 
 Open: the date of the final, so the phases can be given dates and the cut order applied.

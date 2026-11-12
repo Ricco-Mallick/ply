@@ -145,6 +145,36 @@ def needed_crop(src: Path, dest: Path, lo: np.ndarray, hi: np.ndarray, weights: 
             "keptOutside": int((outside & ~drop).sum()), "minPx": min_px}
 
 
+def cleanup_name(step: tuple[bool, bool]) -> str:
+    return "+".join(n for n, on in zip(("crop", "floaters"), step) if on) or "values only"
+
+
+def choose_cleanup(filters: list[dict], steps: list[tuple[bool, bool]], measure, passes) -> tuple[dict, tuple[bool, bool], dict | None]:
+    """The strictest value filter and the heaviest cleanup that the viewer does not pay for.
+
+    `filters` run from the one the splat count picked to almost none, `steps` from the heaviest cleanup to the value
+    filter alone. `measure(filter, step)` builds that twin and scores it as the viewer shows it (None: no score to be
+    had); `passes(score)` is the tolerance. The first filter is tried under each step in turn. If it fails even alone,
+    the filter is what costs the picture: each looser one is tried alone first and gets the heavier steps only once
+    it passes. With nothing passing, the last try stands.
+    """
+    alone, last = steps[-1], None
+    for i, f in enumerate(filters):
+        if i:
+            last = (f, alone, measure(f, alone))
+            if last[2] is not None and not passes(last[2]):
+                continue
+        for step in steps[:-1] if i else steps:
+            score = measure(f, step)
+            if passes(score):
+                return f, step, score
+            if not i:
+                last = (f, step, score)
+        if i or last[2] is None:  # a looser filter passed alone; or nothing can be scored, which is no reason to loosen
+            return last
+    return last
+
+
 def run_stage(ctx: Ctx) -> dict:
     st = splat_transform_cmd()
     if st[0] == "npx":
@@ -272,20 +302,39 @@ def run_stage(ctx: Ctx) -> dict:
     if reference:
         tried = []
         steps = [(True, True), (False, True), (False, False)] if box else [(False, True), (False, False)]
-        for with_box, with_floaters in steps:
-            stats = build(with_box, with_floaters)
+        # The splat count picked the value filter, and it says nothing of what the viewer loses: a model trained with
+        # a weak opacity regulariser kept 88 % of its splats under the strictest filter and lost 1.8 dB and 7 % of its
+        # pixels to it (Dr Johnson, EXPERIMENTS.md). These are tried only when everything stricter measured worse.
+        looser = [*candidates[candidates.index(chosen) + 1:],
+                  {"opacity": 0.005, "scale": None, "why": "opacity>0.005 (measured: the stricter filters cost the viewer detail)"},
+                  {"opacity": 0.001, "scale": None, "why": "opacity>0.001 (measured: every stricter filter cost the viewer detail)"}]
+        built: dict = {}
+
+        def passes(score: dict | None) -> bool:
+            return bool(score) and score["psnr"] >= reference["psnr"] - 0.3 and score["holes"] <= reference["holes"] + 0.01
+
+        def measure(c: dict, step: tuple[bool, bool]) -> dict | None:
+            nonlocal chosen, clean_flags
+            chosen, clean_flags = c, flags_for(c)
+            stats = build(*step)
             score = viewer_eval.evaluate(cleaned, ctx.data_dir, holdout, aa)
-            name = "+".join(n for n, on in (("crop", with_box), ("floaters", with_floaters)) if on) or "values only"
-            tried.append({"cleanup": name, **(score or {})})
-            ok = score and score["psnr"] >= reference["psnr"] - 0.3 and score["holes"] <= reference["holes"] + 0.01
-            if ok or (with_box, with_floaters) == steps[-1]:
-                choice = {"cleanup": name, "reference": reference, "tried": tried}
-                viewer, clean_stats = score, stats
-                drop_crop = drop_crop or (box is not None and not with_box)
-                box = box if with_box else None
-                break
-            ctx.log.emit("export", "warn", f"cleanup '{name}' cost the viewer {reference['psnr'] - score['psnr']:.2f} dB and "
-                         f"{(score['holes'] - reference['holes']):.1%} more see-through pixels: trying a lighter one")
+            tried.append({"cleanup": cleanup_name(step), "filter": c["why"], **(score or {})})
+            built.update(filter=c, step=step, stats=stats)
+            if score and not passes(score):
+                ctx.log.emit("export", "warn", f"cleanup '{cleanup_name(step)}' with {c['why']} cost the viewer "
+                             f"{reference['psnr'] - score['psnr']:.2f} dB and {(score['holes'] - reference['holes']):.1%} more "
+                             "see-through pixels: trying a lighter one")
+            return score
+
+        picked, step, viewer = choose_cleanup([chosen, *looser], steps, measure, passes)
+        if (built["filter"], built["step"]) == (picked, step):
+            clean_stats = built["stats"]
+        else:  # the last twin built is not the one chosen: build that one again
+            chosen, clean_flags = picked, flags_for(picked)
+            clean_stats = build(*step)
+        choice = {"cleanup": cleanup_name(step), "reference": reference, "tried": tried}
+        drop_crop = drop_crop or (box is not None and not step[0])
+        box = box if step[0] else None
         if clean_stats is None:  # the floater pass was measured and left out: record why, so the gate can tell
             clean_stats = {"method": "cpu-grid-27", "skipped": True, "why": "measured: it opened holes in the twin",
                            "kept": ply_count(cleaned)}

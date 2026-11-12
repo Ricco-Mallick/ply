@@ -57,6 +57,38 @@ def test_resolve_names_and_the_args_escape_hatch():
         evalrun.resolve("q9")
 
 
+def test_the_small_scenario_runs_the_same_variants_on_its_own_baseline():
+    small = opts(evalrun.SMALL)
+    assert {k for k, v in opts(evalrun.BASE).items() if v != small[k]} == {"cap_max", "holdout", "holdout_block"}
+    assert small["cap_max"] == 600_000 and small["holdout"] == 8 and small["holdout_block"] == 10
+    for name, v in evalrun.VARIANTS.items():
+        ours, chapel = evalrun.resolve(name, scenario="drjohnson")["args"], evalrun.resolve(name)["args"]
+        assert ours[len(evalrun.SMALL):] == chapel[len(evalrun.BASE):] == v["add"], name     # a variant adds the same thing to both
+        assert chapel == v["args"]
+    assert evalrun.resolve("smoke", scenario="drjohnson")["args"] == ["--preset", "high", "--iterations", "300", "--cap-max", "600000",
+                                                                      "--holdout", "8", "--holdout-block", "10"]
+    # unchanged, so the smoke run saved on the chapel's Volume is still the same experiment
+    assert evalrun.VARIANTS["smoke"]["args"] == ["--preset", "high", "--iterations", "300", "--cap-max", "2000000", "--holdout", "30", "--holdout-block", "20"]
+    assert evalrun.resolve("q9", "--sh-degree 2", "drjohnson")["args"] == evalrun.SMALL + ["--sh-degree", "2"]
+    with pytest.raises(ValueError, match="unknown scenario"):
+        evalrun.resolve("q0a", scenario="garden")
+
+
+def test_the_small_scenario_has_its_own_saved_solve_container_and_estimate():
+    job = evalrun.make_job("drjohnson", "", "q5b", gpus=("L4", "L40S"))
+    assert job["src"] == "drjohnson/prep" and (job["cpu"], job["memoryGib"], job["needsIndex"]) == (4, 16, False)
+    assert job["args"] == evalrun.SMALL + ["--opacity-reg", "0.002"] and job["ceilingMin"] == 17
+    l4, l40s = job["estimates"]["L4"], job["estimates"]["L40S"]
+    assert (l4["trainMin"], l4["totalMin"], l4["timeoutMin"]) == (7, 11, 17) and (l40s["trainMin"], l40s["totalMin"], l40s["timeoutMin"]) == (4, 8, 12)
+    assert l4["perHour"] == pytest.approx(0.80 + 4 * 0.047 + 16 * 0.008) and l4["usd"] == 0.20 and l40s["usd"] == 0.30   # the slower GPU is the cheaper run
+    assert "4 cores, 16 GiB" in evalrun.describe(job) and "/vol/drjohnson/eval/q5b/" in evalrun.describe(job)
+    chapel = evalrun.make_job("chapel", "", "q0a")
+    assert chapel["src"] == "chapel/high/job" and (chapel["cpu"], chapel["memoryGib"], chapel["needsIndex"]) == (8, 32, True)
+    assert chapel["estimates"]["L40S"]["usd"] > 2 * l4["usd"]
+    hour = evalrun.invocation_record(1.0, 3600.0, {"name": "NVIDIA L4", "priced": "L4"}, [], [], None, job["cpu"], job["memoryGib"])
+    assert hour["costUsd"] == pytest.approx(1.116) and hour["pricePerHour"] == l4["perHour"]
+
+
 # ------------------------------------------------------------------ price, estimate, stop-loss
 
 def test_gpu_names_map_to_the_price_table():
@@ -178,6 +210,7 @@ def test_a_restored_job_is_checked_before_any_stage_runs(tmp_path):
     (tmp_path / "job" / "data" / "sparse" / "0" / "images.bin").unlink()
     (tmp_path / "job" / "frames_index.json").unlink()
     assert evalrun.check_job(tmp_path / "job") == ["data/sparse/0/images.bin", "frames_index.json"]
+    assert evalrun.check_job(tmp_path / "job", index=False) == ["data/sparse/0/images.bin"]     # a photo set has no index
     shutil.rmtree(tmp_path / "job" / "dense")
     assert any("no photos" in p for p in evalrun.check_job(tmp_path / "job"))
 
