@@ -133,8 +133,9 @@ a second time with the fix, and the viewer columns, splats kept and file size ar
   the tolerance, and the lightest was shipped regardless. Export now loosens the filter when that happens
   (`choose_cleanup` in `stages/export.py`): the same model exports at 29.47 dB and 0.12% under `opacity>0.020` with
   no scale cap. Which of the two closed the holes, the lower floor or the missing cap, was not separated. The
-  baselines and `q4a` take the same path as before. This is the likely cause of the chapel's
-  see-through readings above (1.8% for `q5a`, 0.4% for `q5b`); their exports have not been run again.
+  baselines and `q4a` take the same path as before. It was taken for the cause of the chapel's
+  see-through readings above (1.8% for `q5a`, 0.4% for `q5b`). It is not: `q5a` exported again on 2026-11-12 reads
+  the same, and the holes are in the trained model ("The opacity default", below).
 - **Q4a: the depth loss trains now, and buys nothing here.** The run that went NaN on the chapel finished: the fix in
   `train_launcher.py` holds on a GPU. PSNR is 0.08 dB lower and LPIPS 0.0013 lower on the every-8th set, the block is
   inside the noise but for SSIM, and training takes 40% longer (237 against 169 s on an L40S). Not a default.
@@ -160,13 +161,62 @@ three on an L40S, code `47dfbf2`. One run each, so the 15k noise floor above is 
   the lowest of the three.
 - **The default stays at 0.01.** The plan ships a variant only if no other metric gets worse by more than the noise,
   and both settings lose on the block by about twice the 15k floor. Whether that loss is real needs the floor at this
-  length: a second 30k baseline (about $0.30) is the next run, before any chapel run.
+  length: a second 30k baseline (about $0.30) is the next run, before any chapel run. (Run on 2026-11-12: "The opacity
+  default", below.)
 
 **Cost.** Modal's billing for 2026-11-11 on opservemakesalt rose from $3.17 to $5.34: $2.17 for the small scenario
 (the smoke run, seven variants, the second export of `q5b`, and most of two 30k runs). The last minutes of those two
 and all of `q5a-30k` fall on 2026-11-12 and were not in the billing report yet: about $0.50 more. The runner's own
 estimates for the eleven runs billed so far add up to $1.75: a launch pays $0.05 to $0.08 before its function starts,
 which the estimate leaves out.
+
+### The opacity default: 0.005 passes on the small scene and not on the chapel (2026-11-12)
+
+Two runs on an L40S, code `118b29e`, both with `--lite-finetune 0` so that their exports are the ones the runs above
+had: a second 30k baseline on Dr Johnson (`q0-30k-b`), and the chapel's `q5a` exported again from its saved model
+(`q5a-reexport`, export only).
+
+**The noise at 30k, Dr Johnson.**
+
+| variant | every cc-PSNR | every cc-SSIM | every cc-LPIPS | block cc-PSNR | block cc-SSIM | block cc-LPIPS | viewer desktop | viewer phone | splats kept | see-through (worst view) |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| q0-30k | 29.27 | 0.8881 | 0.2218 | 27.52 | 0.8656 | 0.2507 | 29.21 | 28.20 | 79% | 0.36% (2.6%) |
+| q0-30k-b | 29.36 | 0.8882 | 0.2198 | 27.42 | 0.8609 | 0.2515 | 29.29 | 28.36 | 79% | 0.08% (0.9%) |
+| the two apart | 0.09 | 0.0001 | 0.0020 | 0.11 | 0.0047 | 0.0008 | 0.08 | 0.16 | | |
+| q5a-30k (0.005) against their mean | −0.02 | −0.0002 | −0.0117 | −0.06 | −0.0034 | −0.0095 | −0.01 | +0.21 | +8 points | 0.04% (0.2%) |
+| q5b-30k (0.002) against their mean | −0.01 | −0.0042 | −0.0179 | −0.17 | −0.0159 | −0.0123 | +0.17 | +0.48 | +15 points | 0.23% (1.5%) |
+
+- **0.005 passes the plan's test on this scene, at both lengths.** LPIPS improves by 0.012 on the every-8th set and
+  by 0.010 on the block, six and twelve times what two identical runs differ by, and nothing else moves by more than
+  they do: the block's 0.11 dB "loss" above was the first baseline's luck. 0.002 does not pass: the block loses
+  0.016 SSIM, more than three times the spread.
+- **The block is noisier than two runs showed.** Four trainings of the 15k baseline now exist (`q0a`, `q0b` and the two
+  Q6 runs, whose training is the baseline's): block cc-PSNR 27.55, 27.60, 27.70 and 27.57, a range of 0.15 dB where
+  the first pair gave 0.05; block cc-SSIM spans 0.006. On the every-8th set the four stay within 0.03 dB.
+
+**The chapel's see-through pixels are in the trained model, not in the export.** `q5a-reexport` chose the same
+cleanup as on 2026-11-11 and ships the same 1.8%. Each export records the trained model's own score before any cleanup:
+
+| chapel, 15k | opacity regulariser | trained model: see-through (worst view) | as shipped |
+|---|---:|---:|---:|
+| q0a | 0.01 | 0.02% (0.1%) | 0.02% |
+| q0b, q6 | 0.01 | not recorded apart; shipped 0.14% and 0.16% | |
+| q5b | 0.002 | 0.37% (2.8%) | 0.40% |
+| q5a | 0.005 | 1.76% (14.1%) | 1.81% |
+
+- **So the default stays at 0.01.** The plan ships a variant only if no other metric gets worse by more than the
+  noise, and on the chapel 0.005 turns 0.02 to 0.16% of see-through pixels into 1.8%, with one held-out view missing
+  14% of its pixels. That outweighs its gains there (LPIPS −0.019, PSNR +0.13 to +0.27 dB against a floor of 0.14).
+- **Why is not known.** One run each, and 0.005 reads worse than 0.002, so this metric may move a lot from run to
+  run. Two explanations fit and neither is tested: (1) a short run on a large scene: MCMC's position noise acts only
+  on nearly dead splats, a weaker regulariser leaves fewer of them, and regions with no SfM points are then reached
+  later (15k steps is twelve passes over the chapel's 1,236 frames); it would go away at full length. (2) Dark areas
+  left transparent over the black training background, which `--random-bkgd` exists to prevent.
+- **What decides it:** the chapel at full length (phase 7) trained with 0.005. It becomes the default if that twin
+  ships at most 0.5% see-through and no view above 3%; otherwise 0.01 stays and only then is `--random-bkgd` worth a
+  run. No chapel run is spent on it before that (decision 8).
+
+**Cost.** Billed on opservemakesalt: $0.28 for `q0-30k-b` and $0.16 for the export-only run.
 
 ### Q6: the phone file, trained on at its own size (2026-11-12)
 
