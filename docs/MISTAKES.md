@@ -28,6 +28,22 @@ Read the checklist before any paid GPU run. Add an entry when something costs cr
 
 ## Log
 
+### 2026-11-12: a launch after a failed copy, again, and ten minutes queued for an L40S, again ($0, about ten minutes)
+
+Two entries below, repeated in one wave of launches. Exporting the chapel's 0.005 twin again needed its saved
+training copied to a new variant folder on the Volume. The copy failed and the launch ran anyway: `q5a-reexport`
+started on an L40S with nothing saved under it, so as a full chapel training run. It was cancelled a minute in (the
+app's log: started 14:33, cancelled 14:34:31) and is not in the day's billing. The second attempt copied only the
+files an export-only run reads, listed them on the Volume first, and its log showed `export` alone. Why the first
+copy failed was not written down before that session ran out of credit.
+Beside it, the second 30k baseline was launched for an L40S only and sat with no container ("waiting to be scheduled
+on a GPU_L40S worker") from 14:30 until it was stopped and launched again with `PLY_EVAL_GPU=L4,L40S`, which had a
+GPU at once.
+**Rule:** both rules exist (2026-11-04, and the checklist). Neither was followed with two launches prepared at once,
+so the rule is one launch, its log read, then the next. An export-only rerun should not need a copy by hand at all:
+`ply_eval.py` should take the variant to export again and check inside the function that its training is there
+(`STATUS.md`, hand-off queue).
+
 ### 2026-11-12: the live worker asked for an L4 only, and a queued call sat through a redeploy (28 minutes, ~$0.13)
 
 The checklist has said "GPU fallback" since 2026-11-04, and `ply_eval.py` has one; the deployed worker did not. The

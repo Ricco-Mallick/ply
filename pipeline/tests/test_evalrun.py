@@ -40,6 +40,12 @@ def test_each_variant_changes_one_thing_against_the_baseline():
     assert diff("q5a") == {"opacity_reg": 0.005} and diff("q5b") == {"opacity_reg": 0.002}
     assert diff("q5c") == {"opacity_reg": 0.001} and diff("q5d") == {"opacity_reg": 0.0}
     assert evalrun.VARIANTS["q5a"]["args"][-2:] == ["--opacity-reg", "0.005"]
+    assert diff("q1") == {"bilateral_grid": True, "exposure_fold": 2000}       # the fold is what makes the grid's twin shippable: one change
+    assert evalrun.VARIANTS["q1"]["args"][-3:] == ["--bilateral-grid", "--exposure-fold", "2000"]
+    assert diff("q1b") == {"exposure_affine": True, "exposure_fold": 2000}     # q1 with the grid cut to what the fold undoes exactly
+    assert evalrun.VARIANTS["q1b"]["args"][-3:] == ["--exposure-affine", "--exposure-fold", "2000"]
+    # the one-cell grid is budgeted like the full one until a run times it, so q1b fits the same function timeout as q1
+    assert evalrun.estimate(evalrun.VARIANTS["q1b"]["args"], "L40S") == evalrun.estimate(evalrun.VARIANTS["q1"]["args"], "L40S")
 
 
 def test_resolve_names_and_the_args_escape_hatch():
@@ -83,7 +89,7 @@ def test_the_small_scenario_has_its_own_saved_solve_container_and_estimate():
     job = evalrun.make_job("drjohnson", "", "q5b", gpus=("L4", "L40S"))
     assert job["src"] == "drjohnson/prep" and (job["cpu"], job["memoryGib"], job["needsIndex"]) == (4, 16, False)
     # every export trains the phone file on for 3k steps, so every estimate counts them; --lite-finetune 0 is the run without
-    assert job["args"] == evalrun.SMALL + ["--opacity-reg", "0.002"] and job["ceilingMin"] == 20
+    assert job["args"] == evalrun.SMALL + ["--opacity-reg", "0.002"] and job["ceilingMin"] == 29   # the function's timeout is q1's
     l4, l40s = job["estimates"]["L4"], job["estimates"]["L40S"]
     assert (l4["fineTuneSteps"], l4["trainMin"], l4["totalMin"], l4["timeoutMin"]) == (3000, 9, 13, 20)
     assert (l40s["trainMin"], l40s["totalMin"], l40s["timeoutMin"]) == (5, 9, 14)
@@ -124,10 +130,30 @@ def test_a_15k_run_with_the_phone_files_3k_is_9_minutes_of_training_and_14_in_al
         evalrun.estimate(["--preset", "high"], "L40S")
 
 
+def test_q1_counts_the_grids_slower_steps_the_fold_and_the_steps_after_it():
+    e = evalrun.estimate(evalrun.VARIANTS["q1"]["args"], "L40S")
+    assert (e["steps"], e["gridSlowdown"], e["exposureFoldSteps"], e["fineTuneSteps"]) == (15000, 1.5, 2000, 3000)
+    # (15000 x 1.5 + 2000 + 3000) steps at the chapel's 28.6 ms; the fold's fit, PLY and second start add 2 min to the 5
+    assert (e["trainMin"], e["overheadMin"], e["totalMin"], e["timeoutMin"]) == (14, 7, 21, 32) and e["usd"] == 0.90 and e["maxUsd"] == 1.38
+    job = evalrun.make_job("drjohnson", "", "q1", gpus=("L4", "L40S"))
+    l4, l40s = job["estimates"]["L4"], job["estimates"]["L40S"]
+    assert (l4["trainMin"], l4["overheadMin"], l4["totalMin"], l4["timeoutMin"], l4["usd"]) == (13, 6, 19, 29, 0.35)
+    assert (l40s["trainMin"], l40s["totalMin"], l40s["timeoutMin"], l40s["usd"]) == (7, 13, 20, 0.49) and job["ceilingMin"] == 29
+    text = evalrun.describe(job)
+    assert "15000 steps at x1.5 for the bilateral grid (an estimate) + 2000 after the exposure fold + 3000 for the phone file" in text
+    assert "6 min restore/export/scoring and the fold" in text and "--bilateral-grid --exposure-fold 2000" in text
+    fold_only = evalrun.estimate(evalrun.BASE + ["--bilateral-grid", "--exposure-fold", "0"], "L40S")    # no steps after it: the fold still takes its time
+    assert (fold_only["exposureFoldSteps"], fold_only["trainMin"], fold_only["overheadMin"]) == (0, 13, 7)
+    for name in ("q0a", "q2", "q6"):                                                 # a run without the options is estimated as before
+        e = evalrun.estimate(evalrun.VARIANTS[name]["args"], "L40S")
+        assert "gridSlowdown" not in e and "exposureFoldSteps" not in e and (e["trainMin"], e["overheadMin"], e["timeoutMin"]) == (9, 5, 21), name
+
+
 def test_the_function_timeout_follows_the_slowest_allowed_gpu():
-    assert evalrun.default_ceiling_min(("L40S",)) == 21 and evalrun.default_ceiling_min(("L40S", "L4")) == 35
+    assert evalrun.default_ceiling_min(("L40S",)) == 32 and evalrun.default_ceiling_min(("L40S", "L4")) == 51     # q1 is the longest variant
     job = evalrun.make_job("chapel", "/chapel/high/job/", "q0a")
-    assert job["src"] == "chapel/high/job" and job["ceilingMin"] == 21 and set(job["estimates"]) == {"L40S"}
+    assert job["src"] == "chapel/high/job" and job["ceilingMin"] == 32 and set(job["estimates"]) == {"L40S"}
+    assert job["estimates"]["L40S"]["timeoutMin"] == 21                              # its own stop-loss is what it was
     with pytest.raises(ValueError, match="PLY_EVAL_TIMEOUT_MIN"):
         evalrun.make_job("chapel", "chapel/high/job", "q0a", gpus=("L40S", "L4"), ceiling_min=20)
     both = evalrun.make_job("chapel", "chapel/high/job", "q0a", gpus=("L40S", "L4"))
@@ -141,6 +167,15 @@ def test_plan_prints_what_would_run_without_modal(capsys):
     for needle in ("q5a", "--opacity-reg 0.005", "--only train", "--only export", "stop-loss 21 min", "$0.60", "15000 steps + 3000 for the phone file", "data/images -> ../dense/images",
                    "dense/images/", "frames/", "/vol/chapel/eval/q5a/"):
         assert needle in text, needle
+
+
+def test_the_plan_follows_the_scenario_the_launch_would_use(capsys, monkeypatch):
+    monkeypatch.setenv("PLY_EVAL_SCENARIO", "drjohnson")
+    assert evalrun.main(["plan", "--variant", "q1"]) == 0
+    text = capsys.readouterr().out
+    for needle in ("/vol/drjohnson/eval/q1/", "--cap-max 600000 --holdout 8 --holdout-block 10 --bilateral-grid --exposure-fold 2000", "stop-loss 20 min"):
+        assert needle in text, needle
+    assert evalrun.main(["plan", "--variant", "q1", "--scenario", "chapel"]) == 0 and "/vol/chapel/eval/q1/" in capsys.readouterr().out
 
 
 def test_the_pure_half_never_imports_modal():
@@ -359,6 +394,31 @@ def test_metrics_carry_the_phone_files_fine_tune_next_to_the_cut_down_score():
     m = evalrun.assemble(job, report, gpu=gpu, seconds={}, sizes={}, invocation=evalrun.invocation_record(1_800_000_000, 900.0, gpu, ["export"], []))
     assert "shipped the untuned one (CUDA out of memory)" in evalrun.summary(m)
     assert not evalrun.savable(Path("train-lite/ckpts/ckpt_2999_rank0.pt")) and evalrun.savable(Path("eval/lite/val_stats.json"))
+
+
+def test_metrics_carry_the_exposure_folds_fit_and_the_summary_shows_it_with_the_viewers_brightness():
+    gpu = {"name": "NVIDIA L40S", "memoryMiB": 46068, "priced": "L40S"}
+    inv = evalrun.invocation_record(1_800_000_000, 900.0, gpu, ["train", "export"], [])
+    job = evalrun.make_job("chapel", "chapel/high/job", "q1")
+    report = finished_report()
+    assert "exposureFold" not in evalrun.assemble(job, report, gpu=gpu, seconds={}, sizes={}, invocation=inv)
+    assert "exposure fold" not in evalrun.summary(evalrun.assemble(job, report, gpu=gpu, seconds={}, sizes={}, invocation=inv))
+    fold = {"steps": 2000, "folded": True, "settled": True, "views": 44, "pixels": 5_000_000, "usable": 0.83, "condition": 512.3,
+            "matrix": [[0.84, 0.03, -0.02], [0.02, 0.81, 0.04], [-0.03, 0.05, 0.86]], "offset": [0.02, -0.01, 0.015], "gains": [0.85, 0.87, 0.88],
+            "maeBefore": 0.07, "maeAfter": 0.03, "brightnessBefore": 1.21, "brightnessAfter": 1.0, "trained": {"eval": {"psnr": 23.0}}}
+    report["train"]["exposureFold"] = fold
+    m = evalrun.assemble(job, report, gpu=gpu, seconds={}, sizes={}, invocation=inv)
+    assert m["complete"] and m["exposureFold"] == fold and m["args"][-3:] == ["--bilateral-grid", "--exposure-fold", "2000"]
+    assert ("  exposure fold: gains 0.85/0.87/0.88 fitted on 44 training views, brightness there x1.21 -> x1.0 of the photos, "
+            "then 2000 steps without the appearance model; viewer brightness desktop x1.0") in evalrun.summary(m)
+    report["train"]["exposureFold"] = {"steps": 2000, "folded": False, "settled": False, "views": 3, "pixels": 900, "why": "too little to fit on"}
+    m = evalrun.assemble(job, report, gpu=gpu, seconds={}, sizes={}, invocation=inv)
+    assert "  exposure fold: NOT folded (too little to fit on); viewer brightness desktop x1.0" in evalrun.summary(m)
+    report["train"]["exposureFold"] = {**fold, "settled": False, "why": "the 2000 steps after the fold failed: CUDA out of memory"}
+    m = evalrun.assemble(job, report, gpu=gpu, seconds={}, sizes={}, invocation=inv)
+    assert "no steps after it (the 2000 steps after the fold failed: CUDA out of memory)" in evalrun.summary(m)
+    assert not evalrun.savable(Path("train/settle/ckpts/ckpt_1999_rank0.pt")) and not evalrun.savable(Path("train/folded.ply"))
+    assert evalrun.savable(Path("eval/trained/val_stats.json"))                    # the scores of the model before the fold are kept
 
 
 def test_a_stopped_run_still_gets_metrics_that_say_what_is_missing():

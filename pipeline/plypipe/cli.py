@@ -128,6 +128,13 @@ def build_parser() -> argparse.ArgumentParser:
     g.add_argument("--depth-loss", action="store_true", help="supervise depth at the SfM track points (A/B option)")
     g.add_argument("--bilateral-grid", action="store_true",
                    help="exposure/white balance per photo with bilateral grids instead of PPISP (the twin keeps the photos' brightness)")
+    g.add_argument("--exposure-affine", action="store_true",
+                   help="exposure/white balance as one affine colour transform per photo (the bilateral grid at 1x1x1), no more "
+                        "than --exposure-fold can fold into the splats (A/B option)")
+    g.add_argument("--exposure-fold", type=int, metavar="STEPS",
+                   help="after training (meant for --bilateral-grid): fit the colour map from the twin's own colours to the photos on "
+                        "training views, fold it into the splats, and train on for STEPS with no appearance model, so the viewer "
+                        "shows the photos' brightness (A/B option; 0 folds without the steps)")
     g.add_argument("--random-bkgd", action="store_true", help="random training backgrounds: no see-through splats")
     g.add_argument("--scale-mcmc", action="store_true",
                    help="scale gsplat's MCMC noise and scale_reg to the room size (A/B: no gain measured on Dr Johnson)")
@@ -144,6 +151,9 @@ def build_parser() -> argparse.ArgumentParser:
                    help="export: train the phone file on for this many steps at its own splat count and SH degree, and ship it "
                         "when the viewer shows it better than the one it started from. Default 3000, when the phone file has "
                         "fewer splats or SH bands than the twin and a GPU can score it; 0 disables")
+    g.add_argument("--dense-occupancy", action="store_true",
+                   help="export: rebuild the walking grid from the twin's own depth (5 cm cells; walls the camera solve has no "
+                        "points on) and use it when it walks at least as well as the sparse grid. Needs a GPU; off by default")
     return ap
 
 

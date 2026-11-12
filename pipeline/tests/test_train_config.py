@@ -223,6 +223,30 @@ def test_bilateral_grid_replaces_ppisp_and_random_backgrounds_reach_gsplat():
     assert cfg.post_processing == "ppisp" and info["ppisp"] is True
 
 
+def test_exposure_affine_is_the_bilateral_grid_cut_to_one_affine_transform_per_photo():
+    import dataclasses
+
+    @dataclasses.dataclass
+    class NewConfig:
+        strategy: object = None
+        init_opa: float = 0.1
+        init_scale: float = 1.0
+        opacity_reg: float = 0.0
+        scale_reg: float = 0.0
+        post_processing: object = None
+        app_opt: bool = False
+
+    st2 = types.SimpleNamespace(Config=NewConfig, MCMCStrategy=FakeMCMC)
+    cfg, info = train_launcher.build_config(st2, "/d", "/r", "high", None, True, exposure_affine=True)
+    # the trainer's own grid at one cell: exactly what the exposure fold can undo (docs/EXPERIMENTS.md, Q1)
+    assert cfg.post_processing == "bilateral_grid" and cfg.bilateral_grid_shape == (1, 1, 1)
+    assert cfg.bilateral_grid_fused is False          # the one-cell grid runs on the pure-torch lib_bilagrid, the path verified on a CPU
+    assert info["appearance"] == "bilateral_grid" and info["exposureAffine"] is True and info["ppisp"] is False
+    cfg, info = train_launcher.build_config(st2, "/d", "/r", "high", None, True, bilateral_grid=True)
+    assert not hasattr(cfg, "bilateral_grid_shape") and "exposureAffine" not in info   # --bilateral-grid keeps the trainer's default shape
+    assert "exposureAffine" not in train_launcher.build_config(st2, "/d", "/r", "high", None, True)[1]
+
+
 # ------------------------------------------------------------------ the held-out block and opacity options
 
 def test_defaults_are_exactly_what_the_launcher_built_before_the_block_and_opacity_options():
@@ -281,6 +305,7 @@ def test_train_stage_command_line_is_unchanged_without_the_new_options(tmp_path,
     cmd = _stage_command(tmp_path, monkeypatch)
     assert [c for c in cmd if c.startswith("--")] == ["--examples", "--data", "--result", "--preset", "--iterations", "--cap-max",
                                                       "--antialiased", "--holdout"]
+    assert _stage_command(tmp_path, monkeypatch, exposure_fold=None) == cmd
     cmd = _stage_command(tmp_path, monkeypatch, holdout_block=0, opacity_reg=None)
     assert "--holdout-block" not in cmd and "--opacity-reg" not in cmd and "--frames-index" not in cmd
 
@@ -292,6 +317,12 @@ def test_train_stage_passes_the_block_and_opacity_options_on(tmp_path, monkeypat
     assert cmd[cmd.index("--opacity-reg") + 1] == "0.005" and cmd[cmd.index("--iterations") + 1] == "15000"
     with pytest.raises(RuntimeError, match="needs --holdout"):
         _stage_command(tmp_path, monkeypatch, holdout_block=20, holdout=0)
+
+
+def test_train_stage_passes_the_affine_exposure_model_on(tmp_path, monkeypatch):
+    cmd = _stage_command(tmp_path, monkeypatch, exposure_affine=True)
+    assert "--exposure-affine" in cmd and "--bilateral-grid" not in cmd
+    assert "--exposure-affine" not in _stage_command(tmp_path, monkeypatch)
 
 
 def test_train_report_carries_both_score_sets_the_block_images_and_the_per_view_file(tmp_path):
@@ -387,3 +418,134 @@ def test_the_fine_tune_runs_on_the_jobs_own_split_and_returns_the_trainers_model
     with pytest.raises(RuntimeError, match="left no PLY"):
         monkeypatch.setattr(train_stage, "run", lambda *a, **k: None)
         train_stage.finetune(ctx, job / "scene_lite.ply", 3000, 2)
+
+
+# ------------------------------------------------------------------ the exposure fold (plypipe.exposure, variant Q1)
+
+FIT = {"views": 44, "pixels": 5_000_000, "usable": 0.83, "condition": 512.3, "matrix": [[0.84, 0.03, -0.02], [0.02, 0.81, 0.04], [-0.03, 0.05, 0.86]],
+       "offset": [0.02, -0.01, 0.015], "gains": [0.85, 0.87, 0.88], "maeBefore": 0.07, "maeAfter": 0.03, "brightnessBefore": 1.21, "brightnessAfter": 1.0}
+
+
+def _fold_job(tmp_path, monkeypatch, fit, settle_fails=False, names_the_block=True, **opts):
+    """run_stage with a stand-in trainer (it leaves a model, its scores and the block's list) and a stand-in fit.
+    Returns the stage's report, the launcher's command lines, the fit's calls and the job folder."""
+    import json
+    from pathlib import Path
+    from test_finetune import write_model
+    from plypipe import exposure
+    from plypipe.log import Log
+    from plypipe.stages import train as train_stage
+    from plypipe.util import Ctx
+    (tmp_path / "gs" / "examples").mkdir(parents=True, exist_ok=True)
+    (tmp_path / "gs" / "examples" / "simple_trainer.py").write_text("")
+    job, cmds, fits = tmp_path / "job", [], []
+
+    def trainer(cmd, ctx, stage, **kw):
+        cmd = [str(c) for c in cmd]
+        cmds.append(cmd)
+        result, steps, settle = Path(cmd[cmd.index("--result") + 1]), int(cmd[cmd.index("--iterations") + 1]), "--from-ply" in cmd
+        if settle and settle_fails:
+            raise RuntimeError("python exited with 1; last output:\nCUDA out of memory")
+        for d in ("ply", "stats", "renders"):
+            (result / d).mkdir(parents=True)
+        write_model(result / "ply" / f"point_cloud_{steps - 1}.ply", n=6, k=15, offset=500.0 if settle else 0.0, normals=False)
+        (result / "ply_preset.json").write_text(json.dumps({"maxSteps": steps, "appearance": None if settle else "bilateral_grid"}))
+        if names_the_block:
+            (result / "ply_block.json").write_text(json.dumps({"clip": "a.mp4", "frames": ["000004.jpg", "000005.jpg"], "seconds": 0.5}))
+        for name, psnr in (("val", 26.0), ("block", 23.0)):
+            (result / "stats" / f"{name}_step{steps - 1}.json").write_text(json.dumps({"psnr": psnr + settle, "ssim": 0.8, "lpips": 0.3, "num_GS": 6}))
+            (result / "renders" / f"{name}_step{steps - 1}_0000.png").write_bytes(b"png")
+        (result / "stats" / f"per_view_step{steps - 1}.json").write_text(json.dumps({"step": steps - 1, "sets": {}}))
+
+    def fitted(ply, data_dir, every, block, antialiased=True):
+        fits.append((Path(ply), Path(data_dir), every, list(block), antialiased))
+        if isinstance(fit, Exception):
+            raise fit
+        return fit
+
+    monkeypatch.setattr(train_stage, "run", trainer)
+    monkeypatch.setattr(exposure, "fit_views", fitted)
+    ctx = Ctx(out=job, log=Log(job, quiet=True), opts={"gsplat_dir": str(tmp_path / "gs"), "preset": "high", "iterations": 300, **opts})
+    return train_stage.run_stage(ctx), cmds, fits, job
+
+
+def test_the_cli_takes_the_exposure_folds_steps_and_leaves_it_off_by_default():
+    from plypipe import cli
+    parse = lambda *args: cli.build_parser().parse_args(["run", "in", "--out", "out", *args])
+    assert parse().exposure_fold is None and parse("--bilateral-grid").exposure_fold is None
+    assert parse("--bilateral-grid", "--exposure-fold", "2000").exposure_fold == 2000 and parse("--exposure-fold", "0").exposure_fold == 0
+
+
+def test_exposure_fold_trains_as_before_then_folds_the_fitted_map_and_settles_without_an_appearance_model(tmp_path, monkeypatch):
+    import json
+    import numpy as np
+    from plypipe import exposure, finetune
+    opts = {"bilateral_grid": True, "holdout": 8, "holdout_block": 10, "opacity_reg": 0.005, "pose_opt": True, "depth_loss": True}
+    plain = _stage_command(tmp_path, monkeypatch, iterations=300, **opts)
+    report, cmds, fits, job = _fold_job(tmp_path, monkeypatch, FIT, exposure_fold=200, **opts)
+    train = job / "train"
+    assert len(cmds) == 2 and cmds[0] == plain and "--bilateral-grid" in plain              # the training itself is what it was without the fold
+    # the fit sees the model the trainer wrote, the job's hold-out and the block the trainer named
+    assert fits == [(train / "ply" / "point_cloud_299.ply", job / "data", 8, ["000004.jpg", "000005.jpg"], True)]
+    was, now = finetune.read_splats(train / "ply" / "point_cloud_299.ply", 3), finetune.read_splats(train / "folded.ply", 3)
+    sh0, shN = exposure.fold(was["sh0"], was["shN"], FIT["matrix"], FIT["offset"])
+    assert np.array_equal(now["sh0"], sh0) and np.array_equal(now["shN"], shN) and np.array_equal(now["means"], was["means"])
+    cmd = cmds[1]
+    value = lambda flag: cmd[cmd.index(flag) + 1]
+    assert cmd[1:3] == ["-m", "plypipe.train_launcher"] and value("--result") == str(train / "settle") and value("--from-ply") == str(train / "folded.ply")
+    assert (value("--iterations"), value("--sh-degree"), value("--holdout"), value("--holdout-block"), value("--opacity-reg")) == ("200", "3", "8", "10", "0.005")
+    assert "--no-ppisp" in cmd and "--antialiased" in cmd and not {"--bilateral-grid", "--ppisp", "--pose-opt", "--depth-loss", "--cap-max"} & set(cmd)
+    assert (job / "scene.ply").read_bytes() == (train / "settle" / "ply" / "point_cloud_199.ply").read_bytes()   # the settled model ships
+    fold = report["exposureFold"]
+    assert {k: fold[k] for k in FIT} == FIT and (fold["steps"], fold["folded"], fold["settled"]) == (200, True, True) and "why" not in fold
+    assert fold["fitSeconds"] >= 0 and fold["settleSeconds"] >= 0
+    # the stage's scores are the shipped model's; the trainer's scores of the model before the fold sit beside the fit
+    assert report["eval"]["psnr"] == 27.0 and report["evalBlock"]["psnr"] == 24.0 and report["perView"] == "eval/per_view.json"
+    assert fold["trained"]["eval"]["psnr"] == 26.0 and fold["trained"]["evalBlock"]["psnr"] == 23.0
+    assert json.loads((job / "eval" / "val_stats.json").read_text())["psnr"] == 27.0 and json.loads((job / "eval" / "trained" / "val_stats.json").read_text())["psnr"] == 26.0
+    assert report["fromStep"] == 299 and report["maxSteps"] == 300 and report["appearance"] == "bilateral_grid" and report["blockImages"] == ["000004.jpg", "000005.jpg"]
+    json.dumps(report)
+
+
+def test_without_the_option_nothing_is_fitted_and_the_report_is_what_it_was(tmp_path, monkeypatch):
+    report, cmds, fits, job = _fold_job(tmp_path, monkeypatch, FIT, bilateral_grid=True, holdout=8)
+    assert len(cmds) == 1 and fits == [] and "exposureFold" not in report and not (job / "train" / "folded.ply").exists()
+    assert (job / "scene.ply").read_bytes() == (job / "train" / "ply" / "point_cloud_299.ply").read_bytes() and report["eval"]["psnr"] == 26.0
+    assert sorted(report) == ["appearance", "eval", "fromStep", "maxSteps", "plan", "ply", "sizeMB"]
+
+
+def test_exposure_fold_0_ships_the_folded_model_without_training_on(tmp_path, monkeypatch):
+    report, cmds, fits, job = _fold_job(tmp_path, monkeypatch, FIT, bilateral_grid=True, holdout=8, exposure_fold=0)
+    fold = report["exposureFold"]
+    assert len(cmds) == 1 and fits[0][2:] == (8, [], True) and (fold["steps"], fold["folded"], fold["settled"]) == (0, True, False)
+    assert "why" not in fold and "trained" not in fold and report["eval"]["psnr"] == 26.0      # the trainer scored the model before the fold
+    assert (job / "scene.ply").read_bytes() == (job / "train" / "folded.ply").read_bytes() != (job / "train" / "ply" / "point_cloud_299.ply").read_bytes()
+
+
+@pytest.mark.parametrize("fit, why", [
+    ({"views": 3, "pixels": 900, "usable": 0.01, "why": "too little to fit on: 900 usable pixels in 3 views (needs 100000 in 8)"}, "too little to fit on"),
+    (None, "not fitted: needs a GPU with gsplat, and PINHOLE cameras"),
+    (RuntimeError("CUDA out of memory"), "the fit failed: CUDA out of memory"),
+])
+def test_a_fit_that_is_refused_or_cannot_be_made_ships_the_model_as_trained_and_says_why(tmp_path, monkeypatch, fit, why):
+    report, cmds, fits, job = _fold_job(tmp_path, monkeypatch, fit, bilateral_grid=True, holdout=8, exposure_fold=200)
+    fold = report["exposureFold"]
+    assert len(cmds) == 1 and len(fits) == 1 and not (job / "train" / "folded.ply").exists()
+    assert (fold["folded"], fold["settled"], fold["steps"]) == (False, False, 200) and fold["why"].startswith(why) and report["eval"]["psnr"] == 26.0
+    assert (job / "scene.ply").read_bytes() == (job / "train" / "ply" / "point_cloud_299.ply").read_bytes()
+    if isinstance(fit, dict):
+        assert fold["views"] == 3 and fold["usable"] == 0.01                                # what the refusal rests on is in the report
+
+
+def test_a_block_the_trainer_did_not_name_is_never_guessed_at(tmp_path, monkeypatch):
+    report, cmds, fits, job = _fold_job(tmp_path, monkeypatch, FIT, names_the_block=False, bilateral_grid=True, holdout=8, holdout_block=10, exposure_fold=200)
+    assert fits == [] and len(cmds) == 1 and report["exposureFold"]["folded"] is False
+    assert "left no list of the held-out block's views" in report["exposureFold"]["why"]
+
+
+def test_steps_after_the_fold_that_fail_ship_the_folded_model_and_say_so(tmp_path, monkeypatch):
+    report, cmds, fits, job = _fold_job(tmp_path, monkeypatch, FIT, settle_fails=True, bilateral_grid=True, holdout=8, exposure_fold=200)
+    fold = report["exposureFold"]
+    assert len(cmds) == 2 and (fold["folded"], fold["settled"]) == (True, False) and "CUDA out of memory" in fold["why"]
+    assert fold["why"].startswith("the 200 steps after the fold failed") and report["eval"]["psnr"] == 26.0 and "trained" not in fold
+    assert (job / "scene.ply").read_bytes() == (job / "train" / "folded.ply").read_bytes()

@@ -17,6 +17,10 @@ count and with the SH bands it ships (plypipe.finetune), whenever it has fewer s
 GPU can score it, and is shipped when the viewer shows it better than the one it started from: +0.80 dB on the chapel,
 +0.73 and +0.52 dB on Dr Johnson (docs/EXPERIMENTS.md, Q6). --lite-max sets the phone file's splat count.
 
+With --dense-occupancy and a GPU, the walking grid is rebuilt from the cleaned model's own depth (plypipe.dense,
+stages/occupancy.from_depth) and replaces the camera solve's grid when it walks at least as well. Off by default
+until a GPU run has confirmed it; a failure there is a warning and the grid stays as it was.
+
 Last, plypipe.topview renders the cleaned model from above (topview.webp, recorded as scene.json's `topview` block)
 for the viewer's minimap. Failing to do so is a warning, never a failed export.
 
@@ -400,6 +404,7 @@ def run_stage(ctx: Ctx) -> dict:
     shipped = _score_shipped(ctx, st, {"full": full, "lite": lite}, holdout, aa) if viewer else None
     needed_src.unlink(missing_ok=True)
     update_scene(ctx, {"splat": {"file": "scene.spz", "lite": "scene_lite.spz", "format": "spz"}})
+    walk_grid = _dense_occupancy(ctx, cleaned, holdout, aa) if ctx.opt("dense_occupancy") else None
     top = _topview(ctx, cleaned if cleaned.exists() else full)
     return {"spz": full.name, "spzMB": round(full.stat().st_size / 2**20, 2), "lite": lite.name, "liteMB": round(lite.stat().st_size / 2**20, 2),
             "cropBox": box, "cropDropped": drop_crop, "gaussiansIn": total, "gaussiansOut": n, "floaterFilter": floaters, "liteGaussians": lite_n,
@@ -409,7 +414,27 @@ def run_stage(ctx: Ctx) -> dict:
             "floaterClean": clean_stats, "clippedFraction": clipped, **({"viewerEval": viewer} if viewer else {}),
             **({"roomCrop": room_crop} if room_crop else {}),
             "shRestore": sh, **({"shippedEval": shipped} if shipped else {}),
-            **({"cleanupChoice": choice} if choice else {}), **({"topview": top} if top else {})}
+            **({"cleanupChoice": choice} if choice else {}), **({"topview": top} if top else {}),
+            **({"denseOccupancy": walk_grid} if walk_grid else {})}
+
+
+def _dense_occupancy(ctx: Ctx, ply: Path, holdout: int, aa: bool) -> dict:
+    """--dense-occupancy: the walking grid rebuilt from the depth of the twin as the viewer shows it
+    (stages/occupancy.from_depth), kept only when it walks at least as well as the grid from the camera solve.
+    Opt-in until a GPU run has confirmed it on a real twin. Whatever goes wrong in it, the export stands with the
+    grid it had; without a GPU nothing is built and the report says so."""
+    t0 = time.time()
+    try:
+        from plypipe.stages import occupancy
+        out = occupancy.from_depth(ctx, ply, holdout, aa)
+    except Exception as e:
+        out = {"used": "sparse", "why": f"failed: {str(e)[-160:]}"}
+    if out["used"] == "depth":
+        ctx.log.emit("export", "progress", f"walking grid from depth: {out['views']} views, capture positions {out['walk']['cameras'] or 0:.0%} "
+                     f"walkable, {out['walk']['standableM2']} m2 to stand on ({out['sparseWalk']['standableM2']} m2 on the sparse grid)")
+    else:
+        ctx.log.emit("export", "warn", f"walking grid from depth not used: {out['why']}")
+    return {**out, "seconds": round(time.time() - t0, 1)}
 
 
 def _topview(ctx: Ctx, source: Path) -> dict | None:

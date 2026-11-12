@@ -33,10 +33,13 @@ Nothing. No Modal app is running on either account and no workflow is in progres
 - **Chapel:** noise floor from two identical baselines 0.14 dB and 0.0011 LPIPS on the every-30th hold-out.
 - **Opacity regulariser.** At 15k steps 0.002 wins on both scenes (chapel +0.55 dB and −0.033 LPIPS, Dr Johnson
   +0.10 dB and −0.023 LPIPS), and the trend ends there: 0.001 is no better and none is worse. At 30k steps on
-  Dr Johnson it is a trade between sharpness and fidelity, and 0.005 is the better balance (see `EXPERIMENTS.md`).
-  **The trainer's default stays at 0.01.**
+  Dr Johnson, with the floor now measured from two baselines (0.09 dB, 0.002 LPIPS), 0.005 clears the ship rule
+  (LPIPS −0.012, nothing else outside the floor) and 0.002 loses SSIM. On the chapel at 15k the 0.005 model has 1.8%
+  see-through pixels (14% in the worst view) before any export step, against 0.02% and 0.13% for the two baselines.
+  **The trainer's default stays at 0.01** (decision 10); 0.005 is a candidate for the combined run of phase 7.
 - **Export** shipped the 0.002 twin with 7% of its pixels see-through. Fixed: the value filter is loosened when the
-  viewer pays for it (27.72 to 29.47 dB on the same model). The chapel's exports have not been run again.
+  viewer pays for it (27.72 to 29.47 dB on the same model). The chapel's 0.005 twin, exported again under that rule,
+  is the same file: its see-through pixels are in the trained model, which export cannot repair.
 - **Sparse depth loss (`q4a`):** the NaN is fixed and the fix holds on a GPU; no gain on Dr Johnson.
   **Pose refinement (`q2`):** no gain on the chapel.
 - **Phone file (`q6`):** trained on for 3,000 steps at its own size, it gains 0.80 dB on the chapel (800k splats,

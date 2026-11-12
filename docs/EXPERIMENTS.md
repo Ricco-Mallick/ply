@@ -168,6 +168,66 @@ and all of `q5a-30k` fall on 2026-11-12 and were not in the billing report yet: 
 estimates for the eleven runs billed so far add up to $1.75: a launch pays $0.05 to $0.08 before its function starts,
 which the estimate leaves out.
 
+### The floor at 30k, and where the chapel's see-through pixels come from (2026-11-12)
+
+Two runs to close the question above, both on an L40S at code `118b29e`: the 30k baseline a second time
+(`q0-30k-b`, 6.4 minutes, billed $0.31) and the chapel's 0.005 twin exported again under the corrected filter rule
+(`q5a-reexport`: the saved `q5a` training with only `export` run again, 2.5 minutes, billed $0.16).
+
+**The floor at 30k on Dr Johnson**, and each setting against the mean of the two baselines:
+
+| metric | q0-30k | q0-30k-b | floor | 0.005 (`q5a-30k`) | 0.002 (`q5b-30k`) |
+|---|---:|---:|---:|---:|---:|
+| every cc-PSNR | 29.27 | 29.36 | 0.09 | −0.02 | −0.01 |
+| every cc-SSIM | 0.8881 | 0.8882 | 0.0001 | −0.00015 | −0.0042 |
+| every cc-LPIPS | 0.2218 | 0.2198 | 0.0020 | −0.0117 | −0.0179 |
+| block cc-PSNR | 27.52 | 27.42 | 0.11 | −0.06 | −0.17 |
+| block cc-SSIM | 0.8656 | 0.8609 | 0.0047 | −0.0034 | −0.0159 |
+| block cc-LPIPS | 0.2507 | 0.2515 | 0.0008 | −0.0095 | −0.0123 |
+| viewer, desktop file | 29.21 | 29.29 | 0.08 | −0.01 | +0.17 |
+| viewer, phone file | 28.20 | 28.36 | 0.16 | +0.21 | +0.48 |
+| see-through (worst view) | 0.36% (2.6%) | 0.08% (0.9%) | 0.28 points | 0.04% (0.2%) | 0.23% (1.5%) |
+
+- **0.005 clears the ship rule at 30k.** LPIPS falls by 0.012 on the every-8th set and by 0.010 on the block, several
+  times the floor, and nothing else moves by more than the floor (SSIM on the every-8th set is half a unit of the last
+  stored digit under the mean). The loss on the block that the table above showed (−0.11 dB, −0.006 SSIM) is the size
+  of the difference between two identical baselines (0.11 dB, 0.0047). Its see-through pixels are the lowest of the
+  four runs.
+- **0.002 does not.** SSIM falls by 0.004 on the every-8th set and by 0.016 on the block, and the block loses
+  0.17 dB: all beyond the floor. It is dropped.
+- **See-through is the noisiest reading here.** Two identical baselines gave 0.36% and 0.08% (2.6% and 0.9% in the
+  worst view). One run cannot place a setting on that scale.
+
+**The chapel's 0.005 twin, exported again: the same file.** 1,430,582 splats, 25.24 dB in the viewer, 1.82% of its
+pixels see-through and 14.6% in the worst view, as before. The corrected rule changes nothing because this export
+did nothing wrong: the trained model itself, before any filter, already renders see-through
+(`export.cleanupChoice.reference`, 12 held-out views, the splats covering less than 90% of a pixel).
+
+| chapel run, 15k | opacity regulariser | trained model, see-through (worst view) | shipped file |
+|---|---:|---:|---:|
+| q0a | 0.01 | 0.02% (0.1%) | 0.02% (0.2%) |
+| q0b | 0.01 | 0.13% (1.5%) | 0.14% (1.5%) |
+| q5a | 0.005 | 1.76% (14.1%) | 1.82% (14.6%) |
+| q5b | 0.002 | 0.37% (2.8%) | 0.40% (3.0%) |
+
+On Dr Johnson the see-through pixels of the 0.002 twin were the export's doing and the fix removed them. On the
+chapel they are training's: with the weaker regulariser the model has gaps that the stronger one closes, 13 times the
+difference between the two baselines at 0.005 and 3 times at 0.002. One run each, so the order of the two says
+nothing. A likely cause, not tested: the regulariser is what feeds MCMC's relocation (a splat pushed under the
+opacity threshold is moved to where the model is dense), so a weaker one moves fewer splats onto surfaces that began
+with few, and 15k steps on a 2M-splat room are not enough to cover them otherwise. Dr Johnson at 30k, where 0.005
+has the fewest see-through pixels, fits that.
+
+**Decision (plan, decision 10): the default stays at 0.01.** 0.005 is a gain on the small scene at both lengths, but
+a default has to hold on the demo scene, and export cannot repair a hole that training left. Another 15k chapel run
+would not settle it: a clean repeat would still leave one run in two with a hole. A full-length chapel run would, and
+decision 8 puts that after the rest of the plan, so 0.005 goes to the combined run of phase 7 as a candidate, gated
+on see-through no higher than the baseline's. The 3M cap is not run: it was conditional on 85% of the splats
+surviving export, and the chapel keeps 72% at 0.005 and 80% at 0.002.
+
+**Cost.** opservemakesalt's billing for 2026-11-12 rose from $1.59 to $2.06 with these two runs. Two launches that
+went wrong beside them billed nothing (`MISTAKES.md`, 2026-11-12).
+
 ### Q6: the phone file, trained on at its own size (2026-11-12)
 
 One run, `q6` on Dr Johnson (L40S, code `c055ad7`): the baseline's training, then an export with `--lite-max 240000
@@ -287,3 +347,37 @@ fine-tuned file scored 19.21 dB against 17.69 dB, but with 5.6% of its pixels se
 the one point the export allows. A 2,000-step model of a 30-second clip is not a twin (the gate fails it as `tiny`),
 so this shows the path and the guard on the worker, not the gain. The GPU type the job got is not in its report.
 Not yet seen on the worker: a phone file of 800k splats on an L4, in time and in memory.
+
+### Q1: exposure correction, folded back (2026-11-12)
+
+`--exposure-fold STEPS` (`plypipe/exposure.py`): after training with an appearance model, one affine colour map from
+the twin's own render to the training photos is fitted on training views (pixels the model covers and the photo did
+not clip), checked, folded into the splats' SH colours, and the model trains on for STEPS with no appearance model.
+One run, `q1` on Dr Johnson (`--bilateral-grid --exposure-fold 2000`, L40S, code `514233f`, 7.9 minutes, billed
+$0.33), against the mean of `q0a` and `q0b`:
+
+| | every cc-PSNR | every cc-SSIM | every cc-LPIPS | block cc-PSNR | block cc-SSIM | block cc-LPIPS | viewer desktop | brightness | see-through (worst view) | splats kept |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| baseline mean | 29.25 | 0.8835 | 0.2412 | 27.58 | 0.8609 | 0.2655 | 29.37 | ×1.014 | 0.27% (2.5%) | 74% (0.44M) |
+| q1 | 28.75 | 0.8800 | 0.2427 | 27.45 | 0.8597 | 0.2628 | 28.47 | ×1.006 | 0.08% (0.8%) | 87% (0.52M) |
+| change | −0.50 | −0.0035 | +0.0015 | −0.12 | −0.0012 | −0.0027 | −0.90 | | | |
+| floor | 0.02 | 0.0009 | 0.0004 | 0.05 | 0.0022 | 0.0029 | 0.01 | | | |
+
+- **The mechanism works on a GPU.** The map was fitted on 73 training views (18.8M pixels, 88% of those rendered),
+  folded, and the 2,000 steps ran; the viewer shows the twin at ×1.006 of the photos' brightness. The fit took 13 s
+  and the steps 65 s including the trainer's second start. A step with the grid costs 1.6 times a plain one (255 s
+  for 15,000 against 159 s).
+- **It loses 0.50 dB on held-out views and 0.90 dB in the viewer.** Dr Johnson's photos do not differ in exposure,
+  so this is what the method costs where there is nothing to correct. Q1 as built is not shipped and is not repeated
+  on the chapel.
+- **Why: the grid leaves free far more than one colour map.** The model as it left training, shown without its
+  grid, scores 26.92 dB on the every-8th set, 2.3 dB under the baseline, and that score already corrects colour per
+  view. The fitted map moves the error on the fitted pixels only from 0.0347 to 0.0337, and it mixes channels (red
+  takes −0.26 of green). What recovers the model is the training after the fold: 26.92 to 28.75 dB in 2,000 steps,
+  and the phone file, trained 3,000 more at export, reads 28.94 dB. A bilateral grid is 16×16×8 cells of affine
+  transforms per photo, enough to carry low-frequency image content that the splats then never learn.
+- **Next: `q1b`, an appearance model no larger than what the fold undoes.** One affine colour transform per photo:
+  the trainer's own grid at 1×1×1 (`--exposure-affine`). On a CPU with the pinned trainer, a perturbed 1×1×1 grid is
+  one affine map of its input to 2e-7, where the default grid leaves a residual of 0.23. It can absorb a photo's
+  exposure and white balance and nothing else, so the fold should return the model to the photos' colours with
+  little left for the extra steps to repair.
