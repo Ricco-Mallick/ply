@@ -68,7 +68,8 @@ def finetune(ctx: Ctx, ply: Path, steps: int, sh_degree: int, stage: str = "expo
     cmd = launcher(ctx, result) + ["--no-ppisp", "--from-ply", str(ply), "--iterations", str(steps), "--sh-degree", str(sh_degree), *flags]
     if ctx.opt("random_bkgd"):
         cmd.append("--random-bkgd")
-    run(cmd, ctx, stage, env=launcher_env(), progress_every=50)
+    # no part-way PLYs: the worker asks for them for its live view of the train stage, and nothing shows these
+    run(cmd, ctx, stage, env={**launcher_env(), "PLY_LIVE_SNAPSHOTS": ""}, progress_every=50)
     plys = sorted((result / "ply").glob("point_cloud_*.ply"), key=lambda p: int(p.stem.rsplit("_", 1)[1]))
     if not plys:
         raise RuntimeError(f"the fine-tune finished but left no PLY in {result / 'ply'}")

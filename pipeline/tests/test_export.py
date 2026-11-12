@@ -69,6 +69,8 @@ def test_export_writes_full_and_lite_spz_and_crops(tmp_path):
     assert (tmp_path / "scene_lite.spz").stat().st_size < (tmp_path / "scene.spz").stat().st_size
     assert rep["shRestore"]["full"]["restored"] and rep["shRestore"]["full"]["shDegree"] == 3
     assert rep["shRestore"]["lite"]["restored"] and rep["shRestore"]["lite"]["shDegree"] == export.LITE_SH
+    # no GPU here to score the phone model with: it is not fine-tuned, and the report says why
+    assert rep["liteFinetune"] == {"steps": 3000, "shipped": "untuned", "why": "not measured: needs a GPU and held-out views"}
     # round-trip the SPZ back to PLY: floaters cropped, positions unchanged (no axis flip)
     subprocess.run(["npx", "-y", export.SPLAT_TRANSFORM, "-w", str(tmp_path / "scene.spz"), str(tmp_path / "back.ply")],
                    check=True, capture_output=True)
@@ -119,18 +121,18 @@ def test_training_weights_need_a_gpu(tmp_path):
     assert viewer_eval.training_weights(tmp_path / "missing.ply", tmp_path) is None
 
 
-@pytest.mark.parametrize("lite_max", [1000, None])
-def test_the_phone_file_is_packed_from_the_fine_tuned_model(tmp_path, monkeypatch, lite_max):
+@pytest.mark.parametrize("lite_max, asked", [(1000, 300), (None, None)])
+def test_the_phone_file_is_packed_from_the_fine_tuned_model(tmp_path, monkeypatch, lite_max, asked):
     """The real splat-transform around stand-ins for the GPU work: the twin is cut to the phone size (or, under it,
     only to the phone's SH bands), the 'trainer' lifts those splats 1 m, and scene_lite.spz holds the lifted ones
-    with their SH restored."""
-    from plypipe import clean, viewer_eval
+    with their SH restored. Unasked, the fine-tune runs at the plan's length."""
+    from plypipe import clean, plan, viewer_eval
     from plypipe.stages import train as train_stage
     rng = np.random.default_rng(0)
     write_gs_ply(tmp_path / "scene.ply", rng.normal(size=(3000, 3)) * .5 + [0, 1, 0], rng)
-    ctx = Ctx(out=tmp_path, log=Log(tmp_path, quiet=True), opts={"no_clean": True, "lite_max": lite_max, "lite_finetune": 300})
+    ctx = Ctx(out=tmp_path, log=Log(tmp_path, quiet=True), opts={"no_clean": True, "lite_max": lite_max, "lite_finetune": asked})
     update_scene(ctx, {"bounds": {"min": [-3, -1, -3], "max": [3, 3, 3]}})
-    scores = {"scene_lite.ply": 24.0, "point_cloud_299.ply": 25.5}
+    scores = {"scene_clean.ply": 26.0, "scene_lite.ply": 24.0, "point_cloud_299.ply": 25.5}
     monkeypatch.setattr(viewer_eval, "evaluate", lambda ply, *a, **k: {"views": 4, "psnr": scores[ply.name], "ssim": 0.8, "brightness": 1.0,
                                                                        "holes": 0.01, "worstHoles": 0.02} if ply.name in scores else None)
     seen = {}
@@ -147,9 +149,11 @@ def test_the_phone_file_is_packed_from_the_fine_tuned_model(tmp_path, monkeypatc
     monkeypatch.setattr(train_stage, "finetune", trained)
     rep = export.run_stage(ctx)
     phone = lite_max or rep["gaussiansOut"]                                                       # a twin under the phone size keeps its splats
-    assert seen == {"steps": 300, "sh": export.LITE_SH, "splats": phone, "coefficients": 8}       # it trains the phone model, at SH 2
+    steps = asked or plan.LITE_FINETUNE_STEPS
+    assert seen == {"steps": steps, "sh": export.LITE_SH, "splats": phone, "coefficients": 8}     # it trains the phone model, at SH 2
     tuned = rep["liteFinetune"]
-    assert tuned["shipped"] == "finetuned" and (tuned["before"]["psnr"], tuned["after"]["psnr"]) == (24.0, 25.5) and tuned["eval"]["views"] == 33
+    assert tuned["steps"] == steps and tuned["shipped"] == "finetuned" and (tuned["before"]["psnr"], tuned["after"]["psnr"]) == (24.0, 25.5)
+    assert tuned["eval"]["views"] == 33
     assert rep["gaussiansOut"] > 1000 and rep["liteGaussians"] == phone and rep["liteMB"] < rep["spzMB"]
     assert rep["shRestore"]["lite"]["restored"] and rep["shRestore"]["lite"]["shDegree"] == export.LITE_SH
     assert not (tmp_path / "train-lite").exists() and not (tmp_path / "scene_lite.ply").exists()
@@ -158,3 +162,23 @@ def test_the_phone_file_is_packed_from_the_fine_tuned_model(tmp_path, monkeypatc
         subprocess.run(["npx", "-y", export.SPLAT_TRANSFORM, "-w", str(tmp_path / name), str(tmp_path / "back.ply")], check=True, capture_output=True)
         back[name] = read_gs_ply_xyz(tmp_path / "back.ply")
     assert len(back["scene_lite.spz"]) == phone and back["scene_lite.spz"][:, 1].mean() == pytest.approx(back["scene.spz"][:, 1].mean() + 1.0, abs=0.15)
+
+
+@pytest.mark.parametrize("opts, lite_sh", [({}, 3), ({"lite_finetune": 0}, 2)])
+def test_no_fine_tune_where_the_phone_file_gives_nothing_up_or_it_is_turned_off(tmp_path, monkeypatch, opts, lite_sh):
+    """A twin under the phone size whose SH bands all ship (a Quick twin) is its own phone file: nothing was lost, so
+    nothing is trained. `--lite-finetune 0` turns the fine-tune off for any twin."""
+    from plypipe import viewer_eval
+    from plypipe.stages import train as train_stage
+    rng = np.random.default_rng(0)
+    write_gs_ply(tmp_path / "scene.ply", rng.normal(size=(3000, 3)) * .5 + [0, 1, 0], rng)
+    assert export.ply_sh_degree(tmp_path / "scene.ply") == 3
+    monkeypatch.setattr(export, "LITE_SH", lite_sh)
+    monkeypatch.setattr(viewer_eval, "evaluate", lambda ply, *a, **k: {"views": 4, "psnr": 26.0, "ssim": 0.8, "brightness": 1.0,
+                                                                       "holes": 0.01, "worstHoles": 0.02})
+    monkeypatch.setattr(train_stage, "finetune", lambda *a, **k: pytest.fail("the phone file was fine-tuned"))
+    ctx = Ctx(out=tmp_path, log=Log(tmp_path, quiet=True), opts={"no_clean": True, **opts})
+    update_scene(ctx, {"bounds": {"min": [-3, -1, -3], "max": [3, 3, 3]}})
+    rep = export.run_stage(ctx)
+    assert "liteFinetune" not in rep and rep["liteGaussians"] == rep["gaussiansOut"] and (tmp_path / "scene_lite.spz").stat().st_size > 1000
+    assert not (tmp_path / "scene_lite.ply").exists()

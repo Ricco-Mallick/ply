@@ -140,9 +140,10 @@ def build_parser() -> argparse.ArgumentParser:
     g.add_argument("--apply-align", action="store_true", help="export: transform an unaligned PLY into the scene frame")
     g.add_argument("--no-crop", action="store_true")
     g.add_argument("--lite-max", type=int, help="splats in the phone file (default 800000); a larger twin is cut down to this many")
-    g.add_argument("--lite-finetune", type=int, default=0, metavar="STEPS",
+    g.add_argument("--lite-finetune", type=int, metavar="STEPS",
                    help="export: train the phone file on for this many steps at its own splat count and SH degree, and ship it "
-                        "when the viewer shows it better than the one it started from (needs a GPU; 0 disables)")
+                        "when the viewer shows it better than the one it started from. Default 3000, when the phone file has "
+                        "fewer splats or SH bands than the twin and a GPU can score it; 0 disables")
     return ap
 
 

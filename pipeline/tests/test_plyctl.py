@@ -20,6 +20,8 @@ def finished(status="review", **change):
     report = {s: {"seconds": 1} for s in plyctl.STAGES}
     report["sfm"] = {"registered": 64, "images": 66, "mapper": "global", "mapperReason": "66 frames: below 400"}
     report["train"] = {"maxSteps": 2000, "seconds": 61.0}
+    report["export"] = {"seconds": 1, "liteFinetune": {"steps": 3000, "shipped": "finetuned", "before": {"psnr": 18.9}, "after": {"psnr": 20.4},
+                                                       "seconds": 48.0}}
     result = {"report": report, "files": dict(FILES), "quality": {"ok": True, "issues": []}, "attempts": [{"attempt": 1}]}
     return {"id": "job-1", "status": status, "stage": "export", "message": "ready for review", "result": {**result, **change}}
 
@@ -34,7 +36,8 @@ def test_a_file_is_cut_into_the_apps_parts():
 
 def test_a_finished_job_with_every_stage_and_file_passes():
     problems, notes = plyctl.check(finished())
-    assert problems == [] and notes == ["64 of 66 views solved, global mapper (66 frames: below 400); 2000 steps in 61.0 s"]
+    assert problems == [] and notes == ["64 of 66 views solved, global mapper (66 frames: below 400); 2000 steps in 61.0 s",
+                                        "phone file: 18.9 dB, 20.4 dB after 3000 steps (48.0 s); shipped the finetuned one"]
     assert plyctl.check(finished("done"))[0] == []
 
 
@@ -55,6 +58,22 @@ def test_what_fails_the_smoke_test():
     problems, notes = plyctl.check(finished(), served=lambda path: not path.endswith(("occupancy.png", "topview.webp")))
     assert problems == ["occupancy.png is listed, and the API does not serve it"]
     assert notes[0] == "topview.webp is not there"                                 # a short walk may have no room outline: said, not failed
+
+
+def test_the_phone_files_fine_tune_must_have_run_to_the_end():
+    def with_tune(tune):
+        report = finished()["result"]["report"]
+        report["export"] = {"seconds": 1, **({"liteFinetune": tune} if tune else {})}
+        return plyctl.check(finished(report=report))
+
+    # measured and not better: the export kept the untuned file, as it should
+    problems, notes = with_tune({"steps": 3000, "shipped": "untuned", "why": "measured: the fine-tuned model was not the better one",
+                                 "before": {"psnr": 20.0}, "after": {"psnr": 19.8}, "seconds": 50.0})
+    assert problems == [] and notes[-1] == "phone file: 20.0 dB, 19.8 dB after 3000 steps (50.0 s); shipped the untuned one"
+    # the export falls back without failing the job, so the smoke test is where a broken fine-tune shows
+    assert with_tune({"steps": 3000, "shipped": "untuned", "why": "CUDA out of memory"})[0] == ["the phone file's fine-tune did not finish: CUDA out of memory"]
+    assert with_tune({"steps": 3000, "shipped": "untuned", "why": "not measured: needs a GPU and held-out views"})[0][0].startswith("the phone file's fine-tune did not finish")
+    assert with_tune(None)[0][0].startswith("the export did not fine-tune the phone file")
 
 
 class FakeService:
@@ -108,7 +127,7 @@ def test_smoke_uploads_in_parts_queues_a_short_job_and_passes(tmp_path, monkeypa
     assert [len(d) for d in service.stored.values()] == [16 * 1024 * 1024, 4 * 1024 * 1024]
     assert service.completed["parts"] == [{"partNumber": 1, "etag": '"etag-1"'}, {"partNumber": 2, "etag": '"etag-2"'}]
     job = service.job
-    assert job["args"] == ["--preset", "quick", "--iterations", "2000"] and job["files"] == [service.key]
+    assert job["args"] == ["--preset", "quick", "--iterations", "2000", "--sh-degree", "3"] and job["files"] == [service.key]
     assert job["captureId"].startswith("smoke-") and service.key == f"captures/{job['captureId']}/walk.mp4"
     assert "--until" not in job["args"]                                             # a full run: the worker judges and publishes it
     # the team code goes to the API and never to the storage links

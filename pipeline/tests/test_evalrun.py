@@ -82,15 +82,15 @@ def test_the_small_scenario_runs_the_same_variants_on_its_own_baseline():
 def test_the_small_scenario_has_its_own_saved_solve_container_and_estimate():
     job = evalrun.make_job("drjohnson", "", "q5b", gpus=("L4", "L40S"))
     assert job["src"] == "drjohnson/prep" and (job["cpu"], job["memoryGib"], job["needsIndex"]) == (4, 16, False)
-    # the function's timeout is the longest table variant's stop-loss: q6, whose phone-file fine-tune is 3k steps more
+    # every export trains the phone file on for 3k steps, so every estimate counts them; --lite-finetune 0 is the run without
     assert job["args"] == evalrun.SMALL + ["--opacity-reg", "0.002"] and job["ceilingMin"] == 20
-    tuned = evalrun.make_job("drjohnson", "", "q6", gpus=("L4", "L40S"))["estimates"]
-    assert (tuned["L4"]["fineTuneSteps"], tuned["L4"]["trainMin"], tuned["L4"]["timeoutMin"]) == (3000, 9, 20)
-    assert (tuned["L40S"]["trainMin"], tuned["L40S"]["totalMin"], tuned["L40S"]["timeoutMin"], tuned["L40S"]["usd"]) == (5, 9, 14, 0.34)
-    assert "15000 steps + 3000 for the phone file" in evalrun.describe(evalrun.make_job("drjohnson", "", "q6"))
     l4, l40s = job["estimates"]["L4"], job["estimates"]["L40S"]
-    assert (l4["trainMin"], l4["totalMin"], l4["timeoutMin"]) == (7, 11, 17) and (l40s["trainMin"], l40s["totalMin"], l40s["timeoutMin"]) == (4, 8, 12)
-    assert l4["perHour"] == pytest.approx(0.80 + 4 * 0.047 + 16 * 0.008) and l4["usd"] == 0.20 and l40s["usd"] == 0.30   # the slower GPU is the cheaper run
+    assert (l4["fineTuneSteps"], l4["trainMin"], l4["totalMin"], l4["timeoutMin"]) == (3000, 9, 13, 20)
+    assert (l40s["trainMin"], l40s["totalMin"], l40s["timeoutMin"]) == (5, 9, 14)
+    assert l4["perHour"] == pytest.approx(0.80 + 4 * 0.047 + 16 * 0.008) and l4["usd"] == 0.24 and l40s["usd"] == 0.34   # the slower GPU is the cheaper run
+    assert "15000 steps + 3000 for the phone file" in evalrun.describe(job)
+    off = evalrun.estimate(job["args"] + ["--lite-finetune", "0"], "L4", scenario="drjohnson")
+    assert (off["trainMin"], off["totalMin"], off["timeoutMin"], off["usd"]) == (7, 11, 17, 0.20) and "fineTuneSteps" not in off
     assert "4 cores, 16 GiB" in evalrun.describe(job) and "/vol/drjohnson/eval/q5b/" in evalrun.describe(job)
     chapel = evalrun.make_job("chapel", "", "q0a")
     assert chapel["src"] == "chapel/high/job" and (chapel["cpu"], chapel["memoryGib"], chapel["needsIndex"]) == (8, 32, True)
@@ -110,12 +110,14 @@ def test_gpu_names_map_to_the_price_table():
     assert evalrun.parse_gpu("") == {"name": None, "memoryMiB": None, "priced": None}
 
 
-def test_a_15k_run_is_8_minutes_of_training_and_13_in_all_with_a_1_5x_stop_loss():
+def test_a_15k_run_with_the_phone_files_3k_is_9_minutes_of_training_and_14_in_all_with_a_1_5x_stop_loss():
     e = evalrun.estimate(evalrun.VARIANTS["q0a"]["args"], "L40S")
+    assert (e["trainMin"], e["totalMin"], e["timeoutMin"]) == (9, 14, 21) and e["usd"] == 0.60 and e["maxUsd"] == 0.90
+    e = evalrun.estimate(evalrun.VARIANTS["q0a"]["args"] + ["--lite-finetune", "0"], "L40S")       # the 15k steps alone
     assert (e["trainMin"], e["totalMin"], e["timeoutMin"]) == (8, 13, 20) and e["usd"] == 0.56 and e["maxUsd"] == 0.86
-    assert evalrun.estimate(evalrun.VARIANTS["smoke"]["args"], "L40S")["timeoutMin"] == 9
+    assert evalrun.estimate(evalrun.VARIANTS["smoke"]["args"], "L40S")["timeoutMin"] == 11
     assert evalrun.make_job("chapel", "chapel/high/job", "smoke")["estimates"]["L40S"]["timeoutMin"] == 12     # the table sets its own
-    assert evalrun.estimate(evalrun.BASE, "NVIDIA L4")["trainMin"] == 15
+    assert evalrun.estimate(evalrun.BASE, "NVIDIA L4")["trainMin"] == 18
     with pytest.raises(ValueError, match="L4 or L40S"):
         evalrun.estimate(evalrun.BASE, "H100")
     with pytest.raises(ValueError, match="--iterations"):
@@ -123,20 +125,20 @@ def test_a_15k_run_is_8_minutes_of_training_and_13_in_all_with_a_1_5x_stop_loss(
 
 
 def test_the_function_timeout_follows_the_slowest_allowed_gpu():
-    assert evalrun.default_ceiling_min(("L40S",)) == 21 and evalrun.default_ceiling_min(("L40S", "L4")) == 35   # q6, the longest
+    assert evalrun.default_ceiling_min(("L40S",)) == 21 and evalrun.default_ceiling_min(("L40S", "L4")) == 35
     job = evalrun.make_job("chapel", "/chapel/high/job/", "q0a")
     assert job["src"] == "chapel/high/job" and job["ceilingMin"] == 21 and set(job["estimates"]) == {"L40S"}
     with pytest.raises(ValueError, match="PLY_EVAL_TIMEOUT_MIN"):
         evalrun.make_job("chapel", "chapel/high/job", "q0a", gpus=("L40S", "L4"), ceiling_min=20)
     both = evalrun.make_job("chapel", "chapel/high/job", "q0a", gpus=("L40S", "L4"))
-    assert evalrun.stop_loss_min(both, {"priced": "L40S"}) == 20 and evalrun.stop_loss_min(both, {"priced": "L4"}) == 30
-    assert evalrun.stop_loss_min(both, {"priced": None}) == 30                       # unknown GPU: the slowest budget
+    assert evalrun.stop_loss_min(both, {"priced": "L40S"}) == 21 and evalrun.stop_loss_min(both, {"priced": "L4"}) == 35
+    assert evalrun.stop_loss_min(both, {"priced": None}) == 35                       # unknown GPU: the slowest budget
 
 
 def test_plan_prints_what_would_run_without_modal(capsys):
     assert evalrun.main(["plan", "--variant", "q5a"]) == 0
     text = capsys.readouterr().out
-    for needle in ("q5a", "--opacity-reg 0.005", "--only train", "--only export", "stop-loss 20 min", "$0.56", "data/images -> ../dense/images",
+    for needle in ("q5a", "--opacity-reg 0.005", "--only train", "--only export", "stop-loss 21 min", "$0.60", "15000 steps + 3000 for the phone file", "data/images -> ../dense/images",
                    "dense/images/", "frames/", "/vol/chapel/eval/q5a/"):
         assert needle in text, needle
 

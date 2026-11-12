@@ -36,7 +36,7 @@ def test_it_loads_and_builds_its_modal_objects_without_a_connection(monkeypatch)
     monkeypatch.setenv("MODAL_CONFIG_PATH", "/nonexistent/modal.toml")
     m = load(monkeypatch)
     assert m.app.name == "ply-eval" and callable(m.main) and callable(m.run_variant.local)
-    assert m.GPUS == ["L40S"] and m.CEILING_MIN == 21                             # q6, the longest table variant
+    assert m.GPUS == ["L40S"] and m.CEILING_MIN == 21                             # 15k steps and the phone file's 3k
     original = next(v for k, v in vars(m.run_variant).items() if k.startswith("_sync_original"))
     info = getattr(original, "_function_info", None)
     if info is not None:                                                          # modal 1.6.3's layout; the GPU, size and timeout it will ask for

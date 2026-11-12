@@ -42,7 +42,7 @@ All coordinates are in the **scene frame**: right-handed, **+Y up, floor plane a
 | File | Contents |
 |---|---|
 | `scene.spz` | Gaussian splats, full SH. Positions stored as-is (splat-transform writes SPZ with `CoordinateSystem.UNSPECIFIED`, i.e. no axis conversion). |
-| `scene_lite.spz` | Same splats up to SH degree 2, decimated to 800k above that (smaller; use on phones). With `--lite-finetune N` the phone model is trained on for N steps at its own splat count and SH degree, and shipped when the viewer shows it better (`report.export.liteFinetune`; +0.80 dB on the chapel, +0.73 and +0.52 dB on Dr Johnson, `docs/EXPERIMENTS.md`). |
+| `scene_lite.spz` | Same splats up to SH degree 2, decimated to 800k above that (smaller; use on phones). Where that costs it splats or SH bands, the phone model is then trained on for 3,000 steps at its own splat count and SH degree, and shipped when the viewer shows it better (`--lite-finetune N`, 0 = off; needs a GPU and held-out views; `report.export.liteFinetune`; +0.80 dB on the chapel, +0.73 and +0.52 dB on Dr Johnson, `docs/EXPERIMENTS.md`). |
 | `scene.json` | Scene metadata, below. |
 | `occupancy.png` | 8-bit grey grid: **255 free, 0 blocked, 127 unknown**. Pixel (row r, col c) = cell r along +Z, c along +X; the top-left pixel is the cell at `origin`. |
 | `occupancy.json` | Grid metadata, below. |

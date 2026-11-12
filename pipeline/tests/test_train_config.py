@@ -375,6 +375,7 @@ def test_the_fine_tune_runs_on_the_jobs_own_split_and_returns_the_trainers_model
     cmd = seen["cmd"]
     value = lambda flag: cmd[cmd.index(flag) + 1]
     assert cmd[1:3] == ["-m", "plypipe.train_launcher"] and seen["stage"] == "export" and seen["env"]["CUDA_VISIBLE_DEVICES"] == "0"
+    assert seen["env"]["PLY_LIVE_SNAPSHOTS"] == ""                                  # the worker's part-way PLYs are for the train stage's live view
     assert value("--result") == str(job / "train-lite") and value("--from-ply") == str(job / "scene_lite.ply") and value("--preset") == "high"
     assert (value("--iterations"), value("--sh-degree"), value("--holdout"), value("--holdout-block")) == ("3000", "2", "8", "10")
     assert value("--frames-index") == str(job / "frames_index.json") and value("--opacity-reg") == "0.005" and "--antialiased" in cmd
