@@ -1,13 +1,13 @@
 # Status
 
-Updated 2026-11-12 (afternoon). What is deployed, what is running and what is next. Update this file at the end of every
+Updated 2026-11-12 (evening). What is deployed, what is running and what is next. Update this file at the end of every
 session, so the next one starts here and not from an exported transcript.
 
 ## Deployed
 
 | What | Version | Note |
 |---|---|---|
-| Site (https://ricco.codes/ply/) | `main` at `0597c98` (PR #23), 2026-11-11 | every twin opens in Free and the minimap shows the twin's top view. The deploy succeeded and the pages answer; not looked at in a browser since |
+| Site (https://ricco.codes/ply/) | `main` at `804869e` (PR #30), 2026-11-12 | every twin opens in Free and the minimap shows the twin's top view. Walk moves at Free's speed and slides along walls. The deploy succeeded; Walk was checked in a browser on the dev build's demo room only, and the live site has not been looked at in a browser since PR #23 |
 | API (`ply-api`, Cloudflare) | `35c9c1d`, 2026-11-05 | read from `GET /` |
 | GPU worker (Modal app `ply`, riccomarcelino) | v19, `c5cccb3`, 2026-11-12 (the head of PR #29: `main` at `1bf549d` plus the phone file's fine-tune by default; redeploy from `main` if that pull request changes or closes) | an L4, or an L40S when Modal has no L4 free. Smoke test passed after the deploy (job `8582285e…`): every stage, the gate and the phone file's fine-tune ran on a real job, the fine-tune in 44 s of a 62 s export. On that clip (2,000 steps, not a twin) the fine-tuned file scored 1.5 dB higher with 1.7 points more see-through pixels, which is over the export's limit, so the untuned file shipped as designed. The job took 20 minutes from upload to review, most of it the container's start and publishing |
 | Twins on Hugging Face (`ply-data`) | `4c46886`, 2026-11-11 | 13 twins have `topview.webp` and a `topview` block in `scene.json`; `4c09354` is the commit before. `chapel-high-2` has the rebuilt walking grid (`4c09354`; `e063f08` before it) |
@@ -42,6 +42,12 @@ Nothing. No Modal app is running on either account and no workflow is in progres
   is the same file: its see-through pixels are in the trained model, which export cannot repair.
 - **Sparse depth loss (`q4a`):** the NaN is fixed and the fix holds on a GPU; no gain on Dr Johnson.
   **Pose refinement (`q2`):** no gain on the chapel.
+- **Exposure folded back (`q1`):** the fit, the fold and the 2,000 steps run on a GPU and the viewer shows the twin
+  at ×1.006 of the photos' brightness, but on Dr Johnson it loses 0.50 dB on held-out views and 0.90 dB in the
+  viewer: the bilateral grid holds more than one colour map can undo. Not shipped. `q1b` (`--exposure-affine`, one
+  affine transform per photo, the trainer's grid at 1×1×1) is built and tested on a CPU and has not run.
+- **Walking grid from depth** (plan 2.2 and 2.3): built as the opt-in `--dense-occupancy` (`plypipe/dense.py`,
+  `occupancy.from_depth`), tested on a CPU with a synthetic two-room scene. It has never run on a GPU or a real twin.
 - **Phone file (`q6`):** trained on for 3,000 steps at its own size, it gains 0.80 dB on the chapel (800k splats,
   now 0.48 dB below the desktop file instead of 1.25) and 0.73 dB on Dr Johnson cut to 240k. A twin under the phone
   size, whose phone file only loses the third SH band, gains 0.52 dB and ends 0.05 dB below the desktop file.
@@ -64,9 +70,10 @@ Nothing. No Modal app is running on either account and no workflow is in progres
    `PLY_EVAL_SCENARIO=drjohnson PLY_EVAL_GPU=L4,L40S MODAL_PROFILE=opservemakesalt modal run --detach
    pipeline/modal/ply_eval.py --variant <name>` returns at once; `python pipeline/modal/ply_eval.py collect --scenario
    drjohnson --out /tmp/ply-eval` and `python scripts/eval_table.py /tmp/ply-eval` give the table.
-   Next run: a second 30k baseline (`--variant q0-30k-b --args "--iterations 30000"`, `PLY_EVAL_TIMEOUT_MIN=27`), for
-   the noise floor that decides whether an opacity regulariser of 0.005 may become the default. Then Q1 (exposure
-   folded back), the variant left that needs code and can be judged on this scene. Q6 (the phone file fine-tuned)
+   Next run: `--variant q1b`. The estimate is 13 minutes and $0.49 on an L40S, 19 minutes and $0.35 on an L4. Its
+   grid runs in pure torch and has not been timed (it is budgeted at the full grid's pace), so read the pace of the
+   first steps in the log. What to read and what it decides is item 1 of the hand-off queue below.
+   Q6 (the phone file fine-tuned)
    is the default and deployed. To read from the first real Standard or High job: `report.export.liteFinetune`
    (its `seconds`, estimated at about five minutes for an 800k phone file on an L4, and that it did not fall back for
    lack of GPU memory).
@@ -82,7 +89,51 @@ Nothing. No Modal app is running on either account and no workflow is in progres
 4. **Make the `ci` checks required** on `main` (repository settings, owner).
 5. **Rest of phase 0**: the API side of 0.3 and 0.4 (it needs a D1 migration and deploys on merge); `plyctl` has
    `status` and `smoke`, and `logs`, `stop` and `cost` are not built (0.7).
-6. **Walk** (2.1): walking speed and sliding along edges first. Free is the default until the owner says otherwise.
+6. **Walk** (2.1): speed, sliding along walls, sub-step movement, the wheel limit and the collider interface are in
+   (PR #30), checked in a browser on the demo room. Left: Walk on a real twin on the live site, and the plan's
+   guided-route test. Free is the default until the owner says otherwise.
+
+## Hand-off queue
+
+Work that is decided and specified, in order. Each item says what done means; none needs a design decision. A paid
+run needs the owner's go-ahead and follows plan section 13: one launch, its log read, then the next.
+
+1. **Run `q1b` on Dr Johnson** (command in Next, 2). It worked if `metrics.json` has `exposureFold.folded` and
+   `.settled` true with no `why`, and `viewer.desktop.brightness` and `viewer.phone.brightness` within 0.95 to 1.05.
+   Compare `scores.every`, `scores.block` and the viewer's PSNR with `q0a` and `q0b`. Dr Johnson's photos do not
+   differ in exposure, so `q1b` cannot win there: the run measures what the method costs where there is nothing to
+   correct. Within 0.1 dB of the baseline on all three: run it once on the chapel at 15k, where the windows are, and
+   apply the ship rule of plan section 8. More than 0.2 dB under on any: Q1 is closed and the twin keeps no
+   appearance model. In between: stop and report, with the score of the model as it left training, before the fold
+   (`q1` was 2.3 dB under the baseline there). Record the result in `EXPERIMENTS.md` and replace the one-cell grid's
+   budget in `evalrun.estimate` with the measured pace. (Thresholds set by the agent; the owner can overturn them.)
+2. **An export-only rerun in `ply_eval.py`** (`MISTAKES.md`, 2026-11-12): it takes the variant whose training is on
+   the Volume and extra export options, checks inside the function that the training is there, and runs `export`
+   alone. Tests beside the other launch tests in `test_evalrun.py`.
+3. **`--dense-occupancy` on a GPU**, using item 2: Dr Johnson first, then the saved chapel twin. Read
+   `report.export.denseOccupancy`: `used`, `why`, `views`, `walk` against `sparseWalk`, `seconds`. Report the
+   numbers; whether the depth grid becomes the default is a decision (below).
+4. **`scripts/eval_table.py`**: columns for the viewer's brightness, `exposureFold` and `denseOccupancy.used`.
+5. **`pipeline/README.md`**: `--exposure-fold`, `--exposure-affine` and `--dense-occupancy` in the `train` and
+   `export` rows.
+6. **Walk on the live site**: open a real twin (`chapel-high-2`) in a browser, walk into walls and through a door,
+   and write the plan's guided-route test (2.1).
+7. **Mesh (2.4) and layout (2.5)** from the dense points, as the plan specifies them, with `test_mesh_fusion.py` and
+   `test_layout.py`. After item 3 has shown the depth is usable on a real twin.
+8. **Rest of phase 0** (Next, 5) and the Hugging Face `.gitattributes` fix (Known and left alone).
+
+Not for hand-off, because each needs a judgement or the owner:
+
+- `q1b` landing between the two thresholds of item 1, and what goes into the combined run of phase 7 (Q6 is in; an
+  opacity regulariser of 0.005 only with see-through no higher than the baseline's, decision 10).
+- The depth grid as the default walking grid: the gate of plan section 6 on real twins, and whether a navmesh (5c)
+  is needed.
+- Phases 3, 5 and 6: nothing was done on them on 2026-11-12. The plan's cut order (section 3) applies once the date
+  of the final is known.
+- The worker runs `c5cccb3`. `main` has since gained options that are off by default (`--exposure-fold`,
+  `--exposure-affine`, `--dense-occupancy`); it is redeployed when one of them is wanted on live jobs.
+- Owner: the date of the final, Walk as the default mode (decision 6), the `ci` checks required on `main`, and the
+  go-ahead for each paid run.
 
 ## Known and left alone
 
