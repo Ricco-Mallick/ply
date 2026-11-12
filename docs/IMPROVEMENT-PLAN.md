@@ -175,8 +175,9 @@ are removed by the consistency check.
 views to decide. The camera path still wins. Unknown stays blocked. Free space is never closed across a cell that any
 view saw blocked. Cells of 5 cm, written in the same `occupancy.png` and `occupancy.json`, so the viewer needs no
 change. Without a GPU the sparse grid is used as today.
-Built 2026-11-12 with 2.2 as the opt-in `--dense-occupancy`, which keeps the depth grid only when it walks at least
-as well as the sparse one. Tested on a CPU; not yet run on a GPU (`STATUS.md`, hand-off queue).
+Built 2026-11-12 with 2.2 and on by default in export: the depth grid takes the sparse grid's floor where it saw
+nothing, keeps its walls, and is used unless fewer camera positions are walkable on it. Right on the chapel and Dr Johnson
+(`EXPERIMENTS.md`); the gate below waits for the MuSHRoom rooms (`STATUS.md`, hand-off queue).
 
 **2.4 Mesh** (`stages/mesh.py`). TSDF fusion of the same filtered depth, 2 to 4 cm voxels. Outputs `mesh.glb` (about
 300k triangles, vertex colours) and `collision.glb` (about 20k triangles).
@@ -247,7 +248,7 @@ repeats only what wins there (decision 8).
 | Variant | Change | Why |
 |---|---|---|
 | Q0 | baseline, twice | noise floor (phase 1) |
-| Q1 | **Exposure correction, folded back.** Train with the bilateral grid, then fine-tune 2k steps with the grid replaced by its mean and fold that mean into the colours at export. Measured 2026-11-12 (`q1`): the fold works and the grid costs 0.50 dB on Dr Johnson, so it is not shipped; `q1b` trains with one affine transform per photo instead (`--exposure-affine`) and has not run | 10–12% of the chapel is glare at the windows; correction is off today only because the viewer showed ×1.2 brightness |
+| Q1 | **Exposure correction, folded back.** Train with the bilateral grid, then fine-tune 2k steps with the grid replaced by its mean and fold that mean into the colours at export. Measured 2026-11-12 (`q1`): the fold works and the grid costs 0.50 dB on Dr Johnson, so it is not shipped; `q1b` (one affine transform per photo, `--exposure-affine`) trains a better model on the chapel but its shipped file is 1.42 dB under in the viewer, so Q1 does not ship (`EXPERIMENTS.md`) | 10–12% of the chapel is glare at the windows; correction is off today only because the viewer showed ×1.2 brightness |
 | Q2 | pose refinement (`--pose-opt`, exists) | small solve errors blur detail |
 | Q3 | **higher resolution**: re-extract the same frames at 2560 px, scale the intrinsics, keep the poses | the source is 4K and we train at 1728 px |
 | Q4a | sparse depth loss (`--depth-loss`, exists) | free to try; fewer floaters |

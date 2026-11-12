@@ -10,7 +10,7 @@
     PLY_EVAL_SCENARIO=drjohnson PLY_EVAL_GPU=L4,L40S MODAL_PROFILE=<account> modal run --detach pipeline/modal/ply_eval.py \\
         --variant q0a                                           # the same variant on the small scenario, at about half the cost
 
-    ... modal run --detach pipeline/modal/ply_eval.py --variant q0a-dense --export-from q0a --args=--dense-occupancy
+    ... modal run --detach pipeline/modal/ply_eval.py --variant q0a-sparse --export-from q0a --args=--no-dense-occupancy
                                                                 # export only: q0a's trained model, exported again with export options
 
 A scenario (evalrun.SCENARIOS) is a saved solve, its baseline and its container. Try a variant on the small one first.
