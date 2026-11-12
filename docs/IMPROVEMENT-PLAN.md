@@ -250,7 +250,7 @@ repeats only what wins there (decision 8).
 | Q3 | **higher resolution**: re-extract the same frames at 2560 px, scale the intrinsics, keep the poses | the source is 4K and we train at 1728 px |
 | Q4a | sparse depth loss (`--depth-loss`, exists) | free to try; fewer floaters |
 | Q4b | dense depth and normal losses from the phase 5 priors (the DN-Splatter / AGS-Mesh method) | flatter walls; also variant 3c |
-| Q5 | opacity regulariser 0.01 → 0.005 and 0.002 at the 2M cap. A 3M cap only if at least 85% of the splats then survive export | half of the High budget is deleted today |
+| Q5 | opacity regulariser 0.01 → 0.005 and 0.002 at the 2M cap. A 3M cap only if at least 85% of the splats then survive export. Measured 2026-11-12: 0.005 clears the rule on Dr Johnson at 15k and 30k and leaves see-through gaps in the chapel's trained model; 0.002 is dropped; the default stays at 0.01 and the 3M cap is not run (decision 10) | half of the High budget is deleted today |
 | Q6 | **phone file fine-tuned, not decimated**: continue 3k steps with the cap at the phone size. Shipped 2026-11-12, on by default (decision 9) | the phone file is 2.15 dB below the desktop file |
 
 Then one run with the winners combined, and one at full length (phase 7).
@@ -399,5 +399,12 @@ Made on 2026-11-12:
    it is the cheapest quality measured here: +0.52 to +0.80 dB on the phone file for $0.04 to $0.11 a job, against
    +0.61 dB for $0.20 from Quick to Standard training (`EXPERIMENTS.md`). It runs only where the phone file has fewer
    splats or SH bands than the twin and a GPU can score it; `--lite-finetune 0` turns it off.
+10. The opacity regulariser stays at 0.01 and Q5 rests until phase 7. (Made by the agent, on the owner's instruction
+    of 2026-11-12 to settle the open decisions; the owner can overturn it.) 0.005 clears the ship rule on Dr Johnson
+    at 15k and at 30k steps: the second 30k baseline puts its loss on the block inside the noise. But on the chapel at
+    15k its trained model has 1.8% see-through pixels, 14% in the worst view, against 0.02% and 0.13% for the two
+    baselines, and exporting it again changed nothing, because export cannot repair a gap that training left
+    (`EXPERIMENTS.md`). A default has to hold on the demo scene. 0.005 is a candidate for the combined run of phase 7,
+    gated on see-through no higher than the baseline's. 0.002 is dropped, and the 3M cap is not run.
 
 Open: the date of the final, so the phases can be given dates and the cut order applied.
