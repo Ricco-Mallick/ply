@@ -8,7 +8,7 @@ session, so the next one starts here and not from an exported transcript.
 | What | Version | Note |
 |---|---|---|
 | Site (https://ricco.codes/ply/) | `main` at `f92ccff` (PR #33), 2026-11-13 | `ab.html` shows two twins side by side on one camera (the chapel exposure look-test), and every twin opens in Free and the minimap shows the twin's top view. Walk moves at Free's speed and slides along walls. The deploy succeeded; Walk was checked in a browser on the dev build's demo room only, and the live site has not been looked at in a browser since PR #23 |
-| API (`ply-api`, Cloudflare) | `35c9c1d`, 2026-11-05 | read from `GET /` |
+| API (`ply-api`, Cloudflare) | version `api-owner-limits` (`5d7a95ed`), 2026-11-13 | read from `GET /`, which now reports the deploy's own id, tag and timestamp from the `version_metadata` binding instead of a hand-bumped variable (it had claimed `35c9c1d` through five later deploys). Carries plan 0.3 and 0.4: an owner per job, one job in flight and ten a day per invite, an idempotency key, and results served only once reviewed; `live/`, `live-index.json`, `pipeline.log` and `report.json` stay readable while a job runs |
 | GPU worker (Modal app `ply`, riccomarcelino) | v19, `c5cccb3`, 2026-11-12 (the head of PR #29: `main` at `1bf549d` plus the phone file's fine-tune by default; redeploy from `main` if that pull request changes or closes) | an L4, or an L40S when Modal has no L4 free. Smoke test passed after the deploy (job `8582285e…`): every stage, the gate and the phone file's fine-tune ran on a real job, the fine-tune in 44 s of a 62 s export. On that clip (2,000 steps, not a twin) the fine-tuned file scored 1.5 dB higher with 1.7 points more see-through pixels, which is over the export's limit, so the untuned file shipped as designed. The job took 20 minutes from upload to review, most of it the container's start and publishing |
 | Twins on Hugging Face (`ply-data`) | `4c46886`, 2026-11-11 | 13 twins have `topview.webp` and a `topview` block in `scene.json`; `4c09354` is the commit before. `chapel-high-2` has the rebuilt walking grid (`4c09354`; `e063f08` before it) |
 | CUDA wheels | `wheels/cp312-cu128-sm89` at `e063f08` | L4 and L40S; what `pipeline/wheels.lock.json` pins and every image built so far uses |
@@ -87,9 +87,9 @@ check, the scan's export and twin, the MuSHRoom rooms, the chapel's mesh exports
    the call that was already waiting did not start under the new settings (`MISTAKES.md`, 2026-11-12).
    Still open from the deploy: the first long ordered capture shows whether skipping the global mapper saves the
    expected 32 minutes, and the hand-off to the CPU solver has not run since (a capture under 400 frames skips it).
-4. **Make the `ci` checks required** on `main` (repository settings, owner).
-5. **Rest of phase 0**: the API side of 0.3 and 0.4 (it needs a D1 migration and deploys on merge); `plyctl` has
-   `status` and `smoke`, and `logs`, `stop` and `cost` are not built (0.7).
+4. ~~Make the `ci` checks required~~ Done 2026-11-13: `pipeline`, `api` and `app` are required status checks on `main`, reviews still one approval.
+5. **Rest of phase 0**: the API side of 0.3 and 0.4 is **in and live** (migration 0002, worker `5d7a95ed`, five new
+   tests in the `api` job). `plyctl` has `status` and `smoke`; `logs`, `stop` and `cost` are being written (0.7).
 6. **Walk** (2.1): speed, sliding along walls, sub-step movement, the wheel limit and the collider interface are in
    (PR #30), checked in a browser on the demo room. Left: Walk on a real twin on the live site, and the plan's
    guided-route test. Free is the default until the owner says otherwise.
