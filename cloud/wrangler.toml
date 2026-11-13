@@ -23,3 +23,7 @@ MODAL_TRIGGER_URL = "https://riccomarcelino--ply-trigger.us-east.modal.run"
 # safety net for the Modal GPU worker: re-wake it when jobs wait with no worker (see scheduled() in src/index.ts)
 [triggers]
 crons = ["*/10 * * * *"]
+
+# the deploy identity route, so GET / can say which code is live instead of a hand-bumped string
+[version_metadata]
+binding = "CF_VERSION"
