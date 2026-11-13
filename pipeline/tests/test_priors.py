@@ -248,3 +248,17 @@ def test_a_rescaled_job_keeps_its_reference_scale_when_align_runs_again_and_only
     assert rep["scaleSource"] == "reference" and rep["scale"] == pytest.approx(first * 1.1)
     aligned = colmap_txt.read_model(tmp_path / "data" / "sparse" / "0")
     assert np.ptp(aligned.xyz[:, [0, 2]], axis=0).max() == pytest.approx(5.0 * 1.1 * first / S_TRUE, rel=0.05)
+
+
+def test_the_priors_command_prints_the_scale_the_twin_would_get_and_fails_cleanly_without_a_gpu(tmp_path, monkeypatch, capsys):
+    from plypipe import cli
+    _, poses = write_job(tmp_path, n_frames=60)
+    monkeypatch.setattr(priors, "real_predictor", lambda model="moge2-l": stand_in(poses))
+    assert cli.main(["priors", str(tmp_path), "--priors-frames", "40", "--priors-model", "moge2-b"]) == 0
+    out = capsys.readouterr().out
+    got = json.loads((tmp_path / "priors" / "readout.json").read_text())
+    assert got["priors"]["status"] == "ok" and abs(got["priors"]["ratio"] / S_TRUE - 1) < 0.02 and got["priors"]["frame"] == "world" and "twinScale" in out
+    monkeypatch.undo()
+    assert cli.main(["priors", str(tmp_path / "empty")]) == 1
+    a = cli.build_parser().parse_args(["run", "x", "--out", "y", "--priors", "--priors-model", "moge2-b"])
+    assert a.priors and a.priors_model == "moge2-b" and a.priors_frames == 150 and not cli.build_parser().parse_args(["run", "x", "--out", "y"]).priors

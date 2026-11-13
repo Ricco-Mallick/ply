@@ -193,7 +193,9 @@ def _priors_main(a) -> int:  # noqa: ANN001
     except Exception as e:
         log.emit("priors", "error", str(e), trace=traceback.format_exc()[-2000:])
         return 1
-    print(json.dumps(priors.readout(a.folder), indent=2))
+    readout = json.dumps(priors.readout(a.folder), indent=2)
+    (a.folder / "priors" / "readout.json").write_text(readout)
+    print(readout)
     return 0
 
 
