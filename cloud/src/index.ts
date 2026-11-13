@@ -33,7 +33,8 @@ interface Env { DB: any; APP_KEY: string; WORKER_TOKEN: string; ALLOWED_ORIGINS:
   /** results on Hugging Face (HF_REPO in wrangler.toml, HF_TOKEN a secret); unset = bucket only */
   HF_REPO?: string; HF_TOKEN?: string;
   /** commit and time of this deploy, set by .github/workflows/api.yml (--var); unset for a hand deploy */
-  VERSION?: string; DEPLOYED_AT?: string; }
+  VERSION?: string;
+  CF_VERSION?: { id: string; tag: string; timestamp: string }; DEPLOYED_AT?: string; }
 type Ctx = { waitUntil(p: Promise<unknown>): void };
 
 const s3 = (e: Env): S3Conf => ({ endpoint: e.S3_ENDPOINT, region: e.S3_REGION, bucket: e.S3_BUCKET, keyId: e.S3_KEY_ID, secret: e.S3_SECRET });
@@ -128,7 +129,7 @@ async function route(req: Request, env: Env, ctx: Ctx): Promise<Response> {
   }
 
   // which code is live, in one request: a stale deploy shows here instead of as a slow viewer
-  if (p === '/' || p === '/v1') return json({ ok: true, service: 'ply-api', version: env.VERSION ?? 'manual', deployedAt: env.DEPLOYED_AT ?? null }, 200, { 'cache-control': 'no-store' });
+  if (p === '/' || p === '/v1') return json({ ok: true, service: 'ply-api', version: env.CF_VERSION?.tag ?? env.VERSION ?? 'manual', deployedAt: env.CF_VERSION?.timestamp ?? env.DEPLOYED_AT ?? null, id: env.CF_VERSION?.id ?? null }, 200, { 'cache-control': 'no-store' });
   if (p === '/v1/health' && req.method === 'GET') {
     const w = await env.DB.prepare('SELECT name,last_seen,busy_job,note FROM workers WHERE last_seen > ? ORDER BY last_seen DESC').bind(now - 90_000).all();
     const q = await env.DB.prepare("SELECT COUNT(*) n FROM jobs WHERE status='queued'").first();
