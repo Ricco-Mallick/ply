@@ -1,7 +1,7 @@
 // The two rules the API now enforces on top of the gate: what an invite may spend, and when results are public.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { inviteBudget, resultsVisible, INVITE_ACTIVE_LIMIT, INVITE_DAILY_LIMIT } from '../src/limits.ts';
+import { inviteBudget, mayCancel, resultsVisible, stillLive, INVITE_ACTIVE_LIMIT, INVITE_DAILY_LIMIT } from '../src/limits.ts';
 
 test('an invite gets one job in flight', () => {
   assert.equal(inviteBudget(0, 0), null);
@@ -31,4 +31,17 @@ test('a running job serves only what the live view needs', () => {
 test('a worker is never gated, and a failed job is not public', () => {
   assert.equal(resultsVisible('running', 'scene.spz', false), true);
   assert.equal(resultsVisible('failed', 'scene.spz', true), false);
+});
+
+test('an invite may stop its own job; the team key may stop any', () => {
+  assert.equal(mayCancel('team', 'judges'), true);
+  assert.equal(mayCancel('judges', 'judges'), true);
+  assert.equal(mayCancel('judges', 'team'), false);
+  assert.equal(mayCancel('judges', null), false);
+});
+
+test('a cancelled job stays cancelled for a late heartbeat', () => {
+  assert.equal(stillLive('running'), true);
+  assert.equal(stillLive('queued'), true);
+  assert.equal(stillLive('cancelled'), false);
 });

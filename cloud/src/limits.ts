@@ -17,3 +17,15 @@ export function resultsVisible(status: string | null | undefined, file: string, 
   if (PUBLISHED.has(status)) return true;
   return file.startsWith('live/') || file === 'live-index.json' || file === 'pipeline.log' || file === 'report.json';
 }
+
+
+/** Who may stop a job: the team key, or the invite that started it. */
+export function mayCancel(owner: string, jobOwner: string | null | undefined): boolean {
+  if (!jobOwner) return owner === 'team';
+  return owner === 'team' || owner === jobOwner;
+}
+
+/** A cancelled job stays cancelled: a late heartbeat must not resurrect it. */
+export function stillLive(status: string | null | undefined): boolean {
+  return status !== 'cancelled';
+}

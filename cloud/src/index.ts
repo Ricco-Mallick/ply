@@ -57,7 +57,7 @@ function cors(req: Request, env: Env) {
 
 type Role = 'app' | 'worker' | null;
 
-import { inviteBudget, resultsVisible } from './limits';
+import { inviteBudget, mayCancel, resultsVisible, stillLive } from './limits';
 
 
 /* Invite only. There is no signup: an invite is a signed code, label.expiry.mac, minted with the
@@ -226,6 +226,21 @@ async function route(req: Request, env: Env, ctx: Ctx): Promise<Response> {
     return json({ jobId }, 201);
   }
 
+  // ---- stopping a run: the queue can be emptied and a heartbeating worker told to quit ----
+  const cancel = p.match(/^\/v1\/jobs\/([\w-]{6,64})\/cancel$/);
+  if (cancel && req.method === 'POST') {
+    if (r !== 'app') return json({ error: 'missing or wrong key' }, 401);
+    const me = await identity(req, env);
+    const row = await env.DB.prepare('SELECT status, owner FROM jobs WHERE id = ?').bind(cancel[1]).first() as any;
+    if (!row) return json({ error: 'no such job' }, 404);
+    if (!mayCancel(me.owner, row.owner)) return json({ error: 'this job belongs to another invite' }, 403);
+    if (!stillLive(row.status)) return json({ ok: true, status: 'cancelled', already: true });
+    if (row.status !== 'queued' && row.status !== 'running') return json({ error: `the run is already over (${row.status})`, status: row.status }, 409);
+    await env.DB.prepare("UPDATE jobs SET status='cancelled', message=?, finished_at=?, updated_at=? WHERE id=?")
+      .bind(`cancelled by ${me.owner || 'operator'}`, now, now, cancel[1]).run();
+    return json({ ok: true, status: 'cancelled' });
+  }
+
   // ---- the human gate: a finished run waits here until someone decides ----
   const decision = p.match(/^\/v1\/jobs\/([\w-]{6,64})\/decision$/);
   if (decision && req.method === 'POST') {
@@ -275,6 +290,9 @@ async function route(req: Request, env: Env, ctx: Ctx): Promise<Response> {
     m = p.match(/^\/v1\/worker\/jobs\/([\w-]+)$/);
     if (m && req.method === 'POST') {
       const b = await req.json() as any, sets: string[] = ['updated_at=?'], vals: unknown[] = [now];
+      const cur = await env.DB.prepare('SELECT status FROM jobs WHERE id = ?').bind(m[1]).first() as any;
+      // the operator stopped it: say so and let the worker stop instead of writing 'running' back over it
+      if (cur && !stillLive(cur.status) && b.status !== 'cancelled') return json({ error: 'cancelled' }, 409);
       if (b.status) { sets.push('status=?'); vals.push(b.status); if (b.status === 'done' || b.status === 'failed') { sets.push('finished_at=?'); vals.push(now); } }
       // a worker re-queueing its own job is a planned hand-over (the CPU camera solve hands back to a GPU), not a crash:
       // the next claim must not use up the job's crash retries
