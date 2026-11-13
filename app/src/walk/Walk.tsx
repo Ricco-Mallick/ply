@@ -52,7 +52,7 @@ export function Walk() {
   }, [engine?.state.loaded, manifest]);
 
   useEffect(() => {
-    const e = new WalkEngine(canvas.current!); setEngine(e); if (import.meta.env.DEV) (window as any).__ply = e;
+    const e = new WalkEngine(canvas.current!); setEngine(e); if (import.meta.env.DEV || new URLSearchParams(location.search).has('sync')) (window as any).__ply = e;  // ?sync=1: ab.html drives two viewers from one pose
     loadManifest().then(({ manifest, base }) => { setManifest(manifest); setBase(base); document.title = `${manifest.name} · Ply`; return e.load(manifest, base); }).catch(err => setLoadErr(err.message));
     return () => e.dispose();
   }, []);
