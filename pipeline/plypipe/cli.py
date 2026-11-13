@@ -186,6 +186,14 @@ def build_parser() -> argparse.ArgumentParser:
                         "capture positions are walkable on it. The default where a GPU can render")
     g.add_argument("--no-dense-occupancy", dest="dense_occupancy", action="store_false",
                    help="export: keep the walking grid from the camera solve")
+    g.add_argument("--dense-layout", dest="dense_layout", action="store_true", default=True,
+                   help="export: measure the walls, doors and ceiling (shell.json) from dense_points.npz and the camera path, "
+                        "and use it when it passes its own checks, else keep the sparse shell. The default where dense points exist")
+    g.add_argument("--no-dense-layout", dest="dense_layout", action="store_false",
+                   help="export: keep the layout measured from the camera solve's sparse points")
+    g.add_argument("--mesh", choices=["colmap", "tsdf"], default="colmap",
+                   help="colmap (default): the mesh stage's COLMAP patch-match stereo and Poisson, mesh.ply. tsdf: export fuses the depth of its dense "
+                        "pass into mesh.glb (about 300k triangles, vertex colours) and collision.glb (about 20k); needs a GPU and the dense pass")
     _add_rescale(sub)
     _add_priors(sub, r)
     return ap
