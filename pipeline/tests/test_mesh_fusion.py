@@ -3,12 +3,14 @@ for the splats' rendered depth, goes through dense.consistent_points exactly as 
 torch code that runs on CUDA. The rooms are 8.1 x 4 x 2.8 m with a 10 cm partition and a 0.8 x 2 m door."""
 import numpy as np
 import pytest
-import trimesh
 
-from plypipe import dense
-from plypipe.stages import mesh
+pytest.importorskip("torch")  # the fusion is torch on a CPU here and on CUDA in export; CI has no torch
+import trimesh  # noqa: E402
 
-from synth import NAV_DOOR, NAV_PARTITION, NAV_ROOMS, depth_views, look, nav_boxes, nav_walk
+from plypipe import dense  # noqa: E402
+from plypipe.stages import mesh  # noqa: E402
+
+from synth import NAV_DOOR, NAV_PARTITION, NAV_ROOMS, depth_views, look, nav_boxes, nav_walk  # noqa: E402
 
 COLOUR = (200, 120, 40)
 

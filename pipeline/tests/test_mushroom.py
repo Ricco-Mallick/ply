@@ -180,6 +180,7 @@ def test_thin_keeps_one_point_per_cell_and_respects_the_limit():
 def test_cloud_scores_count_a_shifted_cloud_by_its_distance(monkeypatch, scipy_present):
     if not scipy_present:
         monkeypatch.setitem(sys.modules, "scipy.spatial", None)  # the worker image has no scipy: the torch path must give the same numbers
+        pytest.importorskip("torch")
     ref = np.stack(np.meshgrid(*[np.arange(0, 3, 0.5)] * 3), -1).reshape(-1, 3)  # a lattice: the nearest point is the shifted twin itself
     for shift, f5, f10 in ((0.03, 1.0, 1.0), (0.07, 0.0, 1.0), (0.2, 0.0, 0.0)):
         got = geometry.cloud_scores(ref + [shift, 0, 0], ref)
