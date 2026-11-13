@@ -56,6 +56,9 @@ function cors(req: Request, env: Env) {
 
 type Role = 'app' | 'worker' | null;
 
+import { inviteBudget, resultsVisible } from './limits';
+
+
 /* Invite only. There is no signup: an invite is a signed code, label.expiry.mac, minted with the
    app key (scripts/invite.py), so the Worker can verify one with Web Crypto and no database. Expiry
    bounds the damage of a leaked code; rotating APP_KEY revokes every outstanding invite at once. */
@@ -74,6 +77,14 @@ async function inviteOf(code: string, env: Env): Promise<{ label: string; expire
   const want = await hmacHex(env.APP_KEY, `${label}.${exp}`);
   return want.slice(0, 32) === mac ? { label, expires } : null;
 }
+async function identity(req: Request, env: Env): Promise<{ role: Role; owner: string }> {
+  const key = req.headers.get('x-ply-key') ?? '';
+  if (env.WORKER_TOKEN && req.headers.get('authorization') === `Bearer ${env.WORKER_TOKEN}`) return { role: 'worker', owner: 'worker' };
+  if (env.APP_KEY && key === env.APP_KEY) return { role: 'app', owner: 'team' };
+  const inv = key ? await inviteOf(key, env) : null;
+  return { role: inv ? 'app' : null, owner: inv?.label ?? '' };
+}
+
 async function role(req: Request, env: Env): Promise<Role> {
   if (env.WORKER_TOKEN && req.headers.get('authorization') === `Bearer ${env.WORKER_TOKEN}`) return 'worker';
   const key = req.headers.get('x-ply-key') ?? '';
@@ -134,6 +145,9 @@ async function route(req: Request, env: Env, ctx: Ctx): Promise<Response> {
   m = p.match(/^\/v1\/scenes\/([\w-]+)\/([\w.\-\/]+)$/);  // subfolders allowed: lod/class-lod-3.radc
   // the live view's index changes every few seconds while a job runs; everything else is immutable or cache-busted
   if (m && (req.method === 'GET' || req.method === 'HEAD')) {
+    // results are public only once a human has looked at them; a job still running is the operator's business
+    const row = await env.DB.prepare('SELECT status FROM jobs WHERE id = ?').bind(m[1]).first() as any;
+    if (!resultsVisible(row?.status, m[2], r !== 'worker')) return json({ error: 'this twin is not published yet' }, 403);
     // live-index.json and scene.json are small and change when a job is fixed, so never cache them
     const nocache = m[2] === 'live-index.json' || m[2] === 'scene.json';
     return serve(env, `scenes/${m[1]}/${m[2]}`, req, nocache ? 'no-store' : 'public, max-age=3600', ctx);
@@ -188,13 +202,25 @@ async function route(req: Request, env: Env, ctx: Ctx): Promise<Response> {
 
   if (p === '/v1/jobs' && req.method === 'POST') {
     if (r !== 'app') return json({ error: 'missing or wrong key' }, 401);
+    const me = await identity(req, env);
     const b = await req.json() as any;
+    const idem = String(req.headers.get('x-idem') ?? b.idem ?? '').slice(0, 120);
+    if (idem) {  // the same submission twice is one job, not two runs paid for twice
+      const seen = await env.DB.prepare('SELECT id FROM jobs WHERE idem = ?').bind(idem).first() as any;
+      if (seen) return json({ jobId: seen.id, duplicate: true }, 200);
+    }
+    if (me.owner && me.owner !== 'team') {
+      const active = await env.DB.prepare("SELECT COUNT(*) n FROM jobs WHERE owner = ? AND status IN ('queued','running')").bind(me.owner).first() as any;
+      const today = await env.DB.prepare('SELECT COUNT(*) n FROM jobs WHERE owner = ? AND created_at > ?').bind(me.owner, now - 86_400_000).first() as any;
+      const over = inviteBudget(active?.n ?? 0, today?.n ?? 0);
+      if (over) return json({ error: over }, 429);
+    }
     // uploaded clips under captures/<id>/, or shared Google Drive files 'gdrive:<fileId>:<name>' (the worker fetches those itself)
     const files: string[] = (b.files ?? []).filter((k: string) => typeof k === 'string' && (k.startsWith(`captures/${safeName(b.captureId)}/`) || /^gdrive:[\w-]{20,}:[\w.\-]{1,120}$/.test(k)));
     if (!files.length) return json({ error: 'no uploaded files for this capture' }, 400);
     const jobId = id();
-    await env.DB.prepare('INSERT INTO jobs (id,name,capture_id,settings,args,files,status,progress,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?)')
-      .bind(jobId, String(b.name ?? 'Capture').slice(0, 80), safeName(b.captureId), JSON.stringify(b.settings ?? {}), JSON.stringify((b.args ?? []).map(String)), JSON.stringify(files), 'queued', 0, now, now).run();
+    await env.DB.prepare('INSERT INTO jobs (id,name,capture_id,settings,args,files,status,progress,created_at,updated_at,owner,idem) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)')
+      .bind(jobId, String(b.name ?? 'Capture').slice(0, 80), safeName(b.captureId), JSON.stringify(b.settings ?? {}), JSON.stringify((b.args ?? []).map(String)), JSON.stringify(files), 'queued', 0, now, now, me.owner || null, idem || null).run();
     if (!safeName(b.captureId).startsWith('rehearsal-')) ctx.waitUntil(kickModal(env, `job ${jobId}`)); // rehearsals are for Kaggle CPU
     return json({ jobId }, 201);
   }

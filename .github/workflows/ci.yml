@@ -25,6 +25,7 @@ jobs:
           node --experimental-strip-types test/sigv4.test.mts
           node --experimental-strip-types test/cdn.test.mts
           node --experimental-strip-types test/modal.test.mts
+          node --experimental-strip-types test/limits.test.mts
   app:
     runs-on: ubuntu-latest
     timeout-minutes: 15
