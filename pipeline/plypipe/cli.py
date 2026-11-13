@@ -196,6 +196,19 @@ def build_parser() -> argparse.ArgumentParser:
                         "pass into mesh.glb (about 300k triangles, vertex colours) and collision.glb (about 20k); needs a GPU and the dense pass")
     _add_rescale(sub)
     _add_priors(sub, r)
+    lp = sub.add_parser("lidar", help="a laser scan (points .npz from scripts/lidar/inspect_e57.py, or a coloured .ply) as a twin: no training")
+    lp.add_argument("input", type=Path, help="points-1cm.npz (points, colors, stations) or a coloured PLY")
+    lp.add_argument("--out", type=Path, required=True)
+    lp.add_argument("--voxel", type=float, default=0.01, help="metres between splats; coarsened when the cloud is over the High splat count")
+    lp.add_argument("--cap", type=int, help="splat cap (default the High preset's, 2,000,000)")
+    lp.add_argument("--up", default="auto", choices=["auto", *(s + a for s in "+-" for a in "xyz")], help="the file's up axis (default: from its surfaces)")
+    lp.add_argument("--sh-degree", type=int, default=3, choices=[0, 1, 2, 3], help="SH degree written; bands above 0 are zero (3 is the trainer's layout)")
+    lp.add_argument("--cell", type=float, default=0.05, help="walking grid cell in metres")
+    lp.add_argument("--lite-max", type=int, help="splats in the phone file (default 800000)")
+    lp.add_argument("--no-clean", action="store_true", help="export without the cleanup filters")
+    lp.add_argument("--no-crop", action="store_true")
+    lp.add_argument("--no-export", action="store_true", help="write scene.ply, scene.json, occupancy and shell only")
+    lp.add_argument("--quiet", action="store_true")
     return ap
 
 
@@ -221,6 +234,9 @@ def main(argv: list[str] | None = None) -> int:
         return rescale.main(a)
     if a.cmd == "priors":
         return _priors_main(a)
+    if a.cmd == "lidar":
+        from plypipe import lidar_splat
+        return lidar_splat.main(a)
     out: Path = a.out
     out.mkdir(parents=True, exist_ok=True)
     log = Log(out, quiet=a.quiet)
