@@ -232,9 +232,9 @@ _PLY_TYPES = {"char": "i1", "uchar": "u1", "short": "i2", "ushort": "u2", "int":
               "int8": "i1", "uint8": "u1", "int16": "i2", "uint16": "u2", "int32": "i4", "uint32": "u4", "float32": "f4", "float64": "f8"}
 
 
-def read_ply_points(path: str | Path, stride: int = 1) -> np.ndarray:
+def read_ply_points(path: str | Path, stride: int = 1, limit: int | None = None) -> np.ndarray:
     """x, y, z of every `stride`-th vertex of a binary PLY (a mesh's too: the vertex block comes first), float32, read through a memory map
-    so a 650 MB laser mesh costs its slice and not its size."""
+    so a 650 MB laser mesh costs its slice and not its size. `limit`: widen the stride until at most that many points come back."""
     path = Path(path)
     with path.open("rb") as f:
         lines, size = [], 0
@@ -261,14 +261,16 @@ def read_ply_points(path: str | Path, stride: int = 1) -> np.ndarray:
     if not {"x", "y", "z"} <= {n for n, _ in fields}:
         raise ValueError(f"{path}: the vertex element has no x, y, z")
     data = np.memmap(path, dtype=np.dtype(fields), mode="r", offset=size, shape=(count,))
-    sel = data[:: max(1, int(stride))]
+    sel = data[:: max(1, int(stride), -(-count // limit) if limit else 1)]
     return np.stack([np.asarray(sel[a], np.float32) for a in "xyz"], axis=1)
 
 
 def thin(points: np.ndarray, cell: float, limit: int | None = None, seed: int = 0) -> np.ndarray:
     """One point per `cell`-metre voxel (the first seen), then at most `limit` of them chosen at random."""
-    key = np.floor(points / cell).astype(np.int64)
-    _, first = np.unique(key, axis=0, return_index=True)
+    ijk = np.floor(points / cell).astype(np.int64)
+    ijk -= ijk.min(axis=0)
+    dims = ijk.max(axis=0) + 1
+    _, first = np.unique((ijk[:, 0] * dims[1] + ijk[:, 1]) * dims[2] + ijk[:, 2], return_index=True)  # one int64 per voxel: fast for tens of millions
     out = points[np.sort(first)]
     if limit and len(out) > limit:
         out = out[np.random.default_rng(seed).choice(len(out), limit, replace=False)]
