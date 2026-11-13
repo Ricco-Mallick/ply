@@ -609,3 +609,26 @@ First run (`q0a-layout`, export only, `--mesh tsdf`, L40S, $0.24): both new part
   validates, and it is **worse than the sparse shell on this room**: both long sides are found, in fragments offset
   by up to 0.5 m, and neither end wall is (the entrance is a diffuse band, the apse is curved), so the outline is
   open. It is **opt-in** (`--dense-layout`) until it is scored on the MuSHRoom rooms.
+
+
+### Phase 7 combined run: clears the floor, and 30k steps trades PSNR for LPIPS (2026-11-13)
+
+One run (`p7full`: `--exposure-affine --exposure-fold 2000 --iterations 30000`, L40S, 36 min, $1.53), against the
+two chapel baselines and against `q1b`, which is the same exposure model at the baseline's 15k steps:
+
+| run | steps | every cc-PSNR | every cc-LPIPS | block cc-PSNR | block cc-LPIPS | cost |
+|---|---:|---:|---:|---:|---:|---:|
+| `q0a` (baseline) | 15,000 | 24.846 | 0.2655 | 22.596 | 0.1637 | $0.38 |
+| `q0b` (baseline) | 15,000 | 24.707 | 0.2666 | 22.052 | 0.1667 | $0.38 |
+| `q1b` | 15,000 | **25.524** | 0.2558 | **23.623** | 0.1566 | $0.92 |
+| `p7full` | 30,000 | 24.993 | **0.2402** | 22.930 | **0.1517** | $1.53 |
+
+- **It clears the noise floor** (0.139 dB and 0.0011 LPIPS): +0.22 dB every-hold-out, +0.61 dB block, −0.026 and
+  −0.014 LPIPS. On the ship rule alone it is a better twin than either baseline.
+- **It is not better than the 15k run of the same variant.** `q1b` at 15,000 steps scores 0.53 dB higher on the
+  every-30th hold-out and 0.69 dB higher on the block, and costs $0.61 less. What the extra steps buy is LPIPS
+  (0.2558 to 0.2402, and 0.1566 to 0.1517 on the block): the longer run is perceptually sharper and numerically
+  noisier against the photos.
+- **So "full length" is not the lever the plan assumed for this variant.** Doubling the steps moved the model along
+  the PSNR/LPIPS trade rather than up it. The combined run's honest result is: publish `q1b` at 15k for fidelity,
+  or `p7full` if the sharper look is preferred at a 0.53 dB cost in PSNR.
