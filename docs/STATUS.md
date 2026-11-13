@@ -1,6 +1,6 @@
 # Status
 
-Updated 2026-11-14. What is deployed, what is running and what is next. Update this file at the end of every
+Updated 2026-11-14, after the phase 7 runs. What is deployed, what is running and what is next. Update this file at the end of every
 session, so the next one starts here and not from an exported transcript.
 
 ## Deployed
@@ -8,8 +8,9 @@ session, so the next one starts here and not from an exported transcript.
 | What | Version | Note |
 |---|---|---|
 | Site (https://ricco.codes/ply/) | `main` at `f92ccff` (PR #33), 2026-11-13 | `ab.html` shows two twins side by side on one camera (the chapel exposure look-test), and every twin opens in Free and the minimap shows the twin's top view. Walk moves at Free's speed and slides along walls. The deploy succeeded; Walk was checked in a browser on the dev build's demo room only, and the live site has not been looked at in a browser since PR #23 |
-| API (`ply-api`, Cloudflare) | version `api-owner-limits` (`5d7a95ed`), 2026-11-13 | read from `GET /`, which now reports the deploy's own id, tag and timestamp from the `version_metadata` binding instead of a hand-bumped variable (it had claimed `35c9c1d` through five later deploys). Carries plan 0.3 and 0.4: an owner per job, one job in flight and ten a day per invite, an idempotency key, and results served only once reviewed; `live/`, `live-index.json`, `pipeline.log` and `report.json` stay readable while a job runs |
-| GPU worker (Modal app `ply`, riccomarcelino) | v19, `c5cccb3`, 2026-11-12 (the head of PR #29: `main` at `1bf549d` plus the phone file's fine-tune by default; redeploy from `main` if that pull request changes or closes) | an L4, or an L40S when Modal has no L4 free. Smoke test passed after the deploy (job `8582285e…`): every stage, the gate and the phone file's fine-tune ran on a real job, the fine-tune in 44 s of a 62 s export. On that clip (2,000 steps, not a twin) the fine-tuned file scored 1.5 dB higher with 1.7 points more see-through pixels, which is over the export's limit, so the untuned file shipped as designed. The job took 20 minutes from upload to review, most of it the container's start and publishing |
+| Chapel twin, the owner's pick | `chapel-q1b-1`, 2026-11-14 | Q1b (one affine colour map per photo, folded) at 15,000 steps. `scene.json`, both splats and the top view serve (200, 307, 307, 200). `chapel-high-2` is untouched and stays the fallback |
+| API (`ply-api`, Cloudflare) | `main` at `e417538` (auto-deploy on merge) | read from `GET /`, which now reports the deploy's own id, tag and timestamp from the `version_metadata` binding instead of a hand-bumped variable (it had claimed `35c9c1d` through five later deploys). Carries plan 0.3 and 0.4: an owner per job, one job in flight and ten a day per invite, an idempotency key, and results served only once reviewed; `live/`, `live-index.json`, `pipeline.log` and `report.json` stay readable while a job runs |
+| GPU worker (Modal app `ply`, riccomarcelino) | `main` at `e417538`, image rev 17, 2026-11-14 (the head of PR #29: `main` at `1bf549d` plus the phone file's fine-tune by default; redeploy from `main` if that pull request changes or closes) | an L4, or an L40S when Modal has no L4 free. Smoke test passed after the deploy (job `8582285e…`): every stage, the gate and the phone file's fine-tune ran on a real job, the fine-tune in 44 s of a 62 s export. On that clip (2,000 steps, not a twin) the fine-tuned file scored 1.5 dB higher with 1.7 points more see-through pixels, which is over the export's limit, so the untuned file shipped as designed. The job took 20 minutes from upload to review, most of it the container's start and publishing |
 | Twins on Hugging Face (`ply-data`) | `4c46886`, 2026-11-11 | 13 twins have `topview.webp` and a `topview` block in `scene.json`; `4c09354` is the commit before. `chapel-high-2` has the rebuilt walking grid (`4c09354`; `e063f08` before it) |
 | CUDA wheels | `wheels/cp312-cu128-sm89` at `e063f08` | L4 and L40S; what `pipeline/wheels.lock.json` pins and every image built so far uses |
 | CUDA wheels, rebuilt | `wheels/cp312-cu128-sm80-89-90-r2` at `73b576a` | for A100, L4/L40S and H100. An image built from it passed a GPU check on an L40S, an A100 and an H100 request (served by an H200): gsplat render, `fused_ssim` and a bilateral-grid kernel forward and backward, the trainer's imports. No training run has used it. Its lock is `pipeline/wheels.lock.sm80-89-90.json`; the default lock is unchanged. (`…sm80-89-90` without `-r2` is the first rebuild, whose `fused-ssim` failed on the H100) |
@@ -21,6 +22,21 @@ session, so the next one starts here and not from an exported transcript.
 | riccomarcelino (about $6 before 2026-11-12; $1.37 billed that day for two deploys and two smoke jobs) | the deployed worker, `ply-bench` (with `smoke/smoke-chapel-30s.mp4`) and `ply-handoff` Volumes, secrets `ply-hf` and `ply-worker` | live jobs |
 | opservemakesalt ($30 on 2026-11-11; $5.34 billed by the end of that day and $1.59 on 2026-11-12, plus about $2.30 by estimate for the evening's Q1b runs on both scenes and four export-only runs) | Volume `ply-bench` with `chapel/high/job` and `drjohnson/prep` (each the solve and photos only) and the smoke clip, secret `ply-hf` (read token), the worker image | experiments (`pipeline/modal/ply_eval.py`) |
 | ricco-mallick (about $1.70) | `ply-bench:drjohnson/prep` and the Dr Johnson benchmark twins | nothing at present |
+
+## Phase 7, as it stands
+
+1. **The combined run is done and measured.** `p7full` (30,000 steps, Q1b's exposure model) clears the chapel's
+   noise floor on all four hold-outs, but scores **0.53 dB below `q1b` at 15,000 steps**, which also costs $0.61 less
+   (`EXPERIMENTS.md`). The owner chose `q1b`; it is published as `chapel-q1b-1`.
+2. **Wheels switched and proven** (`#44`): sm80-89-90, image rebuilt, 300-step smoke on an L40S with no kernel error.
+3. **The worker is deployed from merged main and smoke-tested**: job `ad93bc0a`, `plyctl smoke` reports **passed**,
+   65/65 views solved, the gate raised only the expected 2,000-step warnings.
+4. **Phone upload path:** `docs/PHONE-CHECK.md` has the three steps. `PROJECT-REVIEW` C1 is fixed on `#48` so the
+   check tests the product rather than a known drop bug. **Not yet run: it needs a real phone.**
+5. **One regression to know about:** the smoke job's export took **17 minutes** (18:31:33 to 18:48:35) against 28 s of
+   training and 34 s of phone fine-tune. The worker was uploading an 87 MB `checkpoint-occupancy.tar` while the job
+   sat at "export: done". On a real twin those checkpoints are gigabytes, so this is the first thing to look at before
+   a timed demo.
 
 ## Running
 
