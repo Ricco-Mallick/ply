@@ -31,7 +31,8 @@ for root in (HERE.parent, Path("/root/pipeline")):
 from ply_modal import image as worker_image  # noqa: E402
 from plypipe import evalrun  # noqa: E402
 
-GPU = os.environ.get("PLY_PRIORS_GPU", "L4")
+# an L40S when Modal has no L4 free: on 2026-11-13 two L4-only launches waited 12 minutes without starting
+GPU = [g.strip() for g in os.environ.get("PLY_PRIORS_GPU", "L4,L40S").split(",") if g.strip()]
 TIMEOUT_MIN = 20
 MOGE = "moge @ git+https://github.com/microsoft/MoGe.git@07444410f1e33f402353b99d6ccd26bd31e469e8"  # the last commit before MoGe-3 changed the package
 UTILS3D = "utils3d @ git+https://github.com/EasternJournalist/utils3d.git@3fab839f0be9931dac7c8488eb0e1600c236e183"  # what that commit pins
