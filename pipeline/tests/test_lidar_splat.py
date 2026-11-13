@@ -188,7 +188,7 @@ def test_the_walking_grid_blocks_the_walls_and_the_boxes_and_frees_the_floor(twi
     out = twin["out"]
     meta = json.loads((out / "occupancy.json").read_text())
     grid = cv2.imread(str(out / "occupancy.png"), cv2.IMREAD_GRAYSCALE)
-    assert meta["source"] == "lidar" and grid.shape == (meta["height"], meta["width"])
+    assert meta["source"] == "pointcloud" and meta["producer"] == "lidar" and grid.shape == (meta["height"], meta["width"])
 
     def cells(q):
         col = np.floor((q[:, 0] - meta["origin"][0]) / meta["cellSize"]).astype(int)
@@ -207,6 +207,47 @@ def test_the_walking_grid_blocks_the_walls_and_the_boxes_and_frees_the_floor(twi
     i = np.clip(np.round((path[:, 0] - xs[0]) / walkcheck.STEP).astype(int), 0, len(xs) - 1)
     assert ok[j, i].all()                                                    # the walk through the stations never leaves the floor
     assert meta["walk"]["cameras"] == 1.0 and meta["walk"]["pass"] and twin["report"]["route"]["walkable"] == len(STATIONS)
+    assert meta["walk"]["places"] is not None and twin["report"]["stations"]["used"] == len(STATIONS)
+
+
+def test_a_station_outside_its_own_cloud_is_reported_and_not_used(scan, tmp_path):
+    """`lidar-office-1`'s file has one scan pose 5 m outside its cloud (docs/EXPERIMENTS.md): sight lines from there would
+    free cells through the walls, so the pose is named in the report and the grid is the returns alone; the walk then
+    comes off the standable floor, and every point of it is a place the viewer's walker fits."""
+    f = to_file_frame(scan)
+    far = f["stations"].copy()
+    far[:, 0] = f["points"][:, 0].max() + 5.0               # both stations 5 m past the cloud, in the file's own frame
+    write_npz(tmp_path / "scan.npz", {**f, "stations": far})
+    out = tmp_path / "job"
+    assert main(["lidar", str(tmp_path / "scan.npz"), "--out", str(out), "--no-export", "--quiet", "--voxel", "0.02"]) == 0
+    rep = json.loads((out / "report.json").read_text())["lidar"]
+    meta = json.loads((out / "occupancy.json").read_text())
+    scene = json.loads((out / "scene.json").read_text())
+    assert rep["stations"]["given"] == 2 and rep["stations"]["used"] == 0 and "outside the cloud" in rep["stations"]["why"]
+    assert meta["source"] == "pointcloud" and meta["seenFree"]["cells"] == 0   # no sight line was cast
+    assert rep["route"]["stations"] == 2 and rep["route"]["waypoints"] == "walk"
+    grid = cv2.imread(str(out / "occupancy.png"), cv2.IMREAD_GRAYSCALE)
+    ok, xs, zs = walkcheck.standable(grid, meta)
+    path = np.array(scene["cameraPath"])
+    assert len(path) > 1
+    j = np.clip(np.round((path[:, 2] - zs[0]) / walkcheck.STEP).astype(int), 0, len(zs) - 1)
+    i = np.clip(np.round((path[:, 0] - xs[0]) / walkcheck.STEP).astype(int), 0, len(xs) - 1)
+    assert ok[j, i].all()                                    # the walk is standable at every point, not just at a lattice node
+    assert path[0][0] == scene["spawn"]["position"][0] and path[0][2] == scene["spawn"]["position"][2]
+    assert meta["walk"]["pass"] and meta["walk"]["source"] == "the walk's own points"
+    places = json.loads((out / "places.json").read_text())
+    assert places["version"] == 1 and places["source"] == "scan-objects" and len(places["places"]) >= 2
+    assert all({"id", "name", "cat", "p"} <= set(pl) and pl["cat"] in ("Furniture", "Storage", "Things") for pl in places["places"])
+    assert all(pl["footprintM2"] > 0 and pl["half"][1] > 0 for pl in places["places"])
+    assert meta["walk"]["places"] is not None and meta["walk"]["places"] > 0.9   # the scan's own objects have floor beside them
+
+
+def test_a_station_inside_the_cloud_is_used(scan):
+    """The same room with its stations where it scanned from: both are used, and the note says why."""
+    a = scan["stations"]
+    given = np.concatenate([a, [[50.0, 1.4, 50.0]]])          # one more, in the car park
+    keep, note = L.usable_stations(scan["points"], given, ceiling=2.8)
+    assert len(keep) == 2 and note["given"] == 3 and note["used"] == 2 and "outside the cloud" in note["why"]
 
 
 def test_a_coloured_ply_without_stations_makes_a_twin_too(scan, tmp_path):
@@ -221,8 +262,9 @@ def test_a_coloured_ply_without_stations_makes_a_twin_too(scan, tmp_path):
     assert main(["lidar", str(tmp_path / "scan.ply"), "--out", str(tmp_path / "job"), "--no-export", "--quiet", "--voxel", "0.02"]) == 0
     s = json.loads((tmp_path / "job" / "scene.json").read_text())
     rep = json.loads((tmp_path / "job" / "report.json").read_text())["lidar"]
-    assert s["scaleSource"] == "lidar" and rep["upEvidence"]["axis"] == "y" and len(s["cameraPath"]) == 1 and s["cameraHeight"] is None
-    assert rep["route"]["stations"] == 0 and rep["walk"]["pass"] is not None
+    assert s["scaleSource"] == "lidar" and rep["upEvidence"]["axis"] == "y" and s["cameraHeight"] is None
+    assert rep["route"]["stations"] == 0 and rep["route"]["waypoints"] == "walk" and rep["walk"]["pass"]
+    assert rep["walk"]["source"] == "the walk's own points" and len(s["cameraPath"]) > 1
 
 
 needs_npx = pytest.mark.skipif(not shutil.which("npx") or os.environ.get("PLY_SKIP_NPX") == "1", reason="needs Node/npx and network for splat-transform")

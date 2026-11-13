@@ -1,12 +1,18 @@
 """Phase 6, route 8a on the real scan: step 0's points-1cm.npz -> the twin folder, on a Modal CPU container.
 
     modal run --detach scripts/lidar/lidar_twin.py --name office-1
+    modal run --detach scripts/lidar/lidar_twin.py --name office-1 --dst twin-8b --publish lidar-office-8b
 
 Starts one CPU function with .spawn() and returns: read the result from `modal app logs ply-lidar-twin` (the LIDAR_TWIN line)
 or `modal volume ls ply-bench lidar/office-1/twin`. Needs the ply-bench Volume only (no secret, no GPU): the input is
 lidar/<name>/points-1cm.npz from scripts/lidar/inspect_e57.py --step export, the output lidar/<name>/twin/ holds scene.spz,
 scene_lite.spz, scene.json, occupancy.json/.png, shell.json, topview.webp, report.json and log.jsonl (the 3DGS .ply files
 stay on the container's disk: 250 MB per million splats at SH degree 3, 62 MB at degree 0, which is what runs here).
+
+`--dst` names the volume folder (default `twin`, so a rerun replaces it; give a new name to keep the old one), and
+`--publish <scene id>` uploads the files the viewer needs to the results dataset, scenes/<scene id>/ on Hugging Face,
+through plypipe.hf (the ply-hf secret's HF token; no other secret and no GPU). It never writes the same scene id twice
+by accident: the name is the caller's, and `lidar-office-8a` and `-8b` are separate prefixes.
 
 It runs `python -m plypipe lidar` from the repository's own plypipe folder, so the twin is what the tests checked. The phone
 file (scene_lite.spz, 800 k splats) is merged on the CPU by lidar_splat: splat-transform's own `-d` cut needs a WebGPU adapter
@@ -40,14 +46,20 @@ image = (modal.Image.debian_slim(python_version="3.12")
          .pip_install("numpy>=1.26", "opencv-python-headless>=4.9", "scipy>=1.11")
          .add_local_dir(PLYPIPE, "/root/pipeline/plypipe"))
 VOL, ROOT = "/vol", "/root/pipeline"  # where the container mounts the Volume and the plypipe folder
-KEEP = ("scene.spz", "scene_lite.spz", "scene.json", "occupancy.json", "occupancy.png", "shell.json", "topview.webp", "report.json", "log.jsonl")
+KEEP = ("scene.spz", "scene_lite.spz", "scene.json", "occupancy.json", "occupancy.png", "shell.json", "topview.webp", "places.json",
+        "report.json", "log.jsonl")
+# what the viewer fetches: the same set lidar-office-8a publishes, plus the places
+PUBLISH = ("scene.spz", "scene_lite.spz", "scene.json", "occupancy.json", "occupancy.png", "shell.json", "topview.webp", "places.json")
+REPO = "Ricco-Marcelino/ply-data"
 
 
-@app.function(image=image, cpu=4, memory=12288, timeout=1800, volumes={VOL: vol})
-def twin(name: str = "office-1", points: str = "points-1cm.npz", args: str = "--sh-degree 0"):
-    """lidar/<name>/<points> -> lidar/<name>/twin/. `args` are more plypipe lidar options, e.g. "--cap 1500000 --up z"."""
+@app.function(image=image, cpu=4, memory=12288, timeout=1800, volumes={VOL: vol}, secrets=[modal.Secret.from_name("ply-hf")])
+def twin(name: str = "office-1", points: str = "points-1cm.npz", args: str = "--sh-degree 0", dst: str = "twin",
+         publish: str = ""):
+    """lidar/<name>/<points> -> lidar/<name>/<dst>/, and with `publish`, the viewer's files to scenes/<publish>/ on the
+    results dataset. `args` are more plypipe lidar options, e.g. "--cap 1500000 --up z"."""
     src = Path(VOL) / "lidar" / name / points
-    out = Path(VOL) / "lidar" / name / "twin"
+    out = Path(VOL) / "lidar" / name / dst
     work = Path("/tmp/twin")
     shutil.rmtree(work, ignore_errors=True)
     t0 = time.time()
@@ -64,7 +76,15 @@ def twin(name: str = "office-1", points: str = "points-1cm.npz", args: str = "--
     rep = work / "report.json"
     if rep.exists():
         lid = json.loads(rep.read_text()).get("lidar", {})
-        report["lidar"] = {k: lid.get(k) for k in ("points", "splats", "voxelM", "fScore", "up", "yawDeg", "phaseSeconds", "peakMB")}
+        report["lidar"] = {k: lid.get(k) for k in ("points", "splats", "voxelM", "fScore", "up", "yawDeg", "phaseSeconds", "peakMB",
+                                                  "grid", "walk", "route", "stations", "pointcloud", "places", "ceilingY")}
+    if publish:
+        from plypipe import hf
+        os.environ.setdefault("PLY_HF_REPO", REPO)
+        files = [(f"scenes/{publish}/{f}", out / f) for f in PUBLISH if (out / f).exists()]
+        hf.upload_many(files, message=f"lidar: {publish}, from lidar/{name}/{dst}")
+        report["published"] = {"repo": os.environ["PLY_HF_REPO"], "prefix": f"scenes/{publish}", "files": [f for f, _ in files],
+                               "url": hf.url(f"scenes/{publish}/scene.json")}
     print("LIDAR_TWIN " + json.dumps(report), flush=True)
     if run.returncode:
         raise RuntimeError(f"plypipe lidar exited {run.returncode}")
@@ -72,7 +92,8 @@ def twin(name: str = "office-1", points: str = "points-1cm.npz", args: str = "--
 
 
 @app.local_entrypoint()
-def main(name: str = "office-1", points: str = "points-1cm.npz", args: str = "--sh-degree 0"):
-    call = twin.spawn(name, points, args)
+def main(name: str = "office-1", points: str = "points-1cm.npz", args: str = "--sh-degree 0", dst: str = "twin",
+         publish: str = ""):
+    call = twin.spawn(name, points, args, dst, publish)
     print(f"[lidar] twin started, call {call.object_id}; read it with `modal app logs ply-lidar-twin` (LIDAR_TWIN line) "
           f"or `modal volume ls ply-bench lidar/{name}/twin`", flush=True)
