@@ -117,11 +117,22 @@ def orient_alignment(T: np.ndarray, centres: np.ndarray, ref_points: np.ndarray)
 
 
 def scan_frame_poses(poses: Poses, to_scan: np.ndarray) -> Poses:
-    """The same cameras with their matrices in the scan frame (a rigid `to_scan`; a scale would also scale the rotation, so it is refused)."""
-    s = np.cbrt(abs(np.linalg.det(to_scan[:3, :3])))
-    if abs(s - 1.0) > 1e-3:
-        raise ValueError(f"the alignment scales by {s:.4f}: poses are metric already, expected a rigid transform")
-    return Poses(poses.names, to_scan[None] @ poses.c2w, poses.intrinsics)
+    """The same cameras with their matrices in the scan frame. The dataset's alignment is a similarity, not rigid: it scales the phone's
+    metres to the laser's by 1.0036 on honka and 1.0096 on coffee_room (read from the archives, 2026-11-13). The centres take that scale,
+    since the laser is the reference a twin's scale is scored against; the rotations take the rotation only. Past 5% it is not a
+    correction of metres any more and is refused."""
+    s = alignment_scale(to_scan)
+    if abs(s - 1.0) > 0.05:
+        raise ValueError(f"the alignment scales by {s:.4f}: the poses are metric, expected a rigid transform or one within 5% of it")
+    c2w = poses.c2w.copy()
+    c2w[:, :3, :3] = (to_scan[:3, :3] / s)[None] @ poses.c2w[:, :3, :3]
+    c2w[:, :3, 3] = geometry.apply(to_scan, poses.c2w[:, :3, 3])
+    return Poses(poses.names, c2w, poses.intrinsics)
+
+
+def alignment_scale(to_scan: np.ndarray) -> float:
+    """How much a pose-to-scan matrix stretches lengths (1 for a rigid one)."""
+    return float(np.cbrt(abs(np.linalg.det(to_scan[:3, :3]))))
 
 
 # ------------------------------------------------------------------ the twin against the reference cameras
@@ -300,6 +311,7 @@ def build_reference(pose_files: dict[str, Path], alignment: Path, scan: np.ndarr
         aligned = scan_frame_poses(poses, to_scan)
         centres = aligned.c2w[:, :3, 3]
         tried.append({"file": label, "frames": len(poses.names), "medianToScanM": round(_nn_median(centres, cloud), 3), **info,
+                      "alignmentScale": round(alignment_scale(to_scan), 5),
                       "names": poses.names, "centres": centres})
     pick = min(tried, key=lambda r: r["medianToScanM"])
     meta = {"poses": pick["file"], "names": pick["names"], "centres": np.round(pick["centres"], 5).tolist(), "inputNames": sorted(input_names),

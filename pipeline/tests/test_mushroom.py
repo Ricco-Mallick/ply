@@ -88,11 +88,20 @@ def test_alignment_direction_is_the_one_that_puts_the_cameras_inside_the_scan():
         assert info["direction"] == ("as-stored" if stored is pose_to_scan else "inverted") and info["confident"]
 
 
-def test_scan_frame_poses_refuse_a_scaling_alignment():
+def test_scan_frame_poses_take_a_one_percent_scale_into_the_centres_and_refuse_a_large_one():
     poses = mushroom.read_poses(dataset_json(walk(5)))
     scaled = np.diag([2.0, 2.0, 2.0, 1.0])
     with pytest.raises(ValueError, match="rigid"):
         mushroom.scan_frame_poses(poses, scaled)
+    # the real archives' alignments scale by 1.0036 and 1.0096: centres stretch, rotations stay rotations
+    turn = np.array([[0.0, -1.0, 0.0], [1.0, 0.0, 0.0], [0.0, 0.0, 1.0]])
+    near = np.eye(4)
+    near[:3, :3], near[:3, 3] = 1.0096 * turn, [0.5, 0.0, -0.2]
+    got = mushroom.scan_frame_poses(poses, near)
+    assert np.allclose(got.c2w[:, :3, 3], 1.0096 * poses.c2w[:, :3, 3] @ turn.T + near[:3, 3])
+    assert np.allclose(got.c2w[:, :3, :3], turn[None] @ poses.c2w[:, :3, :3])
+    assert np.allclose(np.linalg.det(got.c2w[:, :3, :3]), 1.0)
+    assert mushroom.alignment_scale(near) == pytest.approx(1.0096)
     moved = np.eye(4)
     moved[:3, 3] = [1, 0, 0]
     assert np.allclose(mushroom.scan_frame_poses(poses, moved).c2w[:, 0, 3], poses.c2w[:, 0, 3] + 1)
