@@ -1,13 +1,13 @@
 # Status
 
-Updated 2026-11-12 (evening). What is deployed, what is running and what is next. Update this file at the end of every
+Updated 2026-11-13 (afternoon). What is deployed, what is running and what is next. Update this file at the end of every
 session, so the next one starts here and not from an exported transcript.
 
 ## Deployed
 
 | What | Version | Note |
 |---|---|---|
-| Site (https://ricco.codes/ply/) | `main` at `804869e` (PR #30), 2026-11-12 | every twin opens in Free and the minimap shows the twin's top view. Walk moves at Free's speed and slides along walls. The deploy succeeded; Walk was checked in a browser on the dev build's demo room only, and the live site has not been looked at in a browser since PR #23 |
+| Site (https://ricco.codes/ply/) | `main` at `f92ccff` (PR #33), 2026-11-13 | `ab.html` shows two twins side by side on one camera (the chapel exposure look-test), and every twin opens in Free and the minimap shows the twin's top view. Walk moves at Free's speed and slides along walls. The deploy succeeded; Walk was checked in a browser on the dev build's demo room only, and the live site has not been looked at in a browser since PR #23 |
 | API (`ply-api`, Cloudflare) | `35c9c1d`, 2026-11-05 | read from `GET /` |
 | GPU worker (Modal app `ply`, riccomarcelino) | v19, `c5cccb3`, 2026-11-12 (the head of PR #29: `main` at `1bf549d` plus the phone file's fine-tune by default; redeploy from `main` if that pull request changes or closes) | an L4, or an L40S when Modal has no L4 free. Smoke test passed after the deploy (job `8582285e…`): every stage, the gate and the phone file's fine-tune ran on a real job, the fine-tune in 44 s of a 62 s export. On that clip (2,000 steps, not a twin) the fine-tuned file scored 1.5 dB higher with 1.7 points more see-through pixels, which is over the export's limit, so the untuned file shipped as designed. The job took 20 minutes from upload to review, most of it the container's start and publishing |
 | Twins on Hugging Face (`ply-data`) | `4c46886`, 2026-11-11 | 13 twins have `topview.webp` and a `topview` block in `scene.json`; `4c09354` is the commit before. `chapel-high-2` has the rebuilt walking grid (`4c09354`; `e063f08` before it) |
@@ -24,7 +24,9 @@ session, so the next one starts here and not from an exported transcript.
 
 ## Running
 
-Nothing. No Modal app is running on either account and no workflow is in progress.
+Three CPU solves of the chapel on the experiments account (`ply-sfm-cpu`: incremental, hierarchical, keyframes; each stops itself
+at its timeout, 70 to 100 minutes) and the E57 point export (`ply-lidar-inspect`, 30-minute timeout), all launched
+2026-11-13 around 14:05 UTC. Nothing on the live account.
 
 ## Experiments so far (`EXPERIMENTS.md`)
 
@@ -117,31 +119,49 @@ run needs the owner's go-ahead and follows plan section 13: one launch, its log 
    stopping. The plan's guided-route test is in `app/test/walk.test.mts`; it found that "Take me there" routes ran
    up to 12 cm inside the walker's width on the chapel (5 cm from a wall on a 5 cm grid), fixed in
    `app/src/lab/places.ts`.
-7. **Get the two MuSHRoom rooms** (plan section 5, S3; phase 1's gate, never met): download from Zenodo, convert their
-   poses, seed `ply-bench`, and run both end to end at Quick (about $3). They are the only laser ground truth, and
-   phase 5 (scale) and the mesh and layout gates of phase 2 are scored on them. The plan's cap applies: if the download
-   or its pose format takes more than two hours, stop and score geometry on S5 and the chapel's plan only.
-8. **Phase 6, step 0** (plan section 10, free): inspect `lidar-office-1`'s E57 (scans, scanner poses, `images2D`).
-9. **Mesh (2.4) and layout (2.5)** from the dense points, as the plan specifies them, with `test_mesh_fusion.py` and
-   `test_layout.py`. The depth points are usable on both real twins (349k and 2.29M points); scored on item 7's rooms.
+7. ~~Get the two MuSHRoom rooms~~ Done 2026-11-13 (`EXPERIMENTS.md`): honka and coffee_room are on the experiments
+   account's `ply-bench` under `mushroom/`, solved by our pipeline and trained at Quick, and every eval table of the
+   scenarios `mushroom-honka` and `mushroom-coffee-room` has "Against the laser scan". Today's scale guess is +5.16%
+   and +3.12% off the laser.
+8. ~~Phase 6, step 0~~ Done 2026-11-13: `lidar-office-1` is one unified cloud (184.6 M points, colour and intensity,
+   no normals, one pose) with **no photos** (`images2D` is empty), so route 8b (training on the scanner's photos)
+   is not possible with this file. Route 8a (`plypipe lidar`, one disk per 1 cm voxel) is built and tested on a
+   synthetic scanned room; the real file's export and twin are the next run (`scripts/lidar/inspect_e57.py --step
+   export`, then `scripts/lidar/lidar_twin.py --name office-1`, about $0.15 together, CPU only).
+9. **Mesh (2.4) and layout (2.5)**: built, tested on synthetic rooms, and **not yet right on a real twin**. On the
+   chapel (export only, `q0a-layout`, 2026-11-13) the TSDF fusion made 13.9M triangles and the simplification cut
+   them to 176, and the dense layout (12 walls against the sparse shell's 6) was discarded over two small windows;
+   both fell back, so the twin was unharmed. Fixes are in progress on `hoplite/sikyon-d854705c--geometry`. Both stay
+   opt-in (`--mesh tsdf`, `--dense-layout`) until scored on item 7's rooms.
 10. **Rest of phase 0** (Next, 5) and the Hugging Face `.gitattributes` fix (Known and left alone).
+11. **Phase 3, the camera solve** (2026-11-13): `--mapper hierarchical` (1g) and `--mapper keyframes` (1b) are built
+    and each solved a 120-frame scene on a CPU. No matches of the chapel were ever saved, so they were made again
+    once (`pipeline/modal/sfm_match.py`, 13 minutes on an L40S, $0.31: 1,236 frames, 10,553 verified pairs) and
+    saved to `chapel/high/job/colmap/database.db`. The three solves on that database (`pipeline/modal/sfm_cpu.py`,
+    8 cores each: incremental as the reference, hierarchical, keyframes) were launched on 2026-11-13 at 14:05 UTC;
+    read them with `python pipeline/modal/sfm_cpu.py collect --out DIR`. Ships if at least 30% faster than incremental
+    at equal quality (plan section 7); then the GPU bundle-adjustment check (`sfm_gpu_ba_check.py`, about $0.07).
+12. **Phase 5, scale** (2026-11-13): `plypipe rescale` (2r, the reference measurement) is built and is the shipped
+    path by the plan's gate; the viewer's side of it (tapping two points) is not built. The scale from MoGe-2 depth
+    (2b, `--priors`, opt-in) is within 3% of the laser on both rooms when applied, but falls back on coffee_room
+    under the 5% spread rule (`EXPERIMENTS.md`). The worker image does not have MoGe-2; `ply_priors.py` installs it
+    at start.
 
 Not for hand-off, because each needs a judgement or the owner:
 
-- Phase order and what each costs, now that phase 4 is down to Q3 (waits for the chapel's 4K frames) and Q4b (waits
-  for phase 5): phase 3 (camera solve, about $2.50, on the chapel; ready now), phase 5 (scale, about $0.60, after item
-  7), phase 6 (8a after item 8), then phase 7. The plan's cut order (section 3) applies once the date of the final is
-  known.
-- Q1: whether a twin with one consistent exposure looks better than one that reproduces the camera's exposure. The
-  scores reward the second; a side-by-side look at the two chapel twins on the Volume is the only way Q1 could still
-  ship. What goes into the combined run of phase 7 (Q6 and the depth walking grid are in; an opacity regulariser of
-  0.005 only with see-through no higher than the baseline's, decision 10).
+- **The exposure look-test is with the owner**: https://ricco.codes/ply/ab.html shows the two chapel twins
+  (`chapel-ab-a`, `chapel-ab-b` on the results dataset) side by side on one camera. Which is which is in
+  `EXPERIMENTS.md` (Q1b on both scenes: A is `q0a-merged`, B is `q1b-nosettle`). Q1 ships only if B looks better.
+- What goes into the combined run of phase 7: Q6 and the depth walking grid are in; an opacity regulariser of 0.005
+  only with see-through no higher than the baseline's (decision 10); whatever of phase 3 passes its ship rule. Phase
+  4's Q3 still waits for the chapel's 4K frames and Q4b for depth priors (phase 5's `priors` stage now saves them).
+- Whether 2b's 5% spread rule should be a rule on the median's own uncertainty: two rooms are too few to decide.
 - Whether the navmesh (5c) is needed: the gate of plan section 6 on the MuSHRoom rooms.
 - The worker runs `c5cccb3`. `main` has gained the walking grid from depth, on by default, and two opt-in options
   (`--exposure-fold`, `--exposure-affine`); a redeploy and the smoke test bring the grid to live jobs. Published
   twins keep their grids unless they are exported again.
 - Owner: the date of the final, Walk as the default mode (decision 6), the `ci` checks required on `main`, and the
-  go-ahead for each paid run.
+  Modal tokens of all three accounts, which were pasted into chat on 2026-11-12 and need rotating.
 
 ## Known and left alone
 
