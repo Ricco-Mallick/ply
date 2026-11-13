@@ -20,8 +20,10 @@ Phase 3 of docs/IMPROVEMENT-PLAN.md: one named variant of the solve, timed and s
 The variant is incremental (1a, the reference), hierarchical (1g) or keyframes (1b); the cores 8 or 16. The container size
 and timeout are fixed when this file loads, so PLY_SFM_VARIANT and PLY_SFM_CPU are read on this machine at launch and must
 agree with --variant and --cores. It reads --src (default chapel/high/job: frames/, frames_index.json, .done/frames.json
-and colmap/database.db must be there) and writes chapel/solve/<variant>-<cores>/: job/ (the solved job through align and
-occupancy, laid out like chapel/high/job: data/sparse/0, dense/images, scene.json ... but no frames or database) and
+and colmap/database.db must be there; the saved job kept no database, so `modal run --detach pipeline/modal/sfm_match.py` makes
+it once on a GPU first, and a launch that finds any of them missing stops before a container starts) and writes
+chapel/solve/<variant>-<cores>/: job/ (the solved job through align and occupancy, laid out like chapel/high/job:
+data/sparse/0, dense/images, scene.json ... but no frames or database) and
 result.json (seconds by part, frames registered, error, tracks, ATE in cm against --reference, default the aligned
 chapel/high/job/data/sparse/0). To train on it: ply_eval.py ... --src chapel/solve/<variant>-<cores>/job --scenario chapel.
 The entry spawns and returns: a client waiting on `.remote()` cancels the run when it is killed (docs/MISTAKES.md, 2026-11-11).
@@ -178,6 +180,14 @@ def main(src: str = "", tag: str = "auto", args: str = "", variant: str = "", co
                          "which sets the container and the timeout")
     job = solvebench.make_job(variant, cores, src, reference, args, _revision())
     print(solvebench.describe(variant, cores), flush=True)
+    try:
+        absent = solvebench.missing(solvebench.volume_have(vol, job["src"]))
+    except Exception as e:
+        absent = []
+        print(f"[sfm-cpu] could not list {job['src']} from here ({type(e).__name__}: {e}); the container checks again", flush=True)
+    if absent:
+        raise SystemExit(f"[sfm-cpu] not started: {job['src']} lacks {', '.join(absent)}: python pipeline/modal/sfm_match.py makes the database "
+                         "(frames, frames_index.json and .done/frames.json must be there first)")
     call = measure.spawn(job)
     print(f"[sfm-cpu] started {call.object_id}: not waiting. `modal app logs ply-sfm-cpu` follows it; the result lands in "
           f"{solvebench.run_dir(variant, cores)}/result.json on the Volume (python pipeline/modal/sfm_cpu.py collect --out DIR)", flush=True)
@@ -188,14 +198,14 @@ if __name__ == "__main__":  # `plan` and `collect` run here, on this machine, no
 
     ap = argparse.ArgumentParser(prog="sfm_cpu.py")
     sub = ap.add_subparsers(dest="cmd", required=True)
-    pl = sub.add_parser("plan", help="the estimate, stop-loss and cost of one variant; no Modal")
-    pl.add_argument("--variant", choices=solvebench.VARIANTS, required=True)
+    pl = sub.add_parser("plan", help="the estimate, stop-loss and cost of one variant, or of every step; no Modal")
+    pl.add_argument("--variant", choices=solvebench.VARIANTS, help="one variant; without it, every paid step in launch order and the ship rule")
     pl.add_argument("--cores", type=int, choices=sorted(solvebench.MEMORY_GIB), default=8)
     co = sub.add_parser("collect", help="the table of every variant's result.json on the Volume")
     co.add_argument("--out", type=Path, required=True)
     a = ap.parse_args()
     if a.cmd == "plan":
-        print(solvebench.describe(a.variant, a.cores))
+        print(solvebench.describe(a.variant, a.cores) if a.variant else solvebench.plan())
     else:
         a.out.mkdir(parents=True, exist_ok=True)
         got = solvebench.collect(vol, a.out)

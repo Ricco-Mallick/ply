@@ -25,6 +25,16 @@ RESTORE = ("frames", "frames_index.json", ".done/frames.json", "colmap/database.
 NEEDED = ("frames", "frames_index.json", ".done/frames.json", "colmap/database.db")
 SOLVE_ROOT = "chapel/solve"
 REFERENCE = "chapel/high/job/data/sparse/0"  # the aligned solve the twin chapel-high-2 was trained on, in metres
+SOURCE = "chapel/high/job"
+# The saved chapel job has the aligned solve and the frames but never kept colmap/database.db, so the features and matches are made
+# once more (sfm_match.py) and every variant maps that one database. Matching the chapel's 1,236 frames took 10 min on an L40S
+# (docs/IMPROVEMENT.md) and 14 to 15 min on an L4 in the live runs, plus the frames in and the database out: 20 min is the estimate.
+MATCH_ESTIMATE_MIN = 20
+MATCH_GPU_H = 0.80                    # an L4, as docs/IMPROVEMENT-PLAN.md records it; the box also has the worker's 8 cores and 32 GiB
+MATCH_CORES = 8
+MATCH_NEEDED = ("frames", "frames_index.json", ".done/frames.json")  # what the sfm stage reads besides the database it makes
+SHIP_RULE = ("ships if: at least 30% faster than incremental on the same database and cores, registered frames within 0.5% of incremental's, "
+             "ATE under 2 cm, then held-out PSNR within the noise floor on the fixed 7k-step train")
 
 
 def hourly(cores: int) -> float:
@@ -49,6 +59,18 @@ def cost_usd(minutes: float, cores: int) -> float:
     return round(minutes / 60 * hourly(cores), 2)
 
 
+def match_hourly() -> float:
+    return MATCH_GPU_H + hourly(MATCH_CORES)
+
+
+def match_deadline_min() -> int:
+    return math.ceil(STOP_LOSS * MATCH_ESTIMATE_MIN)
+
+
+def match_cost_usd(minutes: float) -> float:
+    return round(minutes / 60 * match_hourly(), 2)
+
+
 def run_dir(variant: str, cores: int) -> str:
     return f"{SOLVE_ROOT}/{variant}-{cores}"
 
@@ -59,6 +81,18 @@ def describe(variant: str, cores: int) -> str:
             f"the solve is stopped at {solve_deadline_min(variant, cores)} min (${cost_usd(solve_deadline_min(variant, cores), cores):.2f}), "
             f"function timeout {timeout_min(variant, cores)} min (${cost_usd(timeout_min(variant, cores), cores):.2f}); "
             f"model and result.json go to {run_dir(variant, cores)}/")
+
+
+def describe_match() -> str:
+    return (f"match on an L4 + {MATCH_CORES} cores / {MEMORY_GIB[MATCH_CORES]} GiB (${match_hourly():.2f}/h): estimate {MATCH_ESTIMATE_MIN} min = "
+            f"${match_cost_usd(MATCH_ESTIMATE_MIN):.2f}; function timeout {match_deadline_min()} min (${match_cost_usd(match_deadline_min()):.2f}); "
+            f"colmap/database.db goes to <src>/colmap/")
+
+
+def plan() -> str:
+    """Every paid step in launch order, one line each, then the rule the results are read by."""
+    lines = [describe_match(), *(describe(v, c) for c in sorted(MEMORY_GIB) for v in VARIANTS)]
+    return "\n".join(lines + [SHIP_RULE])
 
 
 def model_metrics(rec, images: int) -> dict:
@@ -94,6 +128,68 @@ def missing(have) -> list[str]:
     return [p for p in NEEDED if not have(p)]
 
 
+# the sfm options that decide what features and matches are made (job.json holds every option of the run, defaults included)
+MATCH_OPTS = ("features", "matcher", "camera_model", "focal_35mm", "exhaustive_max")
+
+
+def match_args(job_json: dict | None, matching: dict | None, extra: str = "") -> list[str]:
+    """The plypipe arguments that make the saved job's database again: the options its run recorded (job.json, camera model and
+    focal prior included, which change the cameras in the database), with the features and matcher the first matching really
+    used (matching.json: `aliked` requested falls back to SIFT on a wheel without ONNX), then `--sfm-part match`, which stops
+    the sfm stage after matching. `--split-min 1` because that stop applies only to captures with at least --split-min frames."""
+    opts = dict((job_json or {}).get("opts") or {})
+    done = matching or {}
+    if done.get("matcher") == "lightglue":
+        opts["features"], opts["matcher"] = "aliked-lg", None
+    else:
+        opts["features"] = done.get("features") if done.get("features") in ("aliked", "sift") else opts.get("features")
+        opts["matcher"] = done.get("matcher") if done.get("matcher") in ("sequential", "exhaustive", "vocabtree") else opts.get("matcher")
+    args = []
+    for k in MATCH_OPTS:
+        if opts.get(k) is not None:
+            args += [f"--{k.replace('_', '-')}", str(opts[k])]
+    if opts.get("no_loop_detection"):
+        args.append("--no-loop-detection")
+    return [*args, "--device", "cuda", "--only", "sfm", "--sfm-part", "match", "--split-min", "1", *extra.split()]
+
+
+def match_preflight(have, force: bool) -> str | None:
+    """Why the match step must not start, else None. `have(rel)` says whether a path under the source job exists."""
+    absent = [p for p in MATCH_NEEDED if not have(p)]
+    if absent:
+        return (f"the source job lacks {', '.join(absent)}: copy the saved job's frames, frames_index.json and .done/frames.json to the "
+                "Volume first (modal volume ls ply-bench <src>)")
+    if have("colmap/database.db") and not force:
+        return "colmap/database.db is already there: every variant must map one database, so it is not replaced without --force"
+    return None
+
+
+def volume_have(volume, src: str):
+    """`have(rel)` for a path under `src` on a Modal Volume, asked from outside the container (before anything is launched)."""
+    def have(rel: str) -> bool:
+        parent, _, name = f"{src}/{rel}".rpartition("/")
+        try:
+            return any(Path(e.path).name == name for e in volume.listdir(parent))
+        except Exception as e:  # a missing folder is an absent path; any other failure is for the container to decide
+            if type(e).__name__ in ("FileNotFoundError", "NotFoundError"):
+                return False
+            raise
+    return have
+
+
+def database_counts(db: Path) -> dict:
+    """What a matched database holds: images, keypoints, pairs matched and pairs geometrically verified."""
+    import sqlite3
+    con = sqlite3.connect(f"file:{db}?mode=ro", uri=True)
+    try:
+        one = lambda q: int(con.execute(q).fetchone()[0] or 0)
+        return {"images": one("select count(*) from images"), "keypoints": one("select sum(rows) from keypoints"),
+                "pairsMatched": one("select count(*) from matches where rows > 0"),
+                "pairsVerified": one("select count(*) from two_view_geometries where rows > 0")}
+    finally:
+        con.close()
+
+
 def table(results: dict[str, dict]) -> str:
     """One row per variant found, fastest mapper first; the reference is whichever incremental row has the same cores."""
     def mins(r):
@@ -117,7 +213,13 @@ def table(results: dict[str, dict]) -> str:
 def collect(volume, out: Path) -> dict[str, dict]:
     """result.json of every variant under chapel/solve on the Volume, copied into out/<variant>-<cores>/result.json."""
     got: dict[str, dict] = {}
-    for entry in volume.listdir(SOLVE_ROOT):
+    try:
+        entries = volume.listdir(SOLVE_ROOT)
+    except Exception as e:  # nothing saved yet: modal raises FileNotFoundError or NotFoundError for the missing folder
+        if type(e).__name__ not in ("FileNotFoundError", "NotFoundError"):
+            raise
+        return got
+    for entry in entries:
         name = Path(entry.path).name
         try:
             data = b"".join(volume.read_file(f"{SOLVE_ROOT}/{name}/result.json"))
