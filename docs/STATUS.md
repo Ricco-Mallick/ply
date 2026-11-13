@@ -24,9 +24,8 @@ session, so the next one starts here and not from an exported transcript.
 
 ## Running
 
-Three CPU solves of the chapel on the experiments account (`ply-sfm-cpu`: incremental, hierarchical, keyframes; each stops itself
-at its timeout, 70 to 100 minutes) and the E57 point export (`ply-lidar-inspect`, 30-minute timeout), all launched
-2026-11-13 around 14:05 UTC. Nothing on the live account.
+Nothing: every run of 2026-11-13 on the experiments account has finished (the three chapel solves, the bundle-adjustment
+check, the scan's export and twin, the MuSHRoom rooms, the chapel's mesh exports). Nothing on the live account.
 
 ## Experiments so far (`EXPERIMENTS.md`)
 
@@ -126,21 +125,23 @@ run needs the owner's go-ahead and follows plan section 13: one launch, its log 
 8. ~~Phase 6, step 0~~ Done 2026-11-13: `lidar-office-1` is one unified cloud (184.6 M points, colour and intensity,
    no normals, one pose) with **no photos** (`images2D` is empty), so route 8b (training on the scanner's photos)
    is not possible with this file. Route 8a (`plypipe lidar`, one disk per 1 cm voxel) is built and tested on a
-   synthetic scanned room; the real file's export and twin are the next run (`scripts/lidar/inspect_e57.py --step
-   export`, then `scripts/lidar/lidar_twin.py --name office-1`, about $0.15 together, CPU only).
-9. **Mesh (2.4) and layout (2.5)**: built, tested on synthetic rooms, and **not yet right on a real twin**. On the
-   chapel (export only, `q0a-layout`, 2026-11-13) the TSDF fusion made 13.9M triangles and the simplification cut
-   them to 176, and the dense layout (12 walls against the sparse shell's 6) was discarded over two small windows;
-   both fell back, so the twin was unharmed. Fixes are in progress on `hoplite/sikyon-d854705c--geometry`. Both stay
-   opt-in (`--mesh tsdf`, `--dense-layout`) until scored on item 7's rooms.
+   synthetic scanned room and run on the real file: 1.92M splats in 128 s on 4 CPUs, published as `lidar-office-8a`
+   and looked at in the viewer (`EXPERIMENTS.md`). Left: a walking route (the file has no scanner station a person
+   stood at), the phone file on a real phone, and wall crossings.
+9. **Mesh (2.4) and layout (2.5)**: built, tested on synthetic rooms, and **not good enough on a real twin**; both are
+   opt-in (`--mesh tsdf`, `--dense-layout`) and neither is scored against a laser yet. On the chapel (`EXPERIMENTS.md`):
+   the mesh's first run was simplified to 176 triangles; with that fixed it reaches its counts (298k and 20k, 100 s on
+   an L4) but is a soup of crossing faces (5.7 triangles per vertex, 182k pieces), which export now refuses to write.
+   `--mesh-keep-raw` saves the extraction (`chapel/eval/q0a-meshraw/mesh_raw.npz` on the Volume) so the next step
+   works on real data: find out whether the fused surface or the vertex clustering is at fault. The dense layout
+   validates on the chapel and is worse than the sparse shell there (fragments, no end walls).
 10. **Rest of phase 0** (Next, 5) and the Hugging Face `.gitattributes` fix (Known and left alone).
-11. **Phase 3, the camera solve** (2026-11-13): `--mapper hierarchical` (1g) and `--mapper keyframes` (1b) are built
-    and each solved a 120-frame scene on a CPU. No matches of the chapel were ever saved, so they were made again
-    once (`pipeline/modal/sfm_match.py`, 13 minutes on an L40S, $0.31: 1,236 frames, 10,553 verified pairs) and
-    saved to `chapel/high/job/colmap/database.db`. The three solves on that database (`pipeline/modal/sfm_cpu.py`,
-    8 cores each: incremental as the reference, hierarchical, keyframes) were launched on 2026-11-13 at 14:05 UTC;
-    read them with `python pipeline/modal/sfm_cpu.py collect --out DIR`. Ships if at least 30% faster than incremental
-    at equal quality (plan section 7); then the GPU bundle-adjustment check (`sfm_gpu_ba_check.py`, about $0.07).
+11. ~~Phase 3, the camera solve~~ Done 2026-11-13, **nothing to ship** (`EXPERIMENTS.md`). No matches of the chapel
+    had been saved, so they were made again once (`pipeline/modal/sfm_match.py`, $0.31) and are now in
+    `chapel/high/job/colmap/database.db`. On that database keyframes (1b) is 13% faster than incremental, not 30%;
+    hierarchical (1g) produced 15 path jumps and fell back; GPU bundle adjustment (1f) does not exist in the
+    installed pycolmap. Both mappers stay as opt-in options. Two identical incremental solves took 60.5 and 34.3
+    minutes on two 8-core Modal boxes, so any future timing must compare variants on one box.
 12. **Phase 5, scale** (2026-11-13): `plypipe rescale` (2r, the reference measurement) is built and is the shipped
     path by the plan's gate; the viewer's side of it (tapping two points) is not built. The scale from MoGe-2 depth
     (2b, `--priors`, opt-in) is within 3% of the laser on both rooms when applied, but falls back on coffee_room
