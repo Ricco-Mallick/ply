@@ -8,6 +8,7 @@
   <style>
     :root { color-scheme: dark; --ink: #e8ecf5; --muted: #93a0bb; --line: #223052; --glass: rgba(12, 18, 32, .78); --accent: #6ea8ff; }
     * { box-sizing: border-box; }
+    [hidden] { display: none !important; }   /* the panel rows set their own display: the attribute must still win */
     html, body { margin: 0; height: 100%; background: #0b1020; color: var(--ink); font: 14px/1.45 Manrope, system-ui, sans-serif; overflow: hidden; }
     #stage { position: fixed; inset: 0; width: 100%; height: 100%; display: block; }
     .bar { position: fixed; top: 16px; left: 16px; right: 16px; display: flex; gap: 10px; align-items: center; pointer-events: none; }
@@ -21,8 +22,8 @@
     .views button.on { background: #e8ecf5; color: #0b1020; }
     #status { position: fixed; left: 16px; bottom: 16px; color: var(--muted); font-family: "Space Mono", monospace; font-size: 12px; letter-spacing: .04em; }
     #hint { position: fixed; left: 50%; bottom: 18px; transform: translateX(-50%); color: var(--muted); font-size: 12.5px; background: var(--glass);
-      border: 1px solid var(--line); border-radius: 999px; padding: 7px 14px; backdrop-filter: blur(12px); }
-    body.locked #hint { display: none; }
+      border: 1px solid var(--line); border-radius: 999px; padding: 7px 14px; backdrop-filter: blur(12px); pointer-events: none; }
+    body.locked #hint:not(.measure) { display: none; }
     /* outliner */
     #outliner { position: fixed; top: 74px; right: 16px; width: 268px; max-height: calc(100% - 100px); overflow: auto;
       background: var(--glass); border: 1px solid var(--line); border-radius: 16px; backdrop-filter: blur(16px); padding: 12px; }
@@ -45,6 +46,33 @@
     #panel button { border: 1px solid var(--line); background: #101a2e; color: var(--ink); border-radius: 9px; padding: 6px 10px; cursor: pointer; font: inherit; font-size: 12px; }
     #panel button:hover { border-color: var(--accent); }
     .sel { outline: 2px solid var(--accent); outline-offset: 2px; }
+    /* reference measurement: two taps, the real length, the corrected scale */
+    #measure.on { background: #e8ecf5; border-color: #e8ecf5; color: #0b1020; }
+    #scale { position: fixed; left: 16px; bottom: 38px; color: var(--muted); font-family: "Space Mono", monospace; font-size: 11px; letter-spacing: .06em; }
+    body.measuring #stage { cursor: crosshair; }
+    #crosshair { position: fixed; left: 50%; top: 50%; width: 20px; height: 20px; margin: -10px 0 0 -10px; pointer-events: none; z-index: 2; }
+    #crosshair::before, #crosshair::after { content: ""; position: absolute; background: var(--ink); opacity: .82; box-shadow: 0 0 0 1px #0b1020cc; }
+    #crosshair::before { left: 9px; top: 0; width: 2px; height: 100%; }
+    #crosshair::after { top: 9px; left: 0; height: 2px; width: 100%; }
+    body.measuring #crosshair { animation: crosshair-in .18s ease-out; }
+    @keyframes crosshair-in { from { opacity: 0; } to { opacity: 1; } }
+    @media (prefers-reduced-motion: reduce) { body.measuring #crosshair { animation: none; } }
+    #measure-panel { position: fixed; left: 50%; bottom: 62px; transform: translateX(-50%); width: min(320px, calc(100% - 32px));
+      background: var(--glass); border: 1px solid var(--line); border-radius: 16px; backdrop-filter: blur(16px); padding: 14px; box-shadow: 0 18px 50px #0006; }
+    #measure-panel h3 { margin: 0; font-size: 15px; }
+    #measure-panel .kind { color: var(--accent); font: 600 11px/1 "Space Mono", monospace; letter-spacing: .16em; text-transform: uppercase; margin: 6px 0; }
+    #measure-panel .size { color: var(--muted); font-family: "Space Mono", monospace; font-size: 12px; margin-bottom: 10px; }
+    #measure-panel .field { display: flex; align-items: center; gap: 8px; margin: 0 0 10px; font-size: 12px; color: var(--muted); }
+    #measure-panel input { flex: 1; min-width: 0; border: 1px solid var(--line); border-radius: 9px; background: #101a2e; color: var(--ink);
+      padding: 7px 9px; font: inherit; font-family: "Space Mono", monospace; }
+    #measure-panel input:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
+    #measure-panel .row { display: flex; flex-wrap: wrap; gap: 6px; }
+    #measure-panel button { border: 1px solid var(--line); background: #101a2e; color: var(--ink); border-radius: 9px; padding: 6px 10px; cursor: pointer; font: inherit; font-size: 12px; }
+    #measure-panel button:hover { border-color: var(--accent); }
+    #measure-panel button.primary { background: var(--accent); border-color: var(--accent); color: #0b1020; font-weight: 600; }
+    #measure-panel .note { margin: 10px 0 0; font-size: 12px; color: var(--muted); }
+    #measure-panel .cmd { display: block; margin-top: 6px; padding: 6px 8px; border: 1px solid var(--line); border-radius: 8px; background: #101a2e;
+      color: var(--ink); font-family: "Space Mono", monospace; font-size: 10.5px; line-height: 1.5; overflow-wrap: anywhere; user-select: all; }
   </style>
 </head>
 <body>
@@ -53,6 +81,7 @@
   <div class="bar">
     <a class="pill brand" href="/ply/index.html"><i></i>PLY · MODEL</a>
     <button class="pill" id="export">Export GLB</button>
+    <button class="pill" id="measure" aria-pressed="false" title="Tap two points on the model, then type the real distance (M)">Measure</button>
     <div class="views" role="group" aria-label="View">
       <button data-view="walk" class="on">Walk</button>
       <button data-view="doll">Dollhouse</button>
@@ -79,8 +108,30 @@
     </div>
   </div>
 
+  <section id="measure-panel" hidden aria-label="Reference measurement">
+    <h3 id="measure-title">Real distance</h3>
+    <div class="kind" id="measure-kind">reference measurement</div>
+    <div class="size" id="measure-distance">—</div>
+    <label class="field" id="measure-field">Real length (m)
+      <input id="measure-real" type="number" inputmode="decimal" min="0.01" step="0.01" autocomplete="off" />
+    </label>
+    <div class="row" id="measure-actions">
+      <button id="measure-apply" class="primary">Apply scale</button>
+      <button id="measure-cancel">Cancel</button>
+    </div>
+    <p class="note" id="measure-note" role="status" aria-live="polite"></p>
+    <code class="cmd" id="measure-command" hidden></code>
+    <div class="row" id="measure-done" hidden>
+      <button id="measure-again">Measure again</button>
+      <button id="measure-exit">Done</button>
+    </div>
+  </section>
+
+  <div id="crosshair" hidden aria-hidden="true"></div>
+
   <div id="status">loading…</div>
-  <div id="hint">Walk: <b>W A S D</b> · look: click to capture the mouse · <b>X</b> wireframe · click an object to select</div>
+  <div id="scale" hidden></div>
+  <div id="hint">Walk: <b>W A S D</b> · look: click to capture the mouse · <b>X</b> wireframe · <b>M</b> measure · click an object to select</div>
 
   <script type="module" src="./src/model/main.ts"></script>
 </body>
