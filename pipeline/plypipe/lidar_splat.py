@@ -332,11 +332,13 @@ def write_ply(path: Path, cols: dict[str, np.ndarray], chunk: int = 500_000) -> 
 
 def fscore(splats: np.ndarray, scan: np.ndarray, radius: float = 0.01, sample: int = 1_000_000, seed: int = 0) -> dict:
     """Precision (splat centres within `radius` of the scan), recall (scan points within `radius` of a splat centre) and
-    their F-score, the scan sampled down to `sample` points."""
+    their F-score. Recall queries a sample of `sample` scan points; precision uses the whole scan, since a sampled scan is
+    sparser than the splats it is held against (on 2.7 M points sampled to 1 M, precision at 1 cm read 0.52 for splats at
+    1.6 cm that were all on the surface)."""
     from scipy.spatial import cKDTree
     rng = np.random.default_rng(seed)
-    scan = scan[rng.choice(len(scan), sample, replace=False)] if len(scan) > sample else scan
     p = float((cKDTree(scan).query(splats, workers=-1)[0] <= radius).mean())
+    scan = scan[rng.choice(len(scan), sample, replace=False)] if len(scan) > sample else scan
     r = float((cKDTree(splats).query(scan, workers=-1)[0] <= radius).mean())
     return {"radiusM": radius, "precision": round(p, 4), "recall": round(r, 4), "f": round(2 * p * r / ((p + r) or 1), 4)}
 
@@ -608,7 +610,7 @@ def run_stage(ctx: Ctx, source: Path) -> dict:
         write_ply(ctx.out / LITE_SRC, disks(lc, lcol, ln, la, ls, lv, min(sh, 2)))
         lite = {"splats": len(lc), "voxelM": round(lv, 5)}
         ctx.log.emit("lidar", "progress", f"phone file: {len(lc)} splats at a {lv * 100:.2f} cm voxel")
-    f = fscore(centres, scene_pts, 0.01)
+    f = fscore(centres, scene_pts, max(0.01, voxel))
     lap("fscore")
     splat_info = {"source": Path(source).name, "points": n_in, "splats": len(centres), "voxelM": round(voxel, 5), "voxelRequestedM": voxel0, "capSplats": cap,
                   "origin": np.asarray(d["origin"]).tolist(), "shDegree": sh}

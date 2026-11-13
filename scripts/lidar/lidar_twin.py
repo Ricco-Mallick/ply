@@ -8,7 +8,9 @@ lidar/<name>/points-1cm.npz from scripts/lidar/inspect_e57.py --step export, the
 scene_lite.spz, scene.json, occupancy.json/.png, shell.json, topview.webp, report.json and log.jsonl (the 3DGS .ply files
 stay on the container's disk: 250 MB per million splats at SH degree 3, 62 MB at degree 0, which is what runs here).
 
-It runs `python -m plypipe lidar` from the repository's own plypipe folder, so the twin is what the tests checked. The work
+It runs `python -m plypipe lidar` from the repository's own plypipe folder, so the twin is what the tests checked. The phone
+file (scene_lite.spz, 800 k splats) is merged on the CPU by lidar_splat: splat-transform's own `-d` cut needs a WebGPU adapter
+and fails on a container with no GPU (tests/test_export.py's phone-file test fails the same way on a CPU machine). The work
 is capped at the High preset's 2 M splats: an office thinned to 1 cm has 5 to 30 M points, coarsened to about 1.5 to 3 cm.
 Measured on 2 contended CPUs here, per million splats: 20 s for local planes, 165 s for the scanner-visibility test of the
 normals (the cost, and it grows with the number of stations), 5 s for the rest of the stage, 0.55 GB of memory over a 0.6 GB
