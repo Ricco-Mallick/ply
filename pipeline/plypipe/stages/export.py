@@ -30,6 +30,7 @@ and the stage applies scene.json's transform with splat-transform's translate/ro
 """
 from __future__ import annotations
 
+import json
 import os
 
 import math
@@ -406,6 +407,7 @@ def run_stage(ctx: Ctx) -> dict:
     needed_src.unlink(missing_ok=True)
     update_scene(ctx, {"splat": {"file": "scene.spz", "lite": "scene_lite.spz", "format": "spz"}})
     walk_grid = _dense_occupancy(ctx, cleaned, holdout, aa) if ctx.opt("dense_occupancy") else None
+    layout = _dense_layout(ctx) if walk_grid else None
     top = _topview(ctx, cleaned if cleaned.exists() else full)
     return {"spz": full.name, "spzMB": round(full.stat().st_size / 2**20, 2), "lite": lite.name, "liteMB": round(lite.stat().st_size / 2**20, 2),
             "cropBox": box, "cropDropped": drop_crop, "gaussiansIn": total, "gaussiansOut": n, "floaterFilter": floaters, "liteGaussians": lite_n,
@@ -416,7 +418,7 @@ def run_stage(ctx: Ctx) -> dict:
             **({"roomCrop": room_crop} if room_crop else {}),
             "shRestore": sh, **({"shippedEval": shipped} if shipped else {}),
             **({"cleanupChoice": choice} if choice else {}), **({"topview": top} if top else {}),
-            **({"denseOccupancy": walk_grid} if walk_grid else {})}
+            **({"denseOccupancy": walk_grid} if walk_grid else {}), **({"denseLayout": layout} if layout else {})}
 
 
 def _dense_occupancy(ctx: Ctx, ply: Path, holdout: int, aa: bool) -> dict:
@@ -435,6 +437,47 @@ def _dense_occupancy(ctx: Ctx, ply: Path, holdout: int, aa: bool) -> dict:
     else:
         ctx.log.emit("export", "warn", f"walking grid from depth not used: {out['why']}")
     return {**out, "seconds": round(time.time() - t0, 1)}
+
+
+def _dense_layout(ctx: Ctx) -> dict | None:
+    """The measured layer (shell.json) rebuilt from dense_points.npz and the camera path (plypipe.shell.layout), shipped
+    when it passes its own checks and otherwise left as the sparse shell, with the reasons written into that file under
+    `denseLayout` and the failed layout kept as shell_dense.json. None when the option is off or there are no dense
+    points: the job is then exactly what it was."""
+    from plypipe import colmap_txt, dense, geometry, shell as shell_mod
+
+    src = ctx.out / dense.FILE
+    if not ctx.opt("dense_layout", True) or not src.exists():
+        return None
+    t0 = time.time()
+    try:
+        z = np.load(src)
+        model = colmap_txt.read_model(ctx.data_dir / "sparse" / "0")
+        ims = sorted(model.images, key=lambda im: im.name)
+        path = geometry.camera_centers_and_ups(np.array([i.qvec for i in ims]), np.array([i.tvec for i in ims]))[0]
+        sp = ctx.out / "shell.json"
+        old = json.loads(sp.read_text()) if sp.exists() else {}
+        places = json.loads((ctx.out / "places.json").read_text()).get("places", []) if (ctx.out / "places.json").exists() else []
+        det = [{"cls": (pl.get("ai") or {}).get("cls"), "p": pl["p"], "half": (pl.get("ai") or {}).get("half"),
+                **({"views": pl["ai"]["frames"]} if (pl.get("ai") or {}).get("frames") else {})} for pl in places]
+        new = shell_mod.layout(z["points"], z["normals"].astype(np.float32), path, detections=det,
+                               boxes=[dict(pl, cls=(pl.get("ai") or {}).get("cls"), half=(pl.get("ai") or {}).get("half")) for pl in places])
+    except Exception as e:
+        ctx.log.emit("export", "warn", f"dense layout not built: {str(e)[-160:]}")
+        return {"used": "sparse", "why": f"failed: {str(e)[-160:]}", "seconds": round(time.time() - t0, 1)}
+    ok, why = new["validation"]["ok"], "; ".join(new["validation"]["reasons"])
+    (ctx.out / "shell_dense.json").write_text(json.dumps(new, indent=1))
+    if ok:
+        sp.write_text(json.dumps(new, indent=1))
+        doors = sum(o["kind"] == "door" for o in new["openings"])
+        ctx.log.emit("export", "progress", f"layout from dense points: {len(new['walls'])} walls, {doors} doors, ceiling {new['ceilingY']} m")
+    else:
+        if old:
+            sp.write_text(json.dumps({**old, "source": old.get("source", "sparse"), "denseLayout": {"ok": False, "reasons": new["validation"]["reasons"]}}, indent=1))
+        ctx.log.emit("export", "warn", f"dense layout not used: {why}")
+    return {"used": "dense" if ok else "sparse", **({} if ok else {"why": why}), "walls": len(new["walls"]),
+            "doors": sum(o["kind"] == "door" for o in new["openings"]), "windows": sum(o["kind"] == "window" for o in new["openings"]),
+            "rejectedDetections": len(new["rejected"]), "seconds": round(time.time() - t0, 1)}
 
 
 def _topview(ctx: Ctx, source: Path) -> dict | None:

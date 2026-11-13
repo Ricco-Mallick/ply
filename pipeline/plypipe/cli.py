@@ -157,6 +157,11 @@ def build_parser() -> argparse.ArgumentParser:
                         "capture positions are walkable on it. The default where a GPU can render")
     g.add_argument("--no-dense-occupancy", dest="dense_occupancy", action="store_false",
                    help="export: keep the walking grid from the camera solve")
+    g.add_argument("--dense-layout", dest="dense_layout", action="store_true", default=True,
+                   help="export: measure the walls, doors and ceiling (shell.json) from dense_points.npz and the camera path, "
+                        "and use it when it passes its own checks, else keep the sparse shell. The default where dense points exist")
+    g.add_argument("--no-dense-layout", dest="dense_layout", action="store_false",
+                   help="export: keep the layout measured from the camera solve's sparse points")
     return ap
 
 
