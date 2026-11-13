@@ -61,6 +61,18 @@ def _add_rescale(sub) -> None:
     r.add_argument("--dry-run", action="store_true", help="say what would change; write nothing")
 
 
+def _add_priors(sub, run) -> None:  # noqa: ANN001
+    g = run.add_argument_group("scale from monocular depth (opt-in, needs a GPU and the MoGe package)")
+    g.add_argument("--priors", action="store_true", help="align: measure the scale with MoGe-2 depth against the camera solve's points (2b); "
+                                                          "frames that disagree by over 5% fall back to --height-cam")
+    p = sub.add_parser("priors", help="measure a job's scale with MoGe-2 depth and save its depth (writes priors/); prints the scale and spread")
+    p.add_argument("folder", type=Path, help="a job folder (dense/sparse_txt, or data/sparse/0 for a finished twin) with dense/images")
+    for q in (g, p):
+        q.add_argument("--priors-model", dest="priors_model", choices=("moge2-l", "moge2-b"), default="moge2-l", help="MoGe-2 ViT-L (2b) or ViT-B (2c)")
+        q.add_argument("--priors-frames", dest="priors_frames", type=int, default=150, help="frames spread along the path")
+        q.add_argument("--priors-max-seconds", dest="priors_max_seconds", type=float, default=900.0, help="stop predicting after this long and use the frames done")
+
+
 def build_parser() -> argparse.ArgumentParser:
     ap = argparse.ArgumentParser(prog="plypipe", description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--version", action="version", version=__version__)
@@ -168,7 +180,21 @@ def build_parser() -> argparse.ArgumentParser:
     g.add_argument("--no-dense-occupancy", dest="dense_occupancy", action="store_false",
                    help="export: keep the walking grid from the camera solve")
     _add_rescale(sub)
+    _add_priors(sub, r)
     return ap
+
+
+def _priors_main(a) -> int:  # noqa: ANN001
+    from plypipe.stages import priors
+    log = Log(a.folder, quiet=False)
+    ctx = Ctx(out=a.folder, log=log, opts={k: v for k, v in vars(a).items() if k.startswith("priors_")})
+    try:
+        priors.run_stage(ctx)
+    except Exception as e:
+        log.emit("priors", "error", str(e), trace=traceback.format_exc()[-2000:])
+        return 1
+    print(json.dumps(priors.readout(a.folder), indent=2))
+    return 0
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -176,6 +202,8 @@ def main(argv: list[str] | None = None) -> int:
     if a.cmd == "rescale":
         from plypipe import rescale
         return rescale.main(a)
+    if a.cmd == "priors":
+        return _priors_main(a)
     out: Path = a.out
     out.mkdir(parents=True, exist_ok=True)
     log = Log(out, quiet=a.quiet)

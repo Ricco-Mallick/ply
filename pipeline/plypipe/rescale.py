@@ -308,6 +308,14 @@ def recover(folder: Path) -> str | None:
     return "discarded an unfinished rescale"
 
 
+def _world(folder: Path) -> dict:
+    """What identifies the camera solve a job's scale belongs to, so `align` does not apply this reference to another one."""
+    if not (folder / "dense" / "sparse_txt" / "points3D.txt").exists():
+        return {}
+    m = colmap_txt.read_model(folder / "dense" / "sparse_txt")
+    return {"world": {"points": m.num_points, "images": len(m.images)}}
+
+
 def items(folder: Path) -> list[str]:
     """The metric files this folder has, by relative name (scene.json and report.json are added by rescale())."""
     folder = Path(folder)
@@ -328,7 +336,7 @@ def rescale(folder: Path, factor: float, *, force: bool = False, reference: dict
         raise FileNotFoundError(f"{scene_p} not found: not a twin folder")
     note = None if dry_run else recover(folder)
     scene = json.loads(scene_p.read_text())
-    new_scene = scene_json(scene, f, reference)
+    new_scene = scene_json(scene, f, {**_world(folder), **(reference or {})})
     names = items(folder)
     files = ["scene.json", *names, *(["report.json"] if (folder / "report.json").exists() else []),
              *([".done/align.json"] if (folder / ".done" / "align.json").exists() else [])]
