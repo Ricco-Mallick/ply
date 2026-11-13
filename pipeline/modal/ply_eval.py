@@ -44,8 +44,11 @@ import modal
 
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
+sys.path.append(str(HERE.parent))  # the checkout, before importing anything from it
+from plypipe.paths import import_root  # noqa: E402
+
 for root in (HERE.parent, Path("/root/pipeline")):  # a checkout; the container's mounted copy. Appended: pipeline/modal must not shadow `modal`
-    if (root / "plypipe").is_dir():
+    if import_root(root):  # is_dir() raises PermissionError on an unreadable /root instead of returning False
         sys.path.append(str(root))
 from ply_modal import image as worker_image  # noqa: E402
 from plypipe import evalrun  # noqa: E402
