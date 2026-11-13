@@ -1,9 +1,13 @@
 #!/usr/bin/env python3
 # Copyright (c) 2026 Ricco Marcelino. All rights reserved. Proprietary and confidential — see LICENSE.
-"""Operate the live Ply service from a shell: what is running, and a smoke test for after every worker deploy.
+"""Operate the live Ply service from a shell: what is running, a job's log, stopping work, the cycle's cost, and a
+smoke test for after every worker deploy.
 
     python3 scripts/plyctl.py status                  # workers, queue, and with the team code the newest jobs
     python3 scripts/plyctl.py status --job <id>       # one job
+    python3 scripts/plyctl.py logs <id>               # the job's pipeline log, or its message when there is no log
+    python3 scripts/plyctl.py stop <id>               # cancel the job if the API can, and end the GPU app if it is alone
+    python3 scripts/plyctl.py cost [--profile all|name]   # credits and metered cost this cycle, per Modal account
     python3 scripts/plyctl.py smoke --clip clip.mp4   # a short clip through the real API, then every result is checked
     python3 scripts/plyctl.py smoke --job <id>        # the same wait and checks for a job that is already queued
 
@@ -13,6 +17,14 @@ the end, and that the API serves each result file. It exits 0 when
 all of that holds, 1 when a check fails and 2 when the job is still running at the time limit. The job stays in
 review: rejecting it would queue it again. A capture under 400 frames is solved on the GPU box, so the hand-off to
 the CPU solver is not covered.
+
+`logs` reads scenes/<job>/pipeline.log through the API. A worker keeps that file next to the results when a run
+fails, so a job that never failed has none: `logs` then prints the job's message and says the log is not there.
+`--follow` keeps reading while the job is queued or running. `stop` asks the API's cancel route (there is none yet,
+and it says so), then stops the `ply` Modal app on its profile only when this is the only running job, because the
+app is shared. `cost` runs `modal billing summary --json` for each profile and prints credits, metered and billed
+cost for the cycle; the summary holds no secret. The Modal CLI is `modal` on PATH, else pipeline/.venv/bin/modal, or
+PLY_MODAL.
 
 The API is PLY_API (default: the deployed one). The team code is read from PLY_TEAM_KEY or from the first line of
 --key-file; it is sent to the API only, never to the storage links. The clip is not in the repository: a 30-second
@@ -24,11 +36,15 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
+import shutil
+import subprocess
 import sys
 import time
 import urllib.error
 import urllib.request
 from datetime import datetime, timezone
+from decimal import Decimal, InvalidOperation
 from pathlib import Path
 
 API = "https://ply-api.ricco-ply.workers.dev"
@@ -40,6 +56,11 @@ STAGES = ("frames", "sfm", "align", "occupancy", "label", "train", "export")
 REQUIRED = ("scene.spz", "scene_lite.spz", "scene.json", "report.json", "occupancy.json", "occupancy.png", "places.json")
 EXPECTED = ("topview.webp", "evidence/poses.json")  # a short walk may have no wall ring to draw; evidence never fails a job
 ENDED = ("review", "done", "failed")
+ACTIVE = ("queued", "running")  # still going: stop can act on it, and logs --follow keeps reading
+FOLLOW_EVERY = 3.0  # seconds between reads of a followed log
+MODAL_APP = "ply"  # pipeline/modal/ply_modal.py: modal.App("ply")
+DEFAULT_PROFILE = "ricco-mallick"  # where the GPU app is expected: --profile or MODAL_PROFILE says otherwise
+MODAL_TIMEOUT = 120.0  # a Modal CLI call that has not answered in two minutes is not going to
 
 
 def say(line: str) -> None:
@@ -52,12 +73,16 @@ class Api:
     def __init__(self, base: str = API, key: str = "", send=None):
         self.base, self.key, self.send = base.rstrip("/"), key.strip(), send or _send
 
-    def call(self, method: str, path: str, body=None, content_type: str = "application/json"):
+    def request(self, method: str, path: str, body=None, content_type: str = "application/json"):
+        """One request: (status, headers, bytes). `call` raises on an error status; this one does not."""
         data = json.dumps(body).encode() if isinstance(body, (dict, list)) else body
         headers = {"content-type": content_type} if data is not None else {}
         if self.key:
             headers["x-ply-key"] = self.key
-        status, _, raw = self.send(method, self.base + path, data, headers)
+        return self.send(method, self.base + path, data, headers)
+
+    def call(self, method: str, path: str, body=None, content_type: str = "application/json"):
+        status, _, raw = self.request(method, path, body, content_type)
         if status >= 400:
             raise RuntimeError(f"{method} {path}: {status} {raw[:200].decode('utf-8', 'replace')}")
         return json.loads(raw) if raw else None
@@ -161,6 +186,79 @@ def read_key(a) -> str:
     return os.environ.get("PLY_TEAM_KEY", "").strip()
 
 
+def modal_exe() -> str:
+    """The `modal` CLI: PLY_MODAL, else one on PATH, else the repo's venv, the way the watch scripts call it."""
+    if os.environ.get("PLY_MODAL"):
+        return os.environ["PLY_MODAL"]
+    found = shutil.which("modal")
+    if found:
+        return found
+    local = Path(__file__).resolve().parents[1] / "pipeline" / ".venv" / "bin" / "modal"
+    return str(local) if local.exists() else "modal"
+
+
+def _run(cmd: list[str], timeout: float) -> tuple[int, str, str]:
+    try:
+        p = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
+    except FileNotFoundError:
+        raise RuntimeError(f"the modal CLI is not installed at {cmd[0]}: install it, or set PLY_MODAL")
+    except subprocess.TimeoutExpired:
+        raise RuntimeError(f"`{' '.join(cmd)}` did not answer in {timeout:g} s")
+    return p.returncode, p.stdout, p.stderr
+
+
+class Modal:
+    """The `modal` CLI. `call(args, timeout)` returns (exit code, stdout, stderr): tests replace it."""
+
+    def __init__(self, exe: str = "", run=None):
+        self.exe, self.run = exe or modal_exe(), run or _run
+
+    def call(self, args: list[str], timeout: float = MODAL_TIMEOUT) -> tuple[int, str, str]:
+        return self.run([self.exe, *args], timeout)
+
+
+BOX = "╭╮╰╯│─┏┓┗┛━┃ "
+ANSI = re.compile(r"\x1b\[[0-9;]*m")
+
+
+def cli_error(stderr: str) -> str:
+    """The CLI's error box as one line: no frame, no colour, no newlines."""
+    lines = [ANSI.sub("", line).strip(BOX) for line in stderr.splitlines()]
+    return " ".join(" ".join(line.split()) for line in lines if line.split()) or "no message"
+
+
+def modal_failure(profile: str, code: int, stderr: str) -> str:
+    """What went wrong with the Modal CLI, said the way it can be acted on."""
+    msg = cli_error(stderr)
+    if "Token missing" in msg or "Token not found" in msg or "Could not authenticate" in msg:
+        return f"the modal CLI is logged out for profile '{profile}': run `modal token new --profile {profile}`"
+    if "Modal profile" in msg and "was not found" in msg:
+        return f"no such modal profile '{profile}' (see `modal profile list`)"
+    return f"`modal` exited {code}: {msg}"
+
+
+def profiles(modal: Modal) -> list[str]:
+    """Every Modal profile the CLI knows; `--profile all` asks each of them for its billing summary."""
+    code, out, err = modal.call(["profile", "list", "--json"])
+    if code != 0:
+        raise RuntimeError(f"cannot list the Modal profiles: {cli_error(err)}")
+    try:
+        rows = json.loads(out)
+    except ValueError:
+        raise RuntimeError("`modal profile list --json` did not print JSON")
+    if not isinstance(rows, list):
+        return []
+    return [str(r["name"]) for r in rows if isinstance(r, dict) and r.get("name")]
+
+
+def money(value) -> str:
+    return f"${Decimal(str(value)):,.2f}"
+
+
+def money(value) -> str:
+    return f"${Decimal(str(value)):,.2f}"
+
+
 def cmd_status(api: Api, a, say=say) -> int:
     if a.job:
         j = api.call("GET", f"/v1/jobs/{a.job}")
@@ -200,6 +298,169 @@ def cmd_smoke(api: Api, a, say=say, sleep=time.sleep, clock=time.time) -> int:
     return 1 if problems else 0
 
 
+def _lines(text: str, say) -> str:
+    """Print the complete lines of `text` and return the unfinished last one, for a followed log."""
+    lines = text.split("\n")
+    rest = lines.pop()
+    for line in lines:
+        say(line)
+    return rest
+
+
+def no_log(api: Api, job_id: str, say=say) -> dict:
+    """The job's message, when the API serves no pipeline.log for it; returns the job."""
+    job = api.call("GET", f"/v1/jobs/{job_id}")
+    say(f"no pipeline.log for job {job_id} ({job.get('status')}): a worker publishes one at "
+        f"scenes/{job_id}/pipeline.log only when a run fails")
+    if job.get("status") == "running":
+        say("the running container's own log is `modal app logs ply`, with MODAL_PROFILE set to its account")
+    say(f"the job's message: {str(job.get('message') or '').strip() or '(none)'}")
+    return job
+
+
+def cmd_logs(api: Api, a, say=say, sleep=time.sleep) -> int:
+    if a.tail is not None and a.tail < 1:
+        raise ValueError("--tail must be 1 or more")
+    path = f"/v1/scenes/{a.job}/pipeline.log"
+    seen, first, pending, told = 0, True, "", False
+    while True:
+        status, _, raw = api.request("GET", path)
+        if status == 404:
+            if told:
+                job = api.call("GET", f"/v1/jobs/{a.job}")
+            else:
+                job = no_log(api, a.job, say)
+                told = True
+            if not a.follow or job.get("status") not in ACTIVE:
+                return 0
+            sleep(FOLLOW_EVERY)
+            continue
+        if status >= 400:
+            raise RuntimeError(f"GET {path}: {status} {raw[:200].decode('utf-8', 'replace')}")
+        if len(raw) < seen:  # the file was replaced: read it again rather than print the wrong bytes
+            seen, first = 0, True
+        text = raw.decode("utf-8", "replace")
+        if first:
+            if a.tail is not None:
+                text = "".join(f"{line}\n" for line in text.splitlines()[-a.tail:])
+            if not a.follow:
+                if text:
+                    say(text.rstrip("\n"))
+                return 0
+            pending = _lines(text, say)
+            first = False
+        elif len(raw) > seen:
+            pending = _lines(pending + raw[seen:].decode("utf-8", "replace"), say)
+        seen = len(raw)
+        if api.call("GET", f"/v1/jobs/{a.job}").get("status") not in ACTIVE:
+            status, _, raw = api.request("GET", path)  # the last lines are written after the final heartbeat
+            if status == 200 and len(raw) > seen:
+                pending = _lines(pending + raw[seen:].decode("utf-8", "replace"), say)
+            if pending:
+                say(pending)
+            return 0
+        sleep(FOLLOW_EVERY)
+
+
+def other_running(api: Api, job_id: str, say=say) -> list[str] | None:
+    """The ids of the other running jobs, or None when that cannot be known (no team code)."""
+    if not api.key:
+        say("not stopping the Modal app: checking whether another job is running needs the team code "
+            "(PLY_TEAM_KEY or --key-file)")
+        return None
+    running = [j["id"] for j in api.call("GET", "/v1/jobs").get("jobs") or [] if j.get("status") == "running"]
+    if job_id not in running:
+        say("not stopping the Modal app: the job is not among the newest jobs the API lists, so the other running "
+            "ones cannot be counted")
+        return None
+    return [i for i in running if i != job_id]
+
+
+def stop_app(modal: Modal, profile: str, say=say) -> bool:
+    """End the deployed `ply` app on that profile; True when the CLI said it stopped it."""
+    code, _, err = modal.call(["--profile", profile, "app", "stop", MODAL_APP, "-y"])
+    if code == 0:
+        say(f"stopped the Modal app {MODAL_APP} on profile {profile} (`modal app stop {MODAL_APP} -y`)")
+        return True
+    say(f"could not stop the Modal app {MODAL_APP} on profile {profile}: {modal_failure(profile, code, err)}")
+    return False
+
+
+def cmd_stop(api: Api, a, say=say, modal=None) -> int:
+    modal = modal or Modal()
+    job = api.call("GET", f"/v1/jobs/{a.job}")
+    status = job.get("status") or "unknown"
+    say(f"job {a.job}: {status}{' ' + job['stage'] if job.get('stage') else ''}")
+    if status not in ACTIVE:
+        say(f"nothing to stop: the run is over ({status})")
+        if status == "review":
+            say("it waits for a decision (approve or reject); stop does not decide")
+        return 0
+    others = other_running(api, a.job, say) if status == "running" else []
+    code, _, raw = api.request("POST", f"/v1/jobs/{a.job}/cancel", {})
+    cancelled = 200 <= code < 300
+    detail = raw[:200].decode("utf-8", "replace")
+    if cancelled:
+        say(f"the API cancelled job {a.job}")
+    elif code == 404:
+        say(f"the API has no cancel route (POST /v1/jobs/{a.job}/cancel answered 404): job {a.job} is still {status}")
+    elif code in (401, 403):
+        say(f"the API refused the cancel ({code}): a cancel route is there and needs the team code")
+    elif code == 409:
+        say(f"the API would not cancel job {a.job} ({code}): {detail}")
+    else:
+        raise RuntimeError(f"POST /v1/jobs/{a.job}/cancel: {code} {detail}")
+    if status == "queued":
+        if not cancelled:
+            say("nothing was stopped: the job is still queued, and stopping the GPU app would not take it off the queue")
+        return 0 if cancelled else 1
+    if others is None:
+        return 1
+    if others:
+        say(f"left the Modal app running: {len(others)} other job(s) are running ({', '.join(others[:5])})")
+        if cancelled:
+            say(f"job {a.job} is cancelled, but its container, if any, is still going")
+        return 1
+    stopped = stop_app(modal, a.profile, say)
+    if cancelled and stopped:
+        return 0
+    if stopped and not cancelled:
+        say(f"the job still shows {status} in the API: with no cancel route and no heartbeat it is re-queued after "
+            "20 minutes and will be picked up again")
+    return 1
+
+
+def cmd_cost(_api: Api, a, say=say, modal=None) -> int:
+    modal = modal or Modal()
+    wanted = profiles(modal) if a.profile == "all" else [a.profile]
+    if not wanted:
+        raise RuntimeError("no Modal profiles to ask: `modal profile list` shows none")
+    say(f"billing cycle {datetime.now(timezone.utc):%Y-%m}")
+    rows, failed = [("profile", "credits", "metered", "billed")], 0
+    for profile in wanted:
+        code, out, err = modal.call(["--profile", profile, "billing", "summary", "--json"])
+        if code != 0:
+            say(f"{profile}: {modal_failure(profile, code, err)}")
+            failed += 1
+            continue
+        try:
+            summary = json.loads(out)
+            metered, billed = Decimal(summary["metered_cost"]), Decimal(summary["billed_cost"])
+            credits = (summary.get("adjustments") or {}).get("credits")
+            credits = Decimal(str(credits)) * -1 if credits is not None else None
+            if credits is not None and not credits:
+                credits = Decimal(0)  # Decimal("-0") would print as $-0.00
+        except (ValueError, KeyError, TypeError, InvalidOperation):
+            say(f"{profile}: `modal billing summary --json` did not print a summary this command reads")
+            failed += 1
+            continue
+        rows.append((profile, money(credits) if credits is not None else "-", money(metered), money(billed)))
+    widths = [max(len(row[i]) for row in rows) for i in range(4)]
+    for row in rows if len(rows) > 1 else []:
+        say(f"{row[0]:<{widths[0]}}  {row[1]:>{widths[1]}}  {row[2]:>{widths[2]}}  {row[3]:>{widths[3]}}".rstrip())
+    return 1 if failed else 0
+
+
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     ap.add_argument("--api", default=os.environ.get("PLY_API", API))
@@ -213,14 +474,34 @@ def main(argv: list[str] | None = None) -> int:
     which.add_argument("--clip", type=Path, help="upload this clip and queue a job")
     which.add_argument("--job", help="wait for and check a smoke job that is already queued (reading needs no team code)")
     k.add_argument("--minutes", type=float, default=45, help="how long to wait for the job")
+    g = sub.add_parser("logs")
+    g.add_argument("job", help="the job whose pipeline log to read")
+    g.add_argument("--tail", type=int, help="only the last N lines (the first read when following)")
+    g.add_argument("--follow", action="store_true", help="keep reading while the job is queued or running")
+    q = sub.add_parser("stop")
+    q.add_argument("job", help="the job to stop")
+    q.add_argument("--profile", default=os.environ.get("MODAL_PROFILE") or DEFAULT_PROFILE,
+                   help=f"the Modal profile that runs the {MODAL_APP} app (default: {DEFAULT_PROFILE})")
+    c = sub.add_parser("cost")
+    c.add_argument("--profile", default="all", help="'all' or one Modal profile name")
     a = ap.parse_args(argv)
     api = Api(a.api, read_key(a))
     if a.cmd == "smoke" and a.clip and not api.key:
         print("smoke needs the team code: PLY_TEAM_KEY or --key-file", file=sys.stderr)
         return 2
     try:
-        return cmd_smoke(api, a) if a.cmd == "smoke" else cmd_status(api, a)
-    except (RuntimeError, OSError, ValueError) as e:
+        if a.cmd == "smoke":
+            return cmd_smoke(api, a)
+        if a.cmd == "logs":
+            return cmd_logs(api, a)
+        if a.cmd == "stop":
+            return cmd_stop(api, a)
+        if a.cmd == "cost":
+            return cmd_cost(api, a)
+        return cmd_status(api, a)
+    except KeyboardInterrupt:
+        return 130
+    except (RuntimeError, OSError, ValueError, ArithmeticError) as e:
         print(f"error: {e}", file=sys.stderr)
         return 1
 
