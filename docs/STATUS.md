@@ -1,6 +1,6 @@
 # Status
 
-Updated 2026-11-13 (afternoon). What is deployed, what is running and what is next. Update this file at the end of every
+Updated 2026-11-14. What is deployed, what is running and what is next. Update this file at the end of every
 session, so the next one starts here and not from an exported transcript.
 
 ## Deployed
@@ -150,10 +150,14 @@ run needs the owner's go-ahead and follows plan section 13: one launch, its log 
 
 Not for hand-off, because each needs a judgement or the owner:
 
-- **The exposure look-test is with the owner**: https://ricco.codes/ply/ab.html shows the two chapel twins
-  (`chapel-ab-a`, `chapel-ab-b` on the results dataset) side by side on one camera. They are the Volume's
-  `chapel/eval/q0a-merged` and `chapel/eval/q1b-nosettle`, in that order; the owner picks blind. Q1 ships only if
-  the owner prefers the second.
+- ~~The exposure look-test~~ **Decided 2026-11-14: the owner preferred B.** The page
+  (https://ricco.codes/ply/ab.html) showed `chapel-ab-a` = `chapel/eval/q0a-merged` (the baseline) against
+  `chapel-ab-b` = `chapel/eval/q1b-nosettle` (one affine colour map per photo, folded back). B is the appearance
+  model, so **Q1b ships** under the ship rule that was written down before the pick: it is 0.3 dB under the
+  baselines on held-out views (29.13 against 29.25) and 0.0057 better on LPIPS (0.2356 against 0.2412). This is a
+  look decision, taken blind, not a metric win; the big-grid `q1` still does not ship. What remains is to make
+  `--exposure-affine --exposure-fold 2000` the default for the combined run of phase 7 and to re-export the twins
+  that should carry it.
 - What goes into the combined run of phase 7: Q6 and the depth walking grid are in; an opacity regulariser of 0.005
   only with see-through no higher than the baseline's (decision 10); whatever of phase 3 passes its ship rule. Phase
   4's Q3 still waits for the chapel's 4K frames and Q4b for depth priors (phase 5's `priors` stage now saves them).
