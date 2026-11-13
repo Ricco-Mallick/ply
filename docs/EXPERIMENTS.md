@@ -479,3 +479,133 @@ Exported again from `q0a` (`q0a-merged`, $0.30 for both):
   cells; on the published sparse grid the same check finds roomier routes because they cross the pews.
 - **On by default** (`--no-dense-occupancy` turns it off): it adds 4 to 25 s to an export on a GPU. The live worker
   runs it from its next deploy; published twins keep their grids until they are exported again.
+
+## The two MuSHRoom rooms: a laser reference at last (2026-11-13)
+
+Plan section 5, S3, and the gate phase 1 never met. Two rooms from MuSHRoom (Zenodo records 10230733 and 10222321,
+CC-BY-4.0): **honka** (a plain room, 6.1 × 3.9 m, 335 photos) and **coffee_room** (6.3 × 5.0 m, 391 photos), each
+an iPhone walk with a Faro scan. `pipeline/modal/mushroom_seed.py` fetches them (882 MB), unpacks the photos and a
+laser cloud thinned to 2 cm, and runs our own solve; `PLY_EVAL_SCENARIO=mushroom-honka|mushroom-coffee-room` trains
+them at Quick length and the table gains "Against the laser scan".
+
+What the real archives showed that the reading of the format had not:
+
+- The dataset's alignment of the phone's poses to the scan (`icp_iphone.json`) is not rigid. It scales by 1.0036 on
+  honka and 1.0096 on coffee_room: the phone's own metres are up to 1% short of the laser's. The reference cameras
+  take that scale, so a twin is scored against the laser's metres.
+- The poses are camera-to-world in OpenGL axes, in metres; the alignment is stored pose-to-scan (cameras land a
+  median 0.56 and 0.58 m from a scan point that way, and over 2 m the other way).
+
+Baselines (`q0a`, 7,000 steps, an L40S because no L4 was free):
+
+| | photos registered | solve min | every cc-PSNR | SSIM | LPIPS | viewer PSNR | splats kept | **scale error** | camera fit rms | splat F at 5 cm (P / R) | F at 10 cm |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| honka | 334 / 335 | 5.3 | 21.14 | 0.733 | 0.352 | 22.18 | 0.34M | **+5.16%** | 1.4 cm | 0.334 (0.72 / 0.22) | 0.601 |
+| coffee_room | 363 / 391 | 4.7 | 24.03 | 0.799 | 0.299 | 23.61 | 0.23M | **+3.12%** | 1.7 cm | 0.279 (0.78 / 0.17) | 0.578 |
+
+- **Scale error is signed**: positive means the twin's metres are longer than the room's. Today's guess, a camera
+  1.45 m above the floor (2a), makes both twins too large, by 5.2% and 3.1%. A 90 cm door reads 94.6 cm in honka.
+- The solve itself is sound: once scaled, the twin's cameras sit 1.4 and 1.7 cm (rms) from the dataset's.
+- Coffee_room lost 28 of 391 photos in the solve (25 dropped as unanchored), 92.8% registered: just over the 90% gate.
+- Splat centres as geometry: three quarters of them lie within 5 cm of the scan (precision 0.72 and 0.78), but they
+  cover only a fifth of it at 5 cm (recall 0.22 and 0.17) at Quick length. This is the number the TSDF mesh has to
+  beat (plan section 6).
+- A noise floor on these rooms needs a second baseline (`q0b`); not run, since nothing here is compared by PSNR yet.
+
+### Phase 5: the scale from MoGe-2 depth against the laser (2026-11-13)
+
+`pipeline/modal/ply_priors.py`, MoGe-2 ViT-L on about 150 frames of each saved solve: per frame the median ratio of
+its metric depth to the solve's depth at the track points, then the median over frames (2b).
+
+| | 2a error (camera height) | 2b ratio | spread across frames | 2b error if applied | status | seconds (frames) |
+|---|---:|---:|---:|---:|---|---:|
+| honka | +5.16% | 0.9645 | 4.3% | **+1.4%** | ok | 63.5 (138), first use |
+| coffee_room | +3.12% | 0.9658 | 6.9% | **−0.4%** | inconsistent: falls back to 2a | 30.7 (148) |
+
+- 2b lands within 3% of the laser on both rooms and is better than 2a on both. But the plan's rule sends it back to
+  2a when frames disagree by more than 5%, and coffee_room's frames spread 6.9%, so under the rule as written it
+  ships 2a's +3.12% there and **misses the gate** (at most 3% on both rooms).
+- The spread of single frames is not the error of their median: with 148 frames the median is far steadier than
+  one frame. Two rooms are too few to move the threshold on, so it stays at 5% and **2b stays opt-in** (`--priors`).
+  By the plan's gate the **reference measurement (2r, `plypipe rescale`) is the shipped path**, and it is built.
+- MoGe-2 costs 0.07 to 0.2 s per frame on an L40S and its install 3 s; each run was about two minutes of GPU.
+
+### Phase 6: the office scan as a twin, with no training (2026-11-13)
+
+- **Step 0** (`scripts/lidar/inspect_e57.py`): `lidar-office-1` is 3.4 GB, **one** unified cloud of 184,614,433
+  points with colour and intensity, no normals, no row and column structure, one pose, and **no photos**
+  (`images2D` is empty). Route 8b (training on the scanner's photos) is not possible with this file.
+- **Export:** thinned to 1 cm it is 4,340,907 points (65 MB).
+- **Route 8a** (`scripts/lidar/lidar_twin.py`, 4 CPUs, 128 s, 1.6 GB peak): one disk per voxel, coarsened to 1.34 cm
+  to fit the 2M cap: 1,921,505 splats (21.8 MB), a phone file of 727,986 at 2.1 cm (8.6 MB). Splat centres against
+  the scan at one voxel: F = 1.0, as it must be. The room is 7.7 × 6.1 m with a 4.0 m ceiling; four walls measured.
+- **Looked at in the viewer** (dev build, the phone file): the office reads as an office (desks, monitors, chairs,
+  the wooden floor). The first build showed the background through a regular grid of gaps: disks at half the point
+  spacing cover 82% halfway between two neighbours. At 0.75 of the spacing they cover 94%, and the grid is gone from
+  near surfaces and faint on far ones. Published as `lidar-office-8a` on the results dataset.
+- **Not right yet:** the file's single pose is not a place a person stood, so the twin has no camera path and the
+  walking check reports no capture position walkable (6.5 m² to stand on); Walk starts from the nearest free cell.
+  The plan's other two ship conditions are unmeasured: the phone file on a real phone, and wall crossings.
+
+### Phase 3: the chapel's matches, made again (2026-11-13)
+
+No run had kept the chapel's `database.db`. `pipeline/modal/sfm_match.py` made the features and matches again with
+the first job's settings (SIFT, sequential with loop detection): 1,236 frames, 9.1M keypoints, 15,760 pairs matched
+and 10,553 verified, 602 s of matching in 777 s on an L40S ($0.31), a 1.4 GB database saved beside the job. The
+incremental, hierarchical and keyframe solves all map this one database.
+
+### Phase 3: three solves of the chapel on one database (2026-11-13)
+
+`pipeline/modal/sfm_cpu.py`, 8 cores and 32 GiB each, one box per variant, launched together. ATE is against the
+solve `chapel-high-2` was trained on (a different run of the matcher, so not zero for anyone).
+
+| variant | solve min | × incremental | registered | reprojection px | ATE rmse / median cm | fell back | cost |
+|---|---:|---:|---:|---:|---:|---|---:|
+| incremental (1a, the reference) | 61.0 | 1.00 | 1,222 / 1,236 | 0.582 | 6.75 / 0.53 | – | $0.73 |
+| keyframes (1b) | 53.0 | 0.87 | 1,217 / 1,236 | 0.580 | 6.82 / 0.77 | no | $0.62 |
+| hierarchical (1g) | 58.8 | 0.96 | 1,222 / 1,236 | 0.582 | 6.75 / 0.54 | **yes, to incremental** | $0.70 |
+
+- **Keyframes (1b) is 13% faster, not 30%: dropped.** Its parts: 346 keyframes solved in 4.0 min, the other 871
+  frames registered in 18.2 min, and one final bundle adjustment of 30.5 min, which is where the saving went. It
+  registered 5 frames fewer (0.4%) and its median camera is 0.24 cm further from the reference.
+- **Hierarchical (1g) failed its quality check: dropped.** The clusters took 6.0 min and the merged bundle adjustment
+  18.0 min, 24 minutes in all, but the merged model had 1,191 frames and **15 jumps in the camera path** (the clusters
+  were not joined cleanly), so the stage solved incrementally again as designed (34.3 min) and shipped that.
+- **The boxes are not equal, and that is the largest effect measured here.** The same incremental solve of the same
+  database took 60.5 min on one 8-core box and 34.3 min on another (the hierarchical run's fallback): 1.76×. The
+  final bundle adjustment shows the same factor (18.0 min on that box, 30.5 min on the keyframes box). So a ratio
+  between two boxes is good to no better than that; within one box, hierarchical's 24 min against its own 34 min of
+  incremental is the only like-for-like figure, 0.70, and that variant failed on quality. The script records the CPU
+  model as "unknown" (Modal hides it), so a future comparison must run its variants one after another on one box.
+- **GPU bundle adjustment (1f): not available.** On 60 frames (`sfm_gpu_ba_check.py`, $0.03), `use_gpu` ran but
+  changed nothing: the solver stayed SuiteSparse on the CPU (19.5 s against 18.5 s, the same final cost), and the
+  CASPAR backend is not compiled into pycolmap-cuda12 4.2.1 ("built without CASPAR_ENABLED").
+- **Core count (1c) not run:** it is for a winner, there is none, and one 16-core run could not be told apart from
+  the 1.76× between boxes.
+
+**Phase 3 ends with nothing to ship beyond 1a**, which is already live (plan section 7: "or the variant is dropped").
+Both mappers stay in the code as opt-in (`--mapper hierarchical|keyframes`), with their fallback. Where the time
+is, for whoever returns to this: the final global bundle adjustment (18 to 30 min of a 53 to 61 min solve).
+
+### Phase 2: the layout and the mesh from depth on the real chapel (2026-11-13)
+
+First run (`q0a-layout`, export only, `--mesh tsdf`, L40S, $0.24): both new parts were wrong and both failed soft.
+
+- **Mesh:** fusion at 2.5 cm took 23 s and 227 MB and extraction gave 13.9M triangles; a third were dropped as
+  specks and the simplification returned **176 triangles**. Cause: its search for the clustering cell counted
+  duplicate triangles, which a noisy surface keeps producing at every cell size, so it ran to the coarsest cell.
+  Fixed (distinct triangles, a speck is a piece under 0.25 m², a mesh under a tenth of its target is not written);
+  on a 12.3M-triangle stand-in with 1 cm noise it now gives 298k and 19.9k triangles.
+- **Mesh, second run** (`q0a-mesh`, on an L4, the first chapel-size dense pass on one: 42 s fusing, 59 s meshing,
+  the walking grid unchanged at 16.35 m²): 298,319 and 19,976 triangles, 4.2 MB and 0.25 MB, 845 m² kept and 251 m²
+  dropped in 84,294 specks. The counts are met and **the mesh is not a surface**: 52,277 vertices under 298,319
+  triangles (5.7 per vertex where a surface has 2), 182,297 connected pieces, the largest of 261 triangles. Drawn
+  from the spawn point the altar and the arches are recognisable far away and the near walls are ragged sheets of
+  crossing triangles. Export now refuses a mesh over three triangles per vertex, and `--mesh-keep-raw` saves the
+  extraction for the next step (`q0a-meshraw`). **The TSDF mesh does not ship.** The plan foresaw this for 3b
+  ("depth from an unregularised splat is weakest exactly on plain walls") and names 3c and 3d as what follows.
+- **Layout:** 12 walls (the sparse shell has 6), discarded because two lifted windows were under 0.5 m. An opening
+  that fails its own check is now dropped and the walls stand. Run again on the chapel's dense points on a CPU, it
+  validates, and it is **worse than the sparse shell on this room**: both long sides are found, in fragments offset
+  by up to 0.5 m, and neither end wall is (the entrance is a diffuse band, the apse is curved), so the outline is
+  open. It is **opt-in** (`--dense-layout`) until it is scored on the MuSHRoom rooms.

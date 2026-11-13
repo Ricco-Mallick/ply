@@ -169,6 +169,41 @@ def test_a_photo_set_without_a_frames_index_runs_on_the_small_scenario(tmp_path,
         rig.go()
 
 
+def test_a_mushroom_run_adds_its_scores_against_the_laser_reference(tmp_path, monkeypatch):
+    from plypipe import mushroom
+    rig = Rig(tmp_path, monkeypatch)
+    (saved_job(rig.vol / "mushroom" / "honka" / "job") / "frames_index.json").unlink()
+    seen = []
+
+    def score(job, reference, splats=True):
+        seen.append((Path(job).name, reference, splats, (Path(job) / ".done" / "export.json").exists()))
+        return {"scaleErrorPct": 4.2, "cameras": {"matched": 320, "inliers": 300}}
+
+    monkeypatch.setattr(mushroom, "load_reference", lambda folder: str(folder))
+    monkeypatch.setattr(mushroom, "score_job", score)
+    result = rig.m.run_variant.local(evalrun.make_job("mushroom-honka", "", "q0a", revision={"revision": "abc", "codeHash": "1"}))
+    assert result["complete"] and result["geometry"] == {"scaleErrorPct": 4.2, "cameras": {"matched": 320, "inliers": 300}}
+    assert [s[1] for s in rig.stages] == [evalrun.MUSHROOM, evalrun.MUSHROOM] and all(s[0] == "job" for s in seen)
+    assert all(s[1] == str(rig.vol / "mushroom" / "honka" / "reference") for s in seen)
+    assert [s[2] for s in seen] == [s[3] for s in seen] and seen[-1][2] is True      # splats are scored once export has finished, not before
+    assert json.loads((rig.vol / "mushroom-honka" / "eval" / "q0a" / "metrics.json").read_text())["geometry"]["scaleErrorPct"] == 4.2
+
+
+def test_a_scoring_failure_is_recorded_and_does_not_fail_the_run(tmp_path, monkeypatch):
+    from plypipe import mushroom
+    rig = Rig(tmp_path, monkeypatch)
+    (saved_job(rig.vol / "mushroom" / "coffee_room" / "job") / "frames_index.json").unlink()
+
+    def broken(*a, **k):
+        raise ValueError("only 2 of the twin's 300 cameras match a reference frame")
+
+    monkeypatch.setattr(mushroom, "load_reference", lambda folder: {})
+    monkeypatch.setattr(mushroom, "score_job", broken)
+    result = rig.m.run_variant.local(evalrun.make_job("mushroom-coffee-room", "", "q0a"))
+    assert result["complete"] and result["geometry"] == {"error": "ValueError: only 2 of the twin's 300 cameras match a reference frame"}
+    assert (rig.vol / "mushroom-coffee-room" / "eval" / "q0a" / "scene.spz").exists()
+
+
 def test_a_volume_without_the_saved_job_fails_before_any_gpu_work(tmp_path, monkeypatch):
     rig = Rig(tmp_path, monkeypatch)
     with pytest.raises(FileNotFoundError, match="lacks"):

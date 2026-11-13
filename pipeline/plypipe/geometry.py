@@ -305,3 +305,31 @@ def umeyama(src: np.ndarray, dst: np.ndarray) -> tuple[float, np.ndarray, np.nda
     var = (a ** 2).sum() / len(src)
     s = float(np.trace(np.diag(D) @ S) / var) if var > 0 else 1.0
     return s, R, mu_d - s * R @ mu_s
+
+
+# ---------------------------------------------------------------- cloud against a reference (docs/IMPROVEMENT-PLAN.md section 5)
+
+def nn_distance(points: np.ndarray, ref: np.ndarray, chunk: int = 4096) -> np.ndarray:
+    """Distance from each of `points` to its nearest point of `ref`. scipy's k-d tree when the image has scipy (the worker's does not
+    list it), else exact brute force through torch in chunks."""
+    try:
+        from scipy.spatial import cKDTree
+        return cKDTree(ref).query(points, workers=-1)[0]
+    except ImportError:
+        import torch
+        dev = "cuda" if torch.cuda.is_available() else "cpu"
+        r = torch.as_tensor(np.ascontiguousarray(ref, dtype=np.float32), device=dev)
+        out = [torch.cdist(torch.as_tensor(np.ascontiguousarray(points[i:i + chunk], dtype=np.float32), device=dev), r).min(1).values.cpu().numpy()
+               for i in range(0, len(points), chunk)]
+        return np.concatenate(out).astype(np.float64) if out else np.zeros(0)
+
+
+def cloud_scores(pred: np.ndarray, ref: np.ndarray, taus: tuple[float, ...] = (0.05, 0.10), cap: float = 1.0) -> dict:
+    """Precision, recall and F-score at each tau (metres) of `pred` against `ref`, plus accuracy (pred to ref), completeness (ref to pred)
+    and their mean as the chamfer distance, distances capped at `cap` so a stray splat cannot outweigh a room. Both clouds in one frame."""
+    a, c = np.minimum(nn_distance(pred, ref), cap), np.minimum(nn_distance(ref, pred), cap)
+    out = {"accuracyM": round(float(a.mean()), 4), "completenessM": round(float(c.mean()), 4), "chamferM": round(float((a.mean() + c.mean()) / 2), 4)}
+    for tau in taus:
+        p, r = float((a < tau).mean()), float((c < tau).mean())
+        out[f"f{round(tau * 100)}cm"] = {"precision": round(p, 4), "recall": round(r, 4), "f": round(2 * p * r / (p + r), 4) if p + r else 0.0}
+    return out

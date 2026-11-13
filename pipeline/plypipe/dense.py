@@ -57,6 +57,7 @@ class View:
     name: str = ""
     depth: Any = None
     alpha: Any = None
+    rgb: Any = None      # (H, W, 3) uint8 render of the splats' colour, when it was asked for (the TSDF mesh's colours)
 
     @property
     def center(self) -> np.ndarray:
@@ -71,6 +72,9 @@ class Points:
     center: np.ndarray
     points: np.ndarray
     normals: np.ndarray
+    cam: View | None = None   # with fuse=True: this view's pose, the depth that was kept (0 elsewhere; numpy or torch, as rendered) and its colours,
+    depth: Any = None         # for plypipe.stages.mesh.Tsdf.integrate: the fusion reads exactly what the points were made from
+    rgb: Any = None
 
 
 def training_views(data_dir: Path, every: int = 30, step: int = 5, scale: float = 0.5) -> list[View] | None:
@@ -99,8 +103,9 @@ def training_views(data_dir: Path, every: int = 30, step: int = 5, scale: float 
     return views
 
 
-def render_views(ply: Path, views: list[View], antialiased: bool = True) -> Iterator[View] | None:
-    """The splats' expected depth and alpha at each view, one view at a time on the GPU. None without CUDA and gsplat."""
+def render_views(ply: Path, views: list[View], antialiased: bool = True, colour: bool = False) -> Iterator[View] | None:
+    """The splats' expected depth and alpha at each view, one view at a time on the GPU, and with `colour` their zero-order
+    colour too (View.rgb). None without CUDA and gsplat."""
     try:
         import torch
         from gsplat import rasterization
@@ -108,10 +113,10 @@ def render_views(ply: Path, views: list[View], antialiased: bool = True) -> Iter
         return None
     if not torch.cuda.is_available():
         return None
-    return _render(ply, views, antialiased, "cuda", rasterization)
+    return _render(ply, views, antialiased, "cuda", rasterization, colour)
 
 
-def _render(ply: Path, views: list[View], antialiased: bool, dev: str, rasterization) -> Iterator[View]:
+def _render(ply: Path, views: list[View], antialiased: bool, dev: str, rasterization, colour: bool = False) -> Iterator[View]:
     import torch
 
     from plypipe import clean
@@ -122,15 +127,17 @@ def _render(ply: Path, views: list[View], antialiased: bool, dev: str, rasteriza
     quats = t(np.stack([c[f"rot_{i}"] for i in range(4)], 1))
     scales = torch.exp(t(np.stack([c[f"scale_{i}"] for i in range(3)], 1)))
     opac = torch.sigmoid(t(c["opacity"]))
+    rgb0 = (0.5 + 0.28209479 * t(np.stack([c[f"f_dc_{i}"] for i in range(3)], 1))).clamp(0, 1) if colour else means
     for v in views:
         view = np.eye(4)
         view[:3, :3], view[:3, 3] = v.R, v.t
         with torch.no_grad():
-            # "ED": the one channel is depth already divided by alpha. No colours are drawn; the means stand in for
-            # them because gsplat before 1.6 checks their shape in every mode
-            depth, alpha, _ = rasterization(means, quats, scales, opac, means, t(view)[None], t(v.K)[None], v.width, v.height,
-                                            render_mode="ED", rasterize_mode="antialiased" if antialiased else "classic")
-        yield replace(v, depth=depth[0, ..., -1], alpha=alpha[0, ..., 0])
+            # "ED": the one channel is depth already divided by alpha. Without `colour` none are drawn and the means stand in
+            # for them because gsplat before 1.6 checks their shape in every mode; "RGB+ED" puts the colours in front of it
+            out, alpha, _ = rasterization(means, quats, scales, opac, rgb0, t(view)[None], t(v.K)[None], v.width, v.height,
+                                          render_mode="RGB+ED" if colour else "ED", rasterize_mode="antialiased" if antialiased else "classic")
+            rgb = (out[0, ..., :3] / alpha[0].clamp(min=1e-3) * 255).clamp(0, 255).to(torch.uint8) if colour else None
+        yield replace(v, depth=out[0, ..., -1], alpha=alpha[0, ..., 0], rgb=rgb)
 
 
 # ------------------------------------------------------------------ numpy or torch
@@ -243,16 +250,19 @@ def _sample(D, px, py):
 
 def consistent_points(views: Iterable[View], k: int = 8, tol: float = 0.02, min_agree: int = 2, through: float = 0.05,
                       min_alpha: float = 0.9, near: float = 0.1, far: float = 50.0, edge: float = 0.05,
-                      min_parallax: float = 0.05, stats: dict | None = None) -> Iterator[Points]:
+                      min_parallax: float = 0.05, stats: dict | None = None, fuse: bool = False) -> Iterator[Points]:
     """The points of each view that its neighbours confirm (module docstring), one view at a time.
 
     `views` is read once and only each view's usable depth is kept, so it can be a generator of renders. With
     `min_agree` 0 nothing is checked and every usable pixel comes back. `stats`, when given, counts pixels: usable,
-    kept, unconfirmed (too few views agree) and contradicted (as many views look through the point as agree)."""
-    cams, maps = [], []
+    kept, unconfirmed (too few views agree) and contradicted (as many views look through the point as agree). With `fuse`
+    each Points also carries the view's kept depth map, pose and colours (Points.cam, .depth, .rgb); the colours of every
+    view are held for that (uint8, 3 bytes a pixel, on the device they were rendered on)."""
+    cams, maps, rgbs = [], [], []
     for v in views:
         maps.append(usable_depth(v, min_alpha, near, far, edge))
-        cams.append(replace(v, depth=None, alpha=None))
+        rgbs.append(v.rgb if fuse else None)
+        cams.append(replace(v, depth=None, alpha=None, rgb=None))
     count = stats if stats is not None else {}
     count.update(views=len(cams), pixels=0, usable=0, kept=0, unconfirmed=0, contradicted=0)
     if not cams:
@@ -288,7 +298,12 @@ def consistent_points(views: Iterable[View], k: int = 8, tol: float = 0.02, min_
         count["kept"] += int(keep.sum())
         count["unconfirmed"] += int((~confirmed).sum())
         count["contradicted"] += int((confirmed & ~keep).sum())
-        yield Points(i, v.name, v.center, _np(world[keep]), _np(normal[keep]))
+        if fuse:
+            kept = xp.zeros_like(d > 0)
+            kept[sel] = keep
+            yield Points(i, v.name, v.center, _np(world[keep]), _np(normal[keep]), v, xp.where(kept, d, xp.zeros_like(d)), rgbs[i])
+        else:
+            yield Points(i, v.name, v.center, _np(world[keep]), _np(normal[keep]))
 
 
 class Cloud:

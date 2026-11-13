@@ -51,6 +51,28 @@ def _stage_fn(name: str):
     raise KeyError(name)
 
 
+def _add_rescale(sub) -> None:
+    r = sub.add_parser("rescale", help="rescale a finished twin (a published folder or a job folder) to a measured length, without retraining")
+    r.add_argument("folder", type=Path, help="the twin folder: scene.json and the files next to it")
+    r.add_argument("--factor", type=float, help="multiply every length in the twin by this")
+    r.add_argument("--known", type=float, metavar="M_TRUE", help="a length in metres, measured in the room")
+    r.add_argument("--measured", type=float, metavar="M_TWIN", help="the same length measured in the twin (factor = known / measured)")
+    r.add_argument("--force", action="store_true", help="allow a factor outside 0.2 to 5")
+    r.add_argument("--dry-run", action="store_true", help="say what would change; write nothing")
+
+
+def _add_priors(sub, run) -> None:  # noqa: ANN001
+    g = run.add_argument_group("scale from monocular depth (opt-in, needs a GPU and the MoGe package)")
+    g.add_argument("--priors", action="store_true", help="align: measure the scale with MoGe-2 depth against the camera solve's points (2b); "
+                                                          "frames that disagree by over 5% fall back to --height-cam")
+    p = sub.add_parser("priors", help="measure a job's scale with MoGe-2 depth and save its depth (writes priors/); prints the scale and spread")
+    p.add_argument("folder", type=Path, help="a job folder (dense/sparse_txt, or data/sparse/0 for a finished twin) with dense/images")
+    for q in (g, p):
+        q.add_argument("--priors-model", dest="priors_model", choices=("moge2-l", "moge2-b"), default="moge2-l", help="MoGe-2 ViT-L (2b) or ViT-B (2c)")
+        q.add_argument("--priors-frames", dest="priors_frames", type=int, default=150, help="frames spread along the path")
+        q.add_argument("--priors-max-seconds", dest="priors_max_seconds", type=float, default=900.0, help="stop predicting after this long and use the frames done")
+
+
 def build_parser() -> argparse.ArgumentParser:
     ap = argparse.ArgumentParser(prog="plypipe", description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--version", action="version", version=__version__)
@@ -94,11 +116,18 @@ def build_parser() -> argparse.ArgumentParser:
     g.add_argument("--device", choices=["auto", "cuda", "cpu"], default="auto")
     # no argparse default: an explicit choice beats the automatic one (ordered video of --incremental-min frames or
     # more goes straight to the incremental mapper), and a default would look explicit
-    g.add_argument("--mapper", choices=["global", "incremental"],
+    g.add_argument("--mapper", choices=["global", "incremental", "hierarchical", "keyframes"],
                    help="global SfM (fast) or incremental (slower, more robust on rotation-heavy captures). "
+                        "hierarchical: clusters of --hier-leaf-max frames mapped in parallel, merged, one bundle adjustment. "
+                        "keyframes: every --keyframe-step-th frame solved first, the rest registered against them. "
                         "Default: global, except ordered video of --incremental-min frames or more")
     g.add_argument("--incremental-min", type=int, default=400,
                    help="ordered video with at least this many frames skips the global mapper when --mapper is not given")
+    g.add_argument("--hier-leaf-max", type=int, default=500, help="--mapper hierarchical: frames per cluster, at most")
+    g.add_argument("--keyframe-step", type=int, default=4,
+                   help="--mapper keyframes: every Nth frame of a clip (plus its first and last) is a keyframe. 4, not 3: "
+                        "sequential matching pairs frames at offsets 1, 2, 4, 8 ..., so keyframes 3 apart share no matches")
+    g.add_argument("--keyframe-max-gap", type=int, default=8, help="--mapper keyframes: most frames between two keyframes")
     g.add_argument("--focal-35mm", type=float,
                    help="35 mm-equivalent focal of the lens used (phone spec, e.g. 24 for the S24 FE main camera; "
                         "~26 with video stabilisation crop). Starts SfM from the right intrinsics.")
@@ -157,11 +186,60 @@ def build_parser() -> argparse.ArgumentParser:
                         "capture positions are walkable on it. The default where a GPU can render")
     g.add_argument("--no-dense-occupancy", dest="dense_occupancy", action="store_false",
                    help="export: keep the walking grid from the camera solve")
+    g.add_argument("--dense-layout", dest="dense_layout", action="store_true", default=False,
+                   help="export: measure the walls, doors and ceiling (shell.json) from dense_points.npz and the camera path, "
+                        "and use it when it passes its own checks, else keep the sparse shell. Opt-in until it is scored against a laser scan: "
+                        "on the chapel it found 12 walls where the sparse shell has 6 and none has been checked (2026-11-13)")
+    g.add_argument("--no-dense-layout", dest="dense_layout", action="store_false",
+                   help="export: keep the layout measured from the camera solve's sparse points (the default)")
+    g.add_argument("--mesh", choices=["colmap", "tsdf"], default="colmap",
+                   help="colmap (default): the mesh stage's COLMAP patch-match stereo and Poisson, mesh.ply. tsdf: export fuses the depth of its dense "
+                        "pass into mesh.glb (about 300k triangles, vertex colours) and collision.glb (about 20k); needs a GPU and the dense pass")
+    g.add_argument("--mesh-keep-raw", action="store_true",
+                   help="--mesh tsdf: also save the extraction before anything is dropped or simplified, as mesh_raw.npz (hundreds of MB)")
+    _add_rescale(sub)
+    _add_priors(sub, r)
+    lp = sub.add_parser("lidar", help="a laser scan (points .npz from scripts/lidar/inspect_e57.py, or a coloured .ply) as a twin: no training")
+    lp.add_argument("input", type=Path, help="points-1cm.npz (points, colors, stations) or a coloured PLY")
+    lp.add_argument("--out", type=Path, required=True)
+    lp.add_argument("--voxel", type=float, default=0.01, help="metres between splats; coarsened when the cloud is over the High splat count")
+    lp.add_argument("--cap", type=int, help="splat cap (default the High preset's, 2,000,000)")
+    lp.add_argument("--up", default="auto", choices=["auto", *(s + a for s in "+-" for a in "xyz")], help="the file's up axis (default: from its surfaces)")
+    lp.add_argument("--sh-degree", type=int, default=3, choices=[0, 1, 2, 3], help="SH degree written; bands above 0 are zero (3 is the trainer's layout)")
+    lp.add_argument("--cell", type=float, default=0.05, help="walking grid cell in metres")
+    lp.add_argument("--lite-max", type=int, help="splats in the phone file (default 800000)")
+    lp.add_argument("--no-clean", action="store_true", help="export without the cleanup filters")
+    lp.add_argument("--no-crop", action="store_true")
+    lp.add_argument("--no-export", action="store_true", help="write scene.ply, scene.json, occupancy and shell only")
+    lp.add_argument("--quiet", action="store_true")
     return ap
+
+
+def _priors_main(a) -> int:  # noqa: ANN001
+    from plypipe.stages import priors
+    log = Log(a.folder, quiet=False)
+    ctx = Ctx(out=a.folder, log=log, opts={k: v for k, v in vars(a).items() if k.startswith("priors_")})
+    try:
+        priors.run_stage(ctx)
+    except Exception as e:
+        log.emit("priors", "error", str(e), trace=traceback.format_exc()[-2000:])
+        return 1
+    readout = json.dumps(priors.readout(a.folder), indent=2)
+    (a.folder / "priors" / "readout.json").write_text(readout)
+    print(readout)
+    return 0
 
 
 def main(argv: list[str] | None = None) -> int:
     a = build_parser().parse_args(argv)
+    if a.cmd == "rescale":
+        from plypipe import rescale
+        return rescale.main(a)
+    if a.cmd == "priors":
+        return _priors_main(a)
+    if a.cmd == "lidar":
+        from plypipe import lidar_splat
+        return lidar_splat.main(a)
     out: Path = a.out
     out.mkdir(parents=True, exist_ok=True)
     log = Log(out, quiet=a.quiet)

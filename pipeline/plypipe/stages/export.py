@@ -30,6 +30,7 @@ and the stage applies scene.json's transform with splat-transform's translate/ro
 """
 from __future__ import annotations
 
+import json
 import os
 
 import math
@@ -406,6 +407,7 @@ def run_stage(ctx: Ctx) -> dict:
     needed_src.unlink(missing_ok=True)
     update_scene(ctx, {"splat": {"file": "scene.spz", "lite": "scene_lite.spz", "format": "spz"}})
     walk_grid = _dense_occupancy(ctx, cleaned, holdout, aa) if ctx.opt("dense_occupancy") else None
+    layout = _dense_layout(ctx) if walk_grid else None
     top = _topview(ctx, cleaned if cleaned.exists() else full)
     return {"spz": full.name, "spzMB": round(full.stat().st_size / 2**20, 2), "lite": lite.name, "liteMB": round(lite.stat().st_size / 2**20, 2),
             "cropBox": box, "cropDropped": drop_crop, "gaussiansIn": total, "gaussiansOut": n, "floaterFilter": floaters, "liteGaussians": lite_n,
@@ -416,7 +418,7 @@ def run_stage(ctx: Ctx) -> dict:
             **({"roomCrop": room_crop} if room_crop else {}),
             "shRestore": sh, **({"shippedEval": shipped} if shipped else {}),
             **({"cleanupChoice": choice} if choice else {}), **({"topview": top} if top else {}),
-            **({"denseOccupancy": walk_grid} if walk_grid else {})}
+            **({"denseOccupancy": walk_grid} if walk_grid else {}), **({"denseLayout": layout} if layout else {})}
 
 
 def _dense_occupancy(ctx: Ctx, ply: Path, holdout: int, aa: bool) -> dict:
@@ -424,17 +426,84 @@ def _dense_occupancy(ctx: Ctx, ply: Path, holdout: int, aa: bool) -> dict:
     unless fewer capture positions are walkable on it than on the camera solve's. Whatever goes wrong in it, the export
     stands with the grid it had; without a GPU nothing is built and the report says so."""
     t0 = time.time()
+    fusion = None
     try:
-        from plypipe.stages import occupancy
-        out = occupancy.from_depth(ctx, ply, holdout, aa)
+        from plypipe.stages import mesh as mesh_stage, occupancy
+        if ctx.opt("mesh") == "tsdf":
+            import torch
+            fusion = mesh_stage.Fusion("cuda" if torch.cuda.is_available() else "cpu")
+            fusion.keep_raw = bool(ctx.opt("mesh_keep_raw"))
+        out = occupancy.from_depth(ctx, ply, holdout, aa, fusion=fusion)
     except Exception as e:
-        out = {"used": "sparse", "why": f"failed: {str(e)[-160:]}"}
+        out, fusion = {"used": "sparse", "why": f"failed: {str(e)[-160:]}"}, None
+    if fusion is not None and fusion.tsdf is not None and fusion.views:
+        out["tsdfMesh"] = _tsdf_mesh(ctx, fusion)
     if out["used"] == "depth":
         ctx.log.emit("export", "progress", f"walking grid from depth: {out['views']} views, capture positions {out['walk']['cameras'] or 0:.0%} "
                      f"walkable, {out['walk']['standableM2']} m2 to stand on ({out['sparseWalk']['standableM2']} m2 on the sparse grid)")
     else:
         ctx.log.emit("export", "warn", f"walking grid from depth not used: {out['why']}")
     return {**out, "seconds": round(time.time() - t0, 1)}
+
+
+def _tsdf_mesh(ctx: Ctx, fusion) -> dict:
+    """mesh.glb and collision.glb from the depth the dense pass just fused (stages/mesh.py), recorded in scene.json. The splat
+    export stands whatever happens here."""
+    from plypipe import dense
+    from plypipe.stages import mesh as mesh_stage
+    try:
+        out = mesh_stage.record(ctx, fusion.finish(ctx.out, mesh_stage.dense_reference(ctx.out / dense.FILE)))
+    except Exception as e:
+        ctx.log.emit("export", "warn", f"tsdf mesh not built: {str(e)[-160:]}")
+        return {"built": False, "why": f"failed: {str(e)[-160:]}"}
+    if out.get("built"):
+        ctx.log.emit("export", "progress", f"tsdf mesh: {out['triangles']} triangles at {out['voxelCm']} cm, collision {out['collisionTriangles']}, "
+                     f"{out['volumeMB']} MB volume, {out['fuseSeconds']} s fusing, {out['meshSeconds']} s meshing")
+    else:
+        ctx.log.emit("export", "warn", f"tsdf mesh not shipped, no mesh.glb or collision.glb written: {out.get('why')}")
+    return out
+
+
+def _dense_layout(ctx: Ctx) -> dict | None:
+    """The measured layer (shell.json) rebuilt from dense_points.npz and the camera path (plypipe.shell.layout), shipped
+    when it passes its own checks and otherwise left as the sparse shell, with the reasons written into that file under
+    `denseLayout` and the failed layout kept as shell_dense.json. None when the option is off (it is opt-in: --dense-layout,
+    until a layout has been scored against a laser reference) or there are no dense points: the job is then exactly what it was."""
+    from plypipe import colmap_txt, dense, geometry, shell as shell_mod
+
+    src = ctx.out / dense.FILE
+    if not ctx.opt("dense_layout", False) or not src.exists():
+        return None
+    t0 = time.time()
+    try:
+        z = np.load(src)
+        model = colmap_txt.read_model(ctx.data_dir / "sparse" / "0")
+        ims = sorted(model.images, key=lambda im: im.name)
+        path = geometry.camera_centers_and_ups(np.array([i.qvec for i in ims]), np.array([i.tvec for i in ims]))[0]
+        sp = ctx.out / "shell.json"
+        old = json.loads(sp.read_text()) if sp.exists() else {}
+        places = json.loads((ctx.out / "places.json").read_text()).get("places", []) if (ctx.out / "places.json").exists() else []
+        det = [{"cls": (pl.get("ai") or {}).get("cls"), "p": pl["p"], "half": (pl.get("ai") or {}).get("half"),
+                **({"views": pl["ai"]["frames"]} if (pl.get("ai") or {}).get("frames") else {})} for pl in places]
+        new = shell_mod.layout(z["points"], z["normals"].astype(np.float32), path, detections=det,
+                               boxes=[dict(pl, cls=(pl.get("ai") or {}).get("cls"), half=(pl.get("ai") or {}).get("half")) for pl in places])
+    except Exception as e:
+        ctx.log.emit("export", "warn", f"dense layout not built: {str(e)[-160:]}")
+        return {"used": "sparse", "why": f"failed: {str(e)[-160:]}", "seconds": round(time.time() - t0, 1)}
+    ok, why = new["validation"]["ok"], "; ".join(new["validation"]["reasons"])
+    (ctx.out / "shell_dense.json").write_text(json.dumps(new, indent=1))
+    if ok:
+        sp.write_text(json.dumps(new, indent=1))
+        doors = sum(o["kind"] == "door" for o in new["openings"])
+        ctx.log.emit("export", "progress", f"layout from dense points: {len(new['walls'])} walls, {doors} doors, ceiling {new['ceilingY']} m"
+                     + "".join(f"; dropped {d['cls']} on wall {d['wall']}: {d['reason']}" for d in new.get("droppedOpenings", [])))
+    else:
+        if old:
+            sp.write_text(json.dumps({**old, "source": old.get("source", "sparse"), "denseLayout": {"ok": False, "reasons": new["validation"]["reasons"]}}, indent=1))
+        ctx.log.emit("export", "warn", f"dense layout not used: {why}")
+    return {"used": "dense" if ok else "sparse", **({} if ok else {"why": why}), "walls": len(new["walls"]),
+            "doors": sum(o["kind"] == "door" for o in new["openings"]), "windows": sum(o["kind"] == "window" for o in new["openings"]),
+            "rejectedDetections": len(new["rejected"]), **({"droppedOpenings": new["droppedOpenings"]} if new.get("droppedOpenings") else {}), "seconds": round(time.time() - t0, 1)}
 
 
 def _topview(ctx: Ctx, source: Path) -> dict | None:

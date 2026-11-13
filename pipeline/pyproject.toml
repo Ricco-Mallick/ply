@@ -15,7 +15,10 @@ dependencies = ["numpy>=1.26", "opencv-python-headless>=4.9"]
 sfm = ["pycolmap-cuda12==4.2.1"]
 # CPU-only SfM fallback (slow, SIFT only is realistic).
 sfm-cpu = ["pycolmap==4.2.1"]
-test = ["pytest>=8"]
+# plypipe lidar (a laser scan as a twin): k-nearest neighbours and the shortest walk through the stations
+lidar = ["scipy>=1.11"]
+# trimesh and scipy: the mesh fusion and scan tests need them (the worker image has trimesh; scipy is the lidar extra)
+test = ["pytest>=8", "trimesh>=4", "scipy>=1.11"]
 
 [project.scripts]
 plypipe = "plypipe.cli:main"

@@ -368,29 +368,35 @@ def run_stage(ctx: Ctx) -> dict:
     return {"width": meta["width"], "height": meta["height"], **meta["stats"], "walk": meta["walk"]}
 
 
-def from_depth(ctx: Ctx, ply: Path, holdout: int = 30, antialiased: bool = True, step: int = 5, scale: float = 0.5) -> dict:
+def from_depth(ctx: Ctx, ply: Path, holdout: int = 30, antialiased: bool = True, step: int = 5, scale: float = 0.5, fusion=None) -> dict:
     """The grid from the depth of the splats in `ply` (module docstring), with the sparse grid's evidence where the
     depth has none (grid_from_depth), written in place of the sparse grid unless fewer capture positions are walkable
     on it. Less floor to stand on is not a reason to refuse it: on the chapel the floor it takes away is the pews.
     When it is refused the sparse grid is written again, with the reason, and the grid that lost is left beside it as
     occupancy_depth.png. The confirmed points are saved as dense_points.npz for the mesh and layout stages.
 
+    `fusion` (stages.mesh.Fusion) is fed every view's kept depth and colours as the pass goes, so the TSDF mesh costs no second render.
+
     Returns the record for the export report. Without CUDA and gsplat, or with cameras that are not PINHOLE, nothing
     is built or written. Raises if the pass itself fails: the caller decides what that costs."""
     from plypipe import dense
 
     cams = dense.training_views(ctx.data_dir, holdout, step, scale)
-    rendered = dense.render_views(ply, cams, antialiased) if cams else None
+    rendered = dense.render_views(ply, cams, antialiased, **({"colour": True} if fusion is not None else {})) if cams else None
     if rendered is None:
         return {"used": "sparse", "why": "not built: needs a GPU with gsplat, and PINHOLE cameras"}
     sparse, sparse_meta, centers, spawn = _sparse_grid(ctx)
     finer = sparse_meta["cellSize"] / DEPTH_CELL  # the same area as the sparse grid, in smaller cells
     shape = (int(np.ceil(sparse_meta["height"] * finer)), int(np.ceil(sparse_meta["width"] * finer)))
     pixels, cloud = {}, dense.Cloud()
+    if fusion is not None:
+        fusion.begin(cams)
 
     def scans():
-        for p in dense.consistent_points(rendered, stats=pixels):
+        for p in dense.consistent_points(rendered, stats=pixels, fuse=fusion is not None):
             cloud.add(p.points, p.normals)
+            if fusion is not None:
+                fusion.add(p)
             yield p.center, p.points
 
     grid, meta = grid_from_depth(scans(), centers, np.array(sparse_meta["origin"]), shape, sparse=sparse)

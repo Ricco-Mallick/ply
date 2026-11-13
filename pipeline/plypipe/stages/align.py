@@ -9,6 +9,11 @@
 3. yaw = dominant (Manhattan) direction of wall/furniture points -> +X;
 4. scale = camera-height prior (median camera height above the floor = --height-cam metres).
 
+Where the scale comes from, in the plan's order (section 9): a reference measurement the user entered (2r, scene.json's
+`reference`, written by `plypipe rescale`), AR poses (2e, below), monocular depth (2b, priors/priors.json from the
+priors stage), the camera-height prior (2a). A monocular result whose frames disagree is not used: 2a stays and
+scene.json's `scaleFallback` says why. Without a reference or a priors result none of this runs and nothing changes.
+
 AR scans (frames.py wrote ar_poses.json) replace 1, 2 and 4: a similarity fit of the SfM camera centres onto the phone's
 tracked positions gives metric scale and gravity directly (ARCore's 'local-floor' space is +y up with the floor at 0);
 the floor height is then refined on the points, and the yaw / origin steps run as usual.
@@ -27,7 +32,7 @@ import shutil
 import numpy as np
 
 from plypipe import colmap_txt, geometry, tour
-from plypipe.util import Ctx, update_scene
+from plypipe.util import Ctx, read_scene, update_scene
 
 
 def run_stage(ctx: Ctx) -> dict:
@@ -63,6 +68,7 @@ def run_stage(ctx: Ctx) -> dict:
         info["floorPlane"] = "gravity" if float(info.get("floorTiltDeg", 0)) == 0.0 else "ransac"
         info["gravityFrom"] = gravity_from
 
+    T, info, extra = _scale_source(ctx, model, T, info)
     aligned = colmap_txt.transformed(model, T)
     try:  # measured shell: wall segments through the mid-height band, drawn as an editable layer in the viewer
         from plypipe import shell as shell_mod
@@ -119,13 +125,54 @@ def run_stage(ctx: Ctx) -> dict:
         "spawn": spawn,
         "tour": tour.build_tour(c2, b0),
         "shell": "shell.json",
+        **extra,
     })
     return {"floorInliers": int(plane.inliers.sum()), "floorInlierRatio": float(plane.inliers.mean()),
             "floorTiltDeg": info["floorTiltDeg"], "yawDeg": info["yawDeg"], "scale": info["scale"],
             "scaleSource": info["scaleSource"], "cameraHeightModelUnits": info["cameraHeightModel"],
             "floorResidualMedianM": float(np.median(floor_res)) if floor_res.size else None,
             "bounds": scene["bounds"], **({"gravityFrom": info["gravityFrom"]} if "gravityFrom" in info else {}),
-            **({"ar": info["ar"]} if "ar" in info else {})}
+            **({"ar": info["ar"]} if "ar" in info else {}), **extra}
+
+
+def _scale_source(ctx: Ctx, model, T: np.ndarray, info: dict) -> tuple[np.ndarray, dict, dict]:
+    """T with the scale of the highest-ranked source that has one (module docstring); `extra` is what scene.json and the
+    report gain: the spread of a monocular scale, why one was not used, and the scale each source would have given."""
+    prior = scene_scale = None
+    scene = read_scene(ctx)
+    extra: dict = {}
+    ref = scene.get("reference") if scene.get("scaleSource") == "reference" else None
+    if ref and isinstance(ref.get("scale"), (int, float)) and ref["scale"] > 0:
+        w = ref.get("world") or {}
+        if w and (w.get("points"), w.get("images")) != (model.num_points, len(model.images)):
+            ctx.log.emit("align", "warn", "the reference measurement was made on another camera solve; ignoring it")
+            extra.update({"reference": None, "scaleFallback": "the reference measurement belongs to a different camera solve"})
+        else:
+            prior, scene_scale = "reference", float(ref["scale"])
+    if prior is None and info["scaleSource"] != "ar-poses":
+        from plypipe.stages import priors
+        if ctx.opt("priors") and not (ctx.out / priors.RESULT).exists():  # --priors: measure now (GPU); a failure is not the run's
+            try:
+                priors.run_stage(ctx)
+            except Exception as e:
+                ctx.log.emit("align", "warn", f"monocular depth scale unavailable: {e}")
+                extra["scaleFallback"] = f"monocular depth unavailable: {str(e)[:200]}"
+        got = priors.for_align(ctx.out, model)
+        if got and "scale" in got:
+            prior, scene_scale = "monocular-depth", got["scale"]
+            extra["scaleSpread"] = got["spread"]
+        elif got:
+            ctx.log.emit("align", "warn", f"{got['fallback']}; using the camera-height prior")
+            extra["scaleFallback"] = got["fallback"]
+        if got:
+            extra["scaleCandidates"] = {info["scaleSource"]: info["scale"], **({"monocular-depth": got["scale"]} if "scale" in got else {})}
+    if prior is None:
+        return T, info, extra
+    g = scene_scale / info["scale"] if info["scale"] > 0 else scene_scale
+    T = np.diag([g, g, g, 1.0]) @ T  # about the scene origin: the floor stays at y = 0
+    info = {**info, "scale": scene_scale, "scaleSource": prior}
+    ctx.log.emit("align", "progress", f"scale {scene_scale:.4f} from {prior}")
+    return T, info, extra
 
 
 def _ar_transform(ctx: Ctx, model, centers: np.ndarray, pts: np.ndarray):
