@@ -160,12 +160,20 @@ def build_room_reference(room: str, root: Path, scratch: Path, log=print) -> dic
     return meta
 
 
-def seed_room(room: str, root: Path, scratch: Path, log=print) -> dict:
-    """Download (skipping what is there), unpack and build one room's input and reference under <root>. Returns a summary for the log."""
-    started, downloads = time.time(), root / "_dl"
-    got = {k: download(mushroom.ROOMS[room][k], downloads / mushroom.ROOMS[room][k]["name"], log=log) for k in ("iphone", "scan")}
+def seed_room(room: str, root: Path, scratch: Path, log=print, commit=lambda: None) -> dict:
+    """Download (skipping what is there), unpack and build one room's input and reference under <root>. Returns a summary for the log.
+    `commit` is called after each step that leaves files behind (the Volume's commit), so a stopped run keeps what it finished."""
+    started, downloads, got = time.time(), root / "_dl", {}
+    meta_file = root / room / "reference" / "meta.json"
+    if meta_file.exists() and len(list((root / room / "in").glob("*.jpg"))) == json.loads(meta_file.read_text()).get("photos"):
+        return {"room": room, "skipped": "input and reference are already on the Volume (delete reference/meta.json to rebuild)"}
+    for k in ("iphone", "scan"):
+        got[k] = download(mushroom.ROOMS[room][k], downloads / mushroom.ROOMS[room][k]["name"], log=log)
+        commit()
     unpacked = unpack_room(room, downloads, root, scratch, log)
+    commit()
     meta = build_room_reference(room, root, scratch, log)
+    commit()
     shutil.rmtree(scratch, ignore_errors=True)
     return {"room": room, "downloads": got, "photos": unpacked["photos"], "poseFrames": meta["poseFrames"], "direction": meta["direction"],
             "candidates": meta["candidates"], "seconds": round(time.time() - started)}

@@ -128,8 +128,10 @@ def test_a_room_is_downloaded_unpacked_and_its_reference_built_in_the_scan_frame
     # twin frames 000000 ... are the 12 photos in name order: frame_00005 is the twin's 000004 and has no reference pose
     assert mushroom.match(["000003.jpg", "000004.jpg", "000005.jpg"], ref["names"], ref["inputNames"])[1].tolist() == [3, 4]
     before = server.sent
+    assert "already on the Volume" in mushroom_fetch.seed_room("honka", root, tmp_path / "scratch", log=lambda *a: None)["skipped"]
+    (root / "honka" / "reference" / "meta.json").unlink()                      # a rebuild takes the archives that are there, and fetches nothing
     again = mushroom_fetch.seed_room("honka", root, tmp_path / "scratch", log=lambda *a: None)
-    assert again["downloads"] == {"iphone": "present", "scan": "present"} and server.sent == before   # a second run fetches nothing
+    assert again["downloads"] == {"iphone": "present", "scan": "present"} and server.sent == before
 
 
 def test_the_laser_meshs_vertices_stand_in_when_the_archive_has_no_cloud(tmp_path, monkeypatch):
