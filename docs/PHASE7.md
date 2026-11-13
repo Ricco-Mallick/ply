@@ -20,7 +20,8 @@ recomputed on 2026-11-13 after the wheels switch.
 
 ```
 PLY_EVAL_SCENARIO=chapel PLY_EVAL_GPU=L40S MODAL_PROFILE=opservemakesalt \
-  modal run --detach pipeline/modal/ply_eval.py --variant q1b --args=--iterations 30000
+  modal run --detach pipeline/modal/ply_eval.py --variant p7full \
+  --args="--exposure-affine --exposure-fold 2000 --iterations 30000"
 ```
 
 Estimated **44 min training, 51 min total, $2.19**, stop-loss 77 min.
@@ -29,10 +30,15 @@ Estimated **44 min training, 51 min total, $2.19**, stop-loss 77 min.
 
 ```
 PLY_EVAL_SCENARIO=drjohnson PLY_EVAL_GPU=L4,L40S MODAL_PROFILE=opservemakesalt \
-  modal run --detach pipeline/modal/ply_eval.py --variant q6 --args=--iterations 7000
+  modal run --detach pipeline/modal/ply_eval.py --variant p7quick \
+  --args="--lite-finetune 3000 --lite-max 240000 --iterations 7000"
 ```
 
 About **$0.35**, 20 min.
+
+The variant name is new because `--args` refuses a table variant ("its arguments are fixed"): an ad-hoc run takes a
+fresh name and the whole argument list. That is also why the command spells out Q1b's two flags instead of relying on
+`q1b` to supply them.
 
 ## Why `--args` and not a new table variant
 
