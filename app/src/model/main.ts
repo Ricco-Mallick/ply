@@ -8,7 +8,8 @@ import { GLTFExporter } from 'three/examples/jsm/exporters/GLTFExporter.js';
 import { PLYLoader } from 'three/examples/jsm/loaders/PLYLoader.js';
 import { buildObjects, buildRoom, drawable } from './build';
 import { sameOriginModuleUrl } from './module-url';
-import type { Obj, Shell } from './types';
+import { factorFrom, fmtScale, LIMITS, measure as tapDistance, rescaleScene } from './rescale';
+import type { Obj, SceneDocument, Shell } from './types';
 
 const BASE = '/ply/';
 const params = new URLSearchParams(location.search);
@@ -70,6 +71,11 @@ let selected: THREE.Object3D | null = null;
 let hidden = new Set<string>();
 let deleted = new Set<string>();
 
+// reference measurement (plan section 9, 2r): the scene manifest, the total factor applied since load, and the two taps
+let sceneDoc: SceneDocument | null = null;
+let hasSceneJson = false;
+let appliedScale = 1;
+const measure = { on: false, stage: 'idle' as 'idle' | 'first' | 'asking' | 'applied', distance: 0, points: [] as THREE.Vector3[] };
 
 // ---------------------------------------------------------------- load
 async function load() {
@@ -78,7 +84,12 @@ async function load() {
     const res = await fetch(new URL(name, sceneBase));
     return res.ok ? res.json().catch(() => null) : null;
   };
-  const s: Shell = await tryFetch('shell.json');
+  const shellP: Promise<Shell> = tryFetch('shell.json');
+  const docP: Promise<SceneDocument | null> = tryFetch('scene.json').catch(() => null);   // absent for a hand-written scene
+  const [s, doc] = await Promise.all([shellP, docP]);
+  hasSceneJson = !!doc && typeof doc === 'object' && !Array.isArray(doc);
+  sceneDoc = hasSceneJson ? doc : null;
+  paintScale();
   const requested = params.get('module');   // an authored room module (see .agents/skills/ply-room-model)
   const moduleUrl = requested ? sameOriginModuleUrl(requested, location.href) : null;
   const refused = requested && !moduleUrl ? 'module refused (not from this site) · ' : '';   // first, so the hint pill never covers it
@@ -124,6 +135,9 @@ function bounds() {
   return box.isEmpty() ? new THREE.Box3(new THREE.Vector3(-5, 0, -5), new THREE.Vector3(5, 3, 5)) : box;
 }
 
+/** The floor in world units: a reference measurement may have rescaled the model since it was built. */
+const floorWorld = () => (shell?.floorY ?? 0) * appliedScale;
+
 function setView(next: View) {
   view = next;
   document.querySelectorAll<HTMLButtonElement>('[data-view]').forEach((b) => b.classList.toggle('on', b.dataset.view === next));
@@ -148,12 +162,12 @@ function setView(next: View) {
   const centre = b.getCenter(new THREE.Vector3());
   if (next === 'walk') {
     controls.enabled = false;
-    camera.position.set(centre.x, (shell?.floorY ?? 0) + 1.62, centre.z);
+    camera.position.set(centre.x, floorWorld() + EYE, centre.z);
     yaw = 0; pitch = 0;
     walked.set(centre.x, 0, centre.z);
   } else if (next === 'doll') {
     controls.enabled = true;
-    controls.target.copy(centre).setY((shell?.floorY ?? 0) + size.y * 0.35);
+    controls.target.copy(centre).setY(floorWorld() + size.y * 0.35);
     camera.position.copy(centre).add(new THREE.Vector3(size.x * 0.75, size.x * 0.85, size.z * 0.9));
     controls.update();
   } else {
@@ -175,13 +189,23 @@ const walked = new THREE.Vector3();
 const keys = new Set<string>();
 const EYE = 1.62, RADIUS = 0.3;
 
+const inField = (e: KeyboardEvent) => e.target instanceof HTMLElement && /^(INPUT|TEXTAREA|SELECT)$/.test(e.target.tagName);
+const inControl = (e: KeyboardEvent) => e.target instanceof HTMLElement && /^(INPUT|TEXTAREA|SELECT|BUTTON|A)$/.test(e.target.tagName);
 addEventListener('keydown', (e) => {
+  if (inField(e)) return;   // the measure field keeps its own Enter and Escape, and typing must not walk the camera
+  if (measure.on && e.code.startsWith('Arrow')) { e.preventDefault(); moveCursor(e); return; }   // the keyboard's tap point
   keys.add(e.code);
   if (e.code === 'KeyX') toggleWire();
-  if (e.code === 'Escape') select(null);
+  if (e.code === 'KeyM') setMeasure(!measure.on);
+  if (e.code === 'Space' && measure.on && !inControl(e)) { e.preventDefault(); placePoint(); }   // the crosshair takes the tap
+  if (e.code === 'Enter' && measure.stage === 'asking' && !inControl(e)) applyMeasurement();
+  if (e.code === 'Escape') {
+    if (measure.on) { if (!cancelMeasurement()) setMeasure(false); }
+    else select(null);
+  }
 });
 addEventListener('keyup', (e) => keys.delete(e.code));
-canvas.addEventListener('click', () => { if (view === 'walk' && !document.pointerLockElement) canvas.requestPointerLock(); });
+canvas.addEventListener('click', () => { if (!measure.on && view === 'walk' && !document.pointerLockElement) canvas.requestPointerLock(); });
 addEventListener('mousemove', (e) => {
   if (document.pointerLockElement !== canvas) return;
   yawPitch.yaw -= e.movementX * 0.0022;
@@ -189,9 +213,10 @@ addEventListener('mousemove', (e) => {
 });
 
 function blocked(x: number, z: number) {
-  const floorY = shell?.floorY ?? 0;
+  const k = appliedScale;   // the shell keeps the units the model was built in; a reference measurement moves the room, not the walker
+  const floorY = (shell?.floorY ?? 0) * k;
   for (const w of shell?.walls ?? []) {
-    const [ax, az] = w.a, [bx, bz] = w.b;
+    const ax = w.a[0] * k, az = w.a[1] * k, bx = w.b[0] * k, bz = w.b[1] * k;
     const dx = bx - ax, dz = bz - az;
     const t = THREE.MathUtils.clamp(((x - ax) * dx + (z - az) * dz) / (dx * dx + dz * dz || 1), 0, 1);
     const px = ax + dx * t, pz = az + dz * t;
@@ -199,8 +224,8 @@ function blocked(x: number, z: number) {
   }
   for (const o of shell?.objects ?? []) {
     if (deleted.has(o.id) || hidden.has(o.id)) continue;
-    const [cx, cy, cz] = o.center;
-    const [hx, hy, hz] = o.half;
+    const cx = o.center[0] * k, cy = o.center[1] * k, cz = o.center[2] * k;
+    const hx = o.half[0] * k, hy = o.half[1] * k, hz = o.half[2] * k;
     if (cy - hy > floorY + 1.7 || cy + hy < floorY + 0.2) continue; // above head or below the knee: walk under/over
     if (Math.abs(x - cx) < hx + RADIUS && Math.abs(z - cz) < hz + RADIUS) return true;
   }
@@ -211,6 +236,7 @@ function blocked(x: number, z: number) {
 const ray = new THREE.Raycaster();
 const pointer = new THREE.Vector2();
 canvas.addEventListener('pointerdown', (e) => {
+  if (measure.on) return;   // measuring: a tap places a point (see the measure section instead)
   if (document.pointerLockElement === canvas) return;
   pointer.set((e.clientX / innerWidth) * 2 - 1, -(e.clientY / innerHeight) * 2 + 1);
   ray.setFromCamera(pointer, camera);
@@ -234,12 +260,23 @@ function select(object: THREE.Object3D | null) {
   panel.hidden = false;
   el('#panel-name').textContent = data.label ?? selected.name;
   el('#panel-kind').textContent = data.kind === 'wall' ? 'wall' : `${data.type ?? 'object'}`;
-  const box = new THREE.Box3().setFromObject(selected);
-  const s = box.getSize(new THREE.Vector3());
-  el('#panel-size').textContent = data.kind === 'wall' && data.length ? `length ${fmt(data.length)}` : `${fmt(s.x)} × ${fmt(s.y)} × ${fmt(s.z)}`;
+  paintPanelSize(selected);
   selected.traverse((o) => { if (o instanceof THREE.Mesh) o.material = (o.material as THREE.MeshStandardMaterial).clone(); });
   el('#panel').dataset.target = selected.name;
 }
+
+/** The selection panel's size line, in the model's current units (a reference measurement rescales it). */
+function paintPanelSize(target: THREE.Object3D) {
+  const data = target.userData as { kind?: string; length?: number };
+  target.updateWorldMatrix(true, true);   // a rescale just moved the parent, and the render loop may not have run since
+  const box = new THREE.Box3().setFromObject(target);
+  const s = box.getSize(new THREE.Vector3());
+  el('#panel-size').textContent = data.kind === 'wall' && data.length
+    ? `length ${fmt(data.length * appliedScale)}`
+    : `${fmt(s.x)} × ${fmt(s.y)} × ${fmt(s.z)}`;
+}
+
+const sizeText = (o: Obj) => o.half.map((v) => (v * 2 * appliedScale).toFixed(1)).join('×');
 
 el('#hide').addEventListener('click', () => { if (!selected) return; selected.visible = false; hidden.add(selected.name); select(null); refreshOutliner(); });
 el('#delete').addEventListener('click', () => { if (!selected) return; deleted.add(selected.name); selected.removeFromParent(); select(null); refreshOutliner(); });
@@ -272,6 +309,7 @@ async function toggleMesh() {
     meshLayer = new THREE.Mesh(geo, material);
     meshLayer.name = 'dense-mesh';
     meshLayer.position.y = 0;
+    meshLayer.scale.setScalar(appliedScale);   // a correction may already be applied to the room
     meshLayer.castShadow = meshLayer.receiveShadow = true;
     scene.add(meshLayer);
     // show the surface on its own: the proxies would z-fight with it
@@ -284,6 +322,280 @@ async function toggleMesh() {
   } finally { meshLoading = false; }
 }
 document.querySelector<HTMLButtonElement>('[data-mesh]')?.addEventListener('click', toggleMesh);
+
+// ---------------------------------------------------------------- reference measurement (plan section 9, 2r)
+/* Two taps give a length in the model's units; the true length typed in gives F = true / measured. Everything metric
+   moves by F about the scene origin (rescale.py's convention), and the local manifest takes that module's fields:
+   `scale`, `scaleSource: "reference"` and a `reference` block with both lengths. Nothing about the twin's files is
+   written from here, and nothing here pretends otherwise. A rescale is one atomic move of scene.spz, shell.json,
+   occupancy.json, places.json and scene.json, with the transform, bounds, camera path and topview rewritten together;
+   scaling scene.json alone would leave the splat at the old scale. The API has no route for it either (`cloud/src/
+   index.ts`: PUT /v1/files is limited to captures/, scenes/ is written only by the worker token), so the correction
+   lives in this tab and the panel hands over the exact `plypipe rescale` command that makes it permanent. */
+const hintEl = el<HTMLDivElement>('#hint');
+const HINT_DEFAULT = hintEl.innerHTML;
+const HINT_MEASURE = 'Measure: tap two points · <b>Space</b> taps the crosshair (arrow keys move it) · <b>Esc</b> cancels';
+const measurePanel = el<HTMLElement>('#measure-panel');
+const measureInput = el<HTMLInputElement>('#measure-real');
+const measureNote = el<HTMLParagraphElement>('#measure-note');
+const measureCommand = el<HTMLElement>('#measure-command');
+const measureField = el<HTMLElement>('#measure-field');
+const measureActions = el<HTMLElement>('#measure-actions');
+const measureDone = el<HTMLElement>('#measure-done');
+const reducedMotion = matchMedia('(prefers-reduced-motion: reduce)');   // read live: the marker pulse is the only motion here
+const measureRoot = new THREE.Group();
+measureRoot.name = 'ply-measure';
+scene.add(measureRoot);
+let pulse: THREE.Object3D | null = null;
+// where a keyboard tap lands: the crosshair, moved with the arrow keys or by the last pointer tap
+const cursor = { x: innerWidth / 2, y: innerHeight / 2 };
+
+const note = (text: string) => { measureNote.textContent = text; };
+const setHint = (html: string) => { hintEl.innerHTML = html; };
+const crosshair = el<HTMLDivElement>('#crosshair');
+
+function paintCursor() {
+  crosshair.style.left = `${cursor.x}px`;
+  crosshair.style.top = `${cursor.y}px`;
+}
+
+function moveCursor(e: KeyboardEvent) {
+  const step = e.shiftKey ? 6 : 28;
+  if (e.code === 'ArrowLeft') cursor.x -= step;
+  if (e.code === 'ArrowRight') cursor.x += step;
+  if (e.code === 'ArrowUp') cursor.y -= step;
+  if (e.code === 'ArrowDown') cursor.y += step;
+  cursor.x = THREE.MathUtils.clamp(cursor.x, 8, innerWidth - 8);
+  cursor.y = THREE.MathUtils.clamp(cursor.y, 8, innerHeight - 8);
+  paintCursor();
+}
+
+/** The scale readout by the status line: what scene.json says, and what this tab has corrected since. */
+function paintScale() {
+  const out = el<HTMLDivElement>('#scale');
+  const now = typeof sceneDoc?.scale === 'number' ? sceneDoc.scale : null;
+  if (now === null && appliedScale === 1) { out.hidden = true; return; }
+  out.hidden = false;
+  out.textContent = now !== null
+    ? `scale ${fmtScale(now)} · ${sceneDoc?.scaleSource ?? 'unknown source'}`
+    : `scale ×${fmtScale(appliedScale)} · reference`;
+}
+
+function setMeasure(on: boolean) {
+  measure.on = on;
+  const btn = el<HTMLButtonElement>('#measure');
+  btn.classList.toggle('on', on);
+  btn.setAttribute('aria-pressed', String(on));
+  document.body.classList.toggle('measuring', on);
+  crosshair.hidden = !on;
+  hintEl.classList.toggle('measure', on);
+  if (on) { cursor.x = innerWidth / 2; cursor.y = innerHeight / 2; paintCursor(); }
+  clearMeasurement();
+  setHint(on ? HINT_MEASURE : HINT_DEFAULT);
+}
+
+function cancelMeasurement(): boolean {
+  const had = measure.stage !== 'idle' || measure.points.length > 0;
+  clearMeasurement();
+  if (measure.on) setHint(HINT_MEASURE);
+  return had;
+}
+
+function clearMarks() {
+  measure.points = [];
+  pulse = null;
+  measureRoot.traverse((o) => {
+    if (o instanceof THREE.Mesh) {
+      o.geometry.dispose();
+      (o.material as THREE.Material).dispose();
+    }
+  });
+  measureRoot.clear();
+}
+
+function clearMeasurement() {
+  measure.stage = 'idle';
+  measure.distance = 0;
+  clearMarks();
+  resetPanel();
+}
+
+function resetPanel() {
+  measurePanel.hidden = true;
+  measure.stage = 'idle';
+  el('#measure-title').textContent = 'Real distance';
+  el('#measure-kind').textContent = 'reference measurement';
+  el('#measure-distance').textContent = '—';
+  measureField.hidden = false;
+  measureActions.hidden = false;
+  measureDone.hidden = true;
+  measureCommand.hidden = true;
+  measureCommand.textContent = '';
+  measureInput.value = '';
+  note('');
+}
+
+/** The first visible mesh under a screen point: a pointer tap, or the crosshair a keyboard tap uses. */
+function pick(clientX: number, clientY: number): THREE.Vector3 | null {
+  pointer.set((clientX / innerWidth) * 2 - 1, -(clientY / innerHeight) * 2 + 1);
+  ray.setFromCamera(pointer, camera);
+  const targets: THREE.Object3D[] = [];
+  for (const o of [room, objectsRoot, meshLayer]) if (o) targets.push(o);
+  const hit = ray.intersectObjects(targets, true).find((h) => h.object instanceof THREE.Mesh && shown(h.object));
+  return hit ? hit.point.clone() : null;
+}
+
+/** Visible up the chain: the ceiling lifts off in the dollhouse view and must not take a tap. */
+function shown(o: THREE.Object3D) {
+  for (let n: THREE.Object3D | null = o; n; n = n.parent) if (!n.visible) return false;
+  return true;
+}
+
+function addMarker(p: THREE.Vector3) {
+  const marker = new THREE.Mesh(
+    new THREE.SphereGeometry(Math.max(0.02, camera.position.distanceTo(p) * 0.012), 16, 12),
+    new THREE.MeshBasicMaterial({ color: 0x6ea8ff, depthTest: false, depthWrite: false, transparent: true, opacity: 0.95, fog: false }),
+  );
+  marker.position.copy(p);
+  marker.renderOrder = 31;
+  measureRoot.add(marker);
+  return marker;
+}
+
+function addLine(a: THREE.Vector3, b: THREE.Vector3) {
+  // a thin bar, not a 1 px Line: at room distance the GL line is barely visible, and this reads as a tape
+  const dir = new THREE.Vector3().subVectors(b, a);
+  const radius = Math.max(0.012, camera.position.distanceTo(a) * 0.0035);
+  const bar = new THREE.Mesh(
+    new THREE.CylinderGeometry(radius, radius, dir.length(), 6),
+    new THREE.MeshBasicMaterial({ color: 0x9ec8ff, depthTest: false, depthWrite: false, transparent: true, opacity: 0.95, fog: false }),
+  );
+  bar.position.copy(a).lerp(b, 0.5);
+  bar.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), dir.clone().normalize());
+  bar.renderOrder = 30;
+  measureRoot.add(bar);
+}
+
+function placePoint(clientX?: number, clientY?: number) {
+  if (!measure.on) return;
+  if (clientX !== undefined && clientY !== undefined) { cursor.x = clientX; cursor.y = clientY; paintCursor(); }
+  const p = pick(cursor.x, cursor.y);
+  if (!p) { setHint('nothing under that tap — aim at a wall, the floor or an object'); return; }
+  if (measure.stage === 'asking' || measure.stage === 'applied') clearMeasurement();   // a new pair replaces the last one
+  measure.points.push(p);
+  const marker = addMarker(p);
+  if (measure.points.length === 1) {
+    measure.stage = 'first';
+    pulse = marker;
+    setHint('first point · tap the other end of the same thing');
+    return;
+  }
+  const [a, b] = measure.points;
+  measure.distance = tapDistance(a, b);
+  if (measure.distance < 0.02) {
+    clearMeasurement();
+    setHint('those two taps are the same point — tap the ends of something longer');
+    return;
+  }
+  if (pulse) pulse.scale.setScalar(1);   // the first point stops breathing once the pair is complete
+  pulse = null;
+  addLine(a, b);
+  openPanel(measure.distance);
+}
+
+function openPanel(d: number) {
+  measure.stage = 'asking';
+  measurePanel.hidden = false;
+  el('#measure-title').textContent = 'Real distance';
+  el('#measure-kind').textContent = 'reference measurement';
+  el('#measure-distance').textContent = `two taps · ${d.toFixed(2)} m apart`;
+  measureField.hidden = false;
+  measureActions.hidden = false;
+  measureDone.hidden = true;
+  measureCommand.hidden = true;
+  measureInput.value = d.toFixed(2);   // the default is the measured distance rounded to 2 decimals
+  note(typeof sceneDoc?.scale === 'number' ? `current scale ${fmtScale(sceneDoc.scale)} · ${sceneDoc.scaleSource ?? 'unknown source'}` : 'this scene carries no scale yet');
+  measureInput.focus({ preventScroll: true });
+  measureInput.select();
+  setHint('type the real length · <b>Enter</b> applies · <b>Esc</b> cancels');
+}
+
+function applyMeasurement() {
+  if (measure.stage !== 'asking') return;
+  const d = measure.distance;
+  const real = Number(measureInput.value);
+  const f = factorFrom(real, d);
+  if (f === null) { note('type the real length in metres'); measureInput.focus(); return; }
+  if (f < LIMITS[0] || f > LIMITS[1]) { note(`×${f.toFixed(2)} is outside ${LIMITS[0]} to ${LIMITS[1]}: check the length`); measureInput.focus(); return; }
+  const before = typeof sceneDoc?.scale === 'number' ? sceneDoc.scale : null;
+  sceneDoc = rescaleScene(sceneDoc ?? {}, f, { knownM: real, measuredM: d });
+  clearMarks();   // the taps were in the old units: the line must not stay behind at the old size
+  applyScale(f);
+  paintScale();
+  measure.stage = 'applied';
+  const after = typeof sceneDoc.scale === 'number' ? sceneDoc.scale : null;
+  el('#measure-title').textContent = 'Scale corrected';
+  el('#measure-kind').textContent = before === null || after === null
+    ? `scale ×${fmtScale(appliedScale)}`
+    : `scale ${fmtScale(before)} → ${fmtScale(after)}`;
+  el('#measure-distance').textContent = `${d.toFixed(2)} m measured · ${real} m entered · ×${fmtScale(f)}`;
+  measureField.hidden = true;
+  measureActions.hidden = true;
+  measureDone.hidden = false;
+  note(hasSceneJson ? 'kept in this tab’s manifest — scene.json was not written' : 'kept in this tab — there is no scene.json next to this scene');
+  measureCommand.textContent = `plypipe rescale <folder> --known ${real} --measured ${d.toFixed(4)}`;
+  measureCommand.hidden = false;
+  setHint('corrected for this visit only · the twin’s files need the command in the panel');
+}
+
+/** Move the model by f. The camera and the walker move too, so the view holds and the fixed 1 m grid shows the change. */
+function applyScale(f: number) {
+  appliedScale *= f;
+  for (const group of [room, objectsRoot, meshLayer]) if (group) group.scale.setScalar(appliedScale);
+  camera.position.multiplyScalar(f);
+  controls.target.multiplyScalar(f);
+  controls.update();
+  walked.x *= f;
+  walked.z *= f;
+  if (selected) paintPanelSize(selected);
+  refreshOutlinerSizes();
+}
+
+function refreshOutlinerSizes() {
+  if (!shell) return;
+  const by = new Map<string, Obj>(drawable(shell).map((o) => [o.id, o] as [string, Obj]));
+  document.querySelectorAll<HTMLButtonElement>('#outliner-list .item').forEach((b) => {
+    const o = by.get(b.dataset.id ?? '');
+    const em = o && b.querySelector('em');
+    if (em) em.textContent = sizeText(o);
+  });
+}
+
+el('#measure').addEventListener('click', () => setMeasure(!measure.on));
+el('#measure-apply').addEventListener('click', applyMeasurement);
+el('#measure-cancel').addEventListener('click', () => { cancelMeasurement(); });
+el('#measure-again').addEventListener('click', () => { cancelMeasurement(); });
+el('#measure-exit').addEventListener('click', () => setMeasure(false));
+measureInput.addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') { e.preventDefault(); applyMeasurement(); }
+  if (e.key === 'Escape') { e.preventDefault(); cancelMeasurement(); }
+});
+
+// a tap is a pointerdown and a pointerup in the same place: an orbit drag and a hold are not taps
+let tap: { id: number; x: number; y: number; t: number } | null = null;
+canvas.addEventListener('pointerdown', (e) => {
+  if (!measure.on || document.pointerLockElement === canvas) return;
+  tap = { id: e.pointerId, x: e.clientX, y: e.clientY, t: performance.now() };
+});
+canvas.addEventListener('pointerup', (e) => {
+  if (!tap || tap.id !== e.pointerId) return;
+  const moved = Math.hypot(e.clientX - tap.x, e.clientY - tap.y);
+  const held = performance.now() - tap.t;
+  tap = null;
+  if (!measure.on || moved > 8 || held > 800) return;
+  placePoint(e.clientX, e.clientY);
+});
+canvas.addEventListener('pointercancel', () => { tap = null; });
 
 // ---------------------------------------------------------------- outliner: every object on its own
 function buildOutliner(s: Shell) {
@@ -302,7 +614,7 @@ function buildOutliner(s: Shell) {
       const item = document.createElement('button');
       item.className = 'item';
       item.dataset.id = o.id;
-      item.append(cell('span', o.name), cell('em', o.half.map((v) => (v * 2).toFixed(1)).join('×')));
+      item.append(cell('span', o.name), cell('em', sizeText(o)));
       item.addEventListener('click', () => {
         const target = objectsRoot?.getObjectByName(o.id);
         if (target) { select(target); const b = new THREE.Box3().setFromObject(target); const c = b.getCenter(new THREE.Vector3()); controls.target.copy(c); }
@@ -345,11 +657,13 @@ function loop() {
     }
     yaw += (yawPitch.yaw - yaw) * 0.4;
     pitch += (yawPitch.pitch - pitch) * 0.4;
-    camera.position.set(walked.x, (shell?.floorY ?? 0) + EYE, walked.z);
+    camera.position.set(walked.x, floorWorld() + EYE, walked.z);
     camera.rotation.set(pitch, yaw, 0, 'YXZ');
   } else {
     controls.update();
   }
+  // the first point breathes so it reads as pending; with reduced motion it just sits there
+  if (pulse && !reducedMotion.matches) pulse.scale.setScalar(1 + 0.1 * Math.sin(performance.now() / 300));
   renderer.render(scene, camera);
   requestAnimationFrame(loop);
 }
