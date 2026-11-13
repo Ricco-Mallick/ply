@@ -6,7 +6,7 @@ import json
 import numpy as np
 import pytest
 
-from plypipe import colmap_txt, dense, geometry, shell
+from plypipe import colmap_txt, dense, geometry, layout_eval, shell
 from plypipe.log import Log
 from plypipe.stages import export
 from plypipe.util import Ctx
@@ -213,3 +213,32 @@ def test_export_leaves_a_job_without_dense_points_or_with_the_option_off_exactly
     (tmp_path / "elsewhere.npz").rename(tmp_path / dense.FILE)
     ctx.opts["dense_layout"] = False
     assert export._dense_layout(ctx) is None and (tmp_path / "shell.json").read_text() == text and not (tmp_path / "shell_dense.json").exists()
+
+
+TWO_ROOM_PLAN = {"walls": [{"a": [0, 0], "b": [8.1, 0]}, {"a": [8.1, 0], "b": [8.1, 4]}, {"a": [8.1, 4], "b": [0, 4]}, {"a": [0, 4], "b": [0, 0]},
+                           {"a": [4.05, 0], "b": [4.05, 4]}], "doors": [{"p": [4.05, 2.1]}]}
+
+
+def test_the_layout_score_passes_the_ship_rule_on_the_two_rooms_and_fails_it_with_a_missing_door_or_a_false_one(two_rooms):
+    out = shell.layout(*two_rooms)
+    got = layout_eval.score(out, TWO_ROOM_PLAN, rooms=2)
+    assert got["ships"] and got["medianEndpointCm"] <= 10 and got["found"] == got["real"] == 1 and got["false"] == 0, got
+    missing = layout_eval.score(dict(out, openings=[]), TWO_ROOM_PLAN, rooms=2)
+    assert not missing["ships"] and missing["found"] == 0
+    extra = dict(out["openings"][0], wall=0, u=3.0)
+    assert layout_eval.score(dict(out, openings=out["openings"] + [extra] * 3), TWO_ROOM_PLAN, rooms=1)["false"] == 3
+    assert not layout_eval.score(dict(out, openings=out["openings"] + [extra] * 3), TWO_ROOM_PLAN, rooms=1)["ships"]
+    assert not layout_eval.score(dict(out, walls=out["walls"][:2]), TWO_ROOM_PLAN)["ships"]
+
+
+def test_wall_flatness_is_under_a_centimetre_on_exact_depth_and_shows_a_bump_in_a_wall(box_room):
+    pts, nrm, _ = box_room
+    out = shell.layout(pts, nrm, box_room[2])
+    flat = layout_eval.flatness_summary(layout_eval.wall_flatness(pts, out))
+    assert flat["walls"] == 4 and flat["worstRmsCm"] < 1.0, flat
+    rng = np.random.default_rng(3)
+    wavy = pts.copy()
+    on_wall = np.abs(wavy[:, 0]) < 0.15
+    wavy[on_wall, 0] += 0.06 * np.sin(wavy[on_wall, 2] * 4) + rng.normal(0, 0.01, on_wall.sum())
+    bad = layout_eval.wall_flatness(wavy, out)
+    assert max(w["rms"] for w in bad if w["rms"] is not None) > 0.03
