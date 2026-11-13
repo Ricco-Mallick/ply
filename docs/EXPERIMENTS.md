@@ -529,3 +529,42 @@ its metric depth to the solve's depth at the track points, then the median over 
   one frame. Two rooms are too few to move the threshold on, so it stays at 5% and **2b stays opt-in** (`--priors`).
   By the plan's gate the **reference measurement (2r, `plypipe rescale`) is the shipped path**, and it is built.
 - MoGe-2 costs 0.07 to 0.2 s per frame on an L40S and its install 3 s; each run was about two minutes of GPU.
+
+### Phase 6: the office scan as a twin, with no training (2026-11-13)
+
+- **Step 0** (`scripts/lidar/inspect_e57.py`): `lidar-office-1` is 3.4 GB, **one** unified cloud of 184,614,433
+  points with colour and intensity, no normals, no row and column structure, one pose, and **no photos**
+  (`images2D` is empty). Route 8b (training on the scanner's photos) is not possible with this file.
+- **Export:** thinned to 1 cm it is 4,340,907 points (65 MB).
+- **Route 8a** (`scripts/lidar/lidar_twin.py`, 4 CPUs, 128 s, 1.6 GB peak): one disk per voxel, coarsened to 1.34 cm
+  to fit the 2M cap: 1,921,505 splats (21.8 MB), a phone file of 727,986 at 2.1 cm (8.6 MB). Splat centres against
+  the scan at one voxel: F = 1.0, as it must be. The room is 7.7 × 6.1 m with a 4.0 m ceiling; four walls measured.
+- **Looked at in the viewer** (dev build, the phone file): the office reads as an office (desks, monitors, chairs,
+  the wooden floor). The first build showed the background through a regular grid of gaps: disks at half the point
+  spacing cover 82% halfway between two neighbours. At 0.75 of the spacing they cover 94%, and the grid is gone from
+  near surfaces and faint on far ones. Published as `lidar-office-8a` on the results dataset.
+- **Not right yet:** the file's single pose is not a place a person stood, so the twin has no camera path and the
+  walking check reports no capture position walkable (6.5 m² to stand on); Walk starts from the nearest free cell.
+  The plan's other two ship conditions are unmeasured: the phone file on a real phone, and wall crossings.
+
+### Phase 3: the chapel's matches, made again (2026-11-13)
+
+No run had kept the chapel's `database.db`. `pipeline/modal/sfm_match.py` made the features and matches again with
+the first job's settings (SIFT, sequential with loop detection): 1,236 frames, 9.1M keypoints, 15,760 pairs matched
+and 10,553 verified, 602 s of matching in 777 s on an L40S ($0.31), a 1.4 GB database saved beside the job. The
+incremental, hierarchical and keyframe solves all map this one database (results below when they land).
+
+### Phase 2: the layout and the mesh from depth on the real chapel (2026-11-13)
+
+First run (`q0a-layout`, export only, `--mesh tsdf`, L40S, $0.24): both new parts were wrong and both failed soft.
+
+- **Mesh:** fusion at 2.5 cm took 23 s and 227 MB and extraction gave 13.9M triangles; a third were dropped as
+  specks and the simplification returned **176 triangles**. Cause: its search for the clustering cell counted
+  duplicate triangles, which a noisy surface keeps producing at every cell size, so it ran to the coarsest cell.
+  Fixed (distinct triangles, a speck is a piece under 0.25 m², a mesh under a tenth of its target is not written);
+  on a 12.3M-triangle stand-in with 1 cm noise it now gives 298k and 19.9k triangles.
+- **Layout:** 12 walls (the sparse shell has 6), discarded because two lifted windows were under 0.5 m. An opening
+  that fails its own check is now dropped and the walls stand. Run again on the chapel's dense points on a CPU, it
+  validates, and it is **worse than the sparse shell on this room**: both long sides are found, in fragments offset
+  by up to 0.5 m, and neither end wall is (the entrance is a diffuse band, the apse is curved), so the outline is
+  open. It is **opt-in** (`--dense-layout`) until it is scored on the MuSHRoom rooms.
