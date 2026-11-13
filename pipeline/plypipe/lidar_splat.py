@@ -155,9 +155,9 @@ def _quat(R: np.ndarray) -> np.ndarray:
 
 
 def local_frames(pts: np.ndarray, k: int = NEIGHBOURS, sigma: float = 0.005, passes: int = 2, chunk: int = 100_000,
-                 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+                 ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     """For every point, the plane its k nearest neighbours lie on: (normal [N, 3], in-plane axis [N, 3], mean distance to
-    the 4 nearest neighbours [N]). The fit is a weighted PCA, refitted `passes` times with weights 1 / (1 + (r / sigma)^2)^2
+    the 4 nearest neighbours [N], the 8 nearest neighbours' indices [N, 8]). The fit is a weighted PCA, refitted `passes` times with weights 1 / (1 + (r / sigma)^2)^2
     of each neighbour's distance r from the plane: at an edge or a corner the neighbours on the far face stop pulling
     the plane away from the face the point is on (a plain PCA tilts the normals within 3 cm of an edge by tens of degrees).
     The sign of the normal is arbitrary here."""
@@ -166,6 +166,7 @@ def local_frames(pts: np.ndarray, k: int = NEIGHBOURS, sigma: float = 0.005, pas
     k = min(k, len(pts) - 1)
     tree = cKDTree(pts)
     n_out, t_out, d_out = np.empty((len(pts), 3), np.float32), np.empty((len(pts), 3), np.float32), np.empty(len(pts), np.float32)
+    nbr = np.empty((len(pts), min(8, k)), np.int32)
     for s in range(0, len(pts), chunk):
         dist, idx = tree.query(pts[s:s + chunk], k=k + 1, workers=-1)
         nb = pts[idx].astype(np.float64)
@@ -180,20 +181,83 @@ def local_frames(pts: np.ndarray, k: int = NEIGHBOURS, sigma: float = 0.005, pas
                 w = 1.0 / (1.0 + (off / sigma) ** 2) ** 2
         n_out[s:s + chunk], t_out[s:s + chunk] = n, V[:, :, 2]
         d_out[s:s + chunk] = dist[:, 1:5].mean(1)
-    return n_out, t_out, d_out
+        nbr[s:s + chunk] = idx[:, 1:nbr.shape[1] + 1]
+    return n_out, t_out, d_out, nbr
 
 
-def orient(pts: np.ndarray, normals: np.ndarray, stations: np.ndarray | None) -> np.ndarray:
-    """Normals turned to face the nearest scanner station (the cloud's centroid without stations, which is inside a room)."""
-    if stations is not None and len(stations):
-        from scipy.spatial import cKDTree
-        _, j = cKDTree(stations).query(pts, workers=-1)
-        towards = stations[j] - pts
-    else:
-        towards = pts.mean(0) - pts
-    flip = np.einsum("ij,ij->i", normals, towards) < 0
+def _occluded(p: np.ndarray, n: np.ndarray, s: np.ndarray, lo: np.ndarray, dims: np.ndarray, occupied: np.ndarray, voxel: float,
+              step: float = 0.04, own: float = 0.06, near_station: float = 0.4, budget: int = 4_000_000) -> np.ndarray:
+    """For each segment p -> s: does it pass through an occupied voxel other than the surface the point is on? Samples are
+    `step` apart from 5 cm off the point to `near_station` short of the station (its own tripod is in the cloud), and a
+    sample within `own` of the point's tangent plane is its own surface."""
+    out = np.zeros(len(p), bool)
+    d = s - p
+    L = np.linalg.norm(d, axis=1)
+    d /= np.maximum(L, 1e-9)[:, None]
+    m = np.maximum(0, np.floor((L - near_station - 0.05) / step).astype(np.int64))
+    start = 0
+    while start < len(p):
+        end = start + max(1, int(np.searchsorted(np.cumsum(m[start:]), budget)))
+        mm = m[start:end]
+        ray = np.repeat(np.arange(start, end), mm)
+        k = np.arange(len(ray)) - np.repeat(np.cumsum(mm) - mm, mm)
+        t = 0.05 + k * step
+        q = p[ray] + d[ray] * t[:, None]
+        c = np.floor((q - lo) / voxel).astype(np.int64)
+        ok = (c >= 0).all(1) & (c < dims).all(1) & (np.abs(np.einsum("ij,ij->i", n[ray], q - p[ray])) >= own)
+        key = (c[ok, 0] * dims[1] + c[ok, 1]) * dims[2] + c[ok, 2]
+        pos = np.minimum(np.searchsorted(occupied, key), len(occupied) - 1)
+        hit = ray[ok][occupied[pos] == key]
+        out[np.unique(hit)] = True
+        start = end
+    return out
+
+
+def orient(pts: np.ndarray, normals: np.ndarray, stations: np.ndarray | None, nbr: np.ndarray | None = None, voxel: float = 0.05,
+           candidates: int = 6) -> np.ndarray:
+    """Normals turned to face the scanner station that saw the point: the nearest one whose line to the point crosses
+    nothing else in the cloud (a voxel grid of `voxel` with at least 2 points in a cell), preferring one that sees the surface
+    head on to one that grazes it, then settled against the neighbours (`agree`). The plain nearest station is wrong for a wall with a station in the next room behind it,
+    and for the far side of a table. Where no station is clear, the nearest. Without stations, normals face the cloud's centroid, which is inside a room."""
     out = normals.copy()
+    if stations is None or not len(stations):
+        flip = np.einsum("ij,ij->i", normals, pts.mean(0) - pts) < 0
+        out[flip] *= -1
+        return out
+    from scipy.spatial import cKDTree
+    K = min(candidates, len(stations))
+    near = np.asarray(cKDTree(stations).query(pts, k=K, workers=-1)[1]).reshape(len(pts), K)
+    lo = np.minimum(pts.min(0), stations.min(0)) - 0.1
+    dims = np.ceil((np.maximum(pts.max(0), stations.max(0)) + 0.1 - lo) / voxel).astype(np.int64) + 1
+    cells = np.floor((pts - lo) / voxel).astype(np.int64)
+    keys, cnt = np.unique((cells[:, 0] * dims[1] + cells[:, 1]) * dims[2] + cells[:, 2], return_counts=True)
+    occupied = keys[cnt >= 2]
+    chosen, best = near[:, 0].copy(), np.full(len(pts), -1.0)
+    pending = np.arange(len(pts))
+    for r in range(K):
+        if not len(pending):
+            break
+        blocked = _occluded(pts[pending], normals[pending], stations[near[pending, r]], lo, dims, occupied, voxel)
+        clear = pending[~blocked]
+        vec = stations[near[clear, r]] - pts[clear]
+        dist = np.linalg.norm(vec, axis=1)
+        cos = np.abs(np.einsum("ij,ij->i", normals[clear], vec)) / np.maximum(dist, 1e-9)
+        better = cos / (dist + 1.0) > best[clear]  # a clear station that sees the surface head on beats one that grazes it
+        chosen[clear[better]] = near[clear[better], r]
+        best[clear[better]] = (cos / (dist + 1.0))[better]
+        pending = np.concatenate([pending[blocked], clear[cos < 0.7]])
+    flip = np.einsum("ij,ij->i", normals, stations[chosen] - pts) < 0
     out[flip] *= -1
+    return agree(out, nbr) if nbr is not None else out
+
+
+def agree(normals: np.ndarray, nbr: np.ndarray, coplanar: float = 0.9) -> np.ndarray:
+    """A normal that faces against most of the neighbours lying on its own plane (|dot| above `coplanar`) is turned round:
+    what is left of the sight-line test after its few misses at edges, where a ray grazes a corner."""
+    dots = np.einsum("ij,ikj->ik", normals, normals[nbr])
+    vote = np.where(np.abs(dots) > coplanar, np.sign(dots), 0).sum(1)
+    out = normals.copy()
+    out[vote < 0] *= -1
     return out
 
 
@@ -488,8 +552,8 @@ def run_stage(ctx: Ctx, source: Path) -> dict:
     voxel0 = float(ctx.opt("voxel", VOXEL))
     centres, colours, voxel = thin_to_cap(scene_pts, cols, voxel0, cap)
     ctx.log.emit("lidar", "progress", f"{len(centres)} splats at a {voxel * 100:.2f} cm voxel" + ("" if voxel == voxel0 else f" (coarsened from {voxel0 * 100:.2f} cm to stay under {cap})"))
-    normals, axis, spacing = local_frames(centres, k=int(ctx.opt("k", NEIGHBOURS)), sigma=0.5 * voxel)
-    normals = orient(centres, normals, st)
+    normals, axis, spacing, nbr = local_frames(centres, k=int(ctx.opt("k", NEIGHBOURS)), sigma=0.5 * voxel)
+    normals = orient(centres, normals, st, nbr)
     sh = int(ctx.opt("sh_degree", 3))
     write_ply(ctx.out / "scene.ply", disks(centres, colours, normals, axis, spacing, voxel, sh))
     f = fscore(centres, scene_pts, 0.01)

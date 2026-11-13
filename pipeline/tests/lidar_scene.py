@@ -55,7 +55,7 @@ def colour_at(p: np.ndarray) -> np.ndarray:
 
 def scanned_room(n: int = 300_000, seed: int = 0, noise: float = 0.002) -> dict:
     """points [N, 3] (y up, the room's own frame), colors, normals (the true surface normal of each point), face ids, stations,
-    and `edge`: points within 3 cm of another surface, whose normal is not well defined."""
+    and `edge`: points within 6 cm of another surface, whose normal is not well defined."""
     rng = np.random.default_rng(seed)
     faces = _faces()
     area = np.array([np.linalg.norm(np.cross(u, v)) for _, u, v, _ in faces])
@@ -72,8 +72,8 @@ def scanned_room(n: int = 300_000, seed: int = 0, noise: float = 0.002) -> dict:
     p, nrm, face = p[keep], nrm[keep], face[keep]
     p = p + nrm * rng.normal(0, noise, (len(p), 1))
     from scipy.spatial import cKDTree
-    d, idx = cKDTree(p).query(p, k=12)
-    edge = (face[idx] != face[:, None]).any(1) | (d[:, -1] > 0.04)
+    d, idx = cKDTree(p).query(p, k=40)
+    edge = ((face[idx] != face[:, None]) & (d <= 0.06)).any(1)
     return {"points": p, "colors": colour_at(p), "normals": nrm, "face": face, "stations": STATIONS.copy(), "edge": edge}
 
 
