@@ -31,7 +31,8 @@ import modal
 
 app = modal.App("ply-lidar-twin")
 vol = modal.Volume.from_name("ply-bench", create_if_missing=True)
-PLYPIPE = Path(__file__).resolve().parents[2] / "pipeline" / "plypipe"
+HERE = Path(__file__).resolve()  # in the container this file is /root/lidar_twin.py, which has no repository above it
+PLYPIPE = (HERE.parents[2] if len(HERE.parents) > 2 else Path("/root")) / "pipeline" / "plypipe"
 image = (modal.Image.debian_slim(python_version="3.12")
          .apt_install("curl", "ca-certificates")
          .run_commands("curl -fsSL https://deb.nodesource.com/setup_22.x | bash - && apt-get install -y nodejs",
