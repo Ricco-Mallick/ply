@@ -16,8 +16,8 @@ stations, all scans in one frame) or a coloured PLY (scripts/lidar/ingest_e57.py
    is coarsened until the cloud is under the cap, and the size used is in the report.
 4. the disk: a robust plane fit through the 16 nearest neighbours (points off the plane, such as the other side of an
    edge, are down-weighted twice) gives the normal, oriented towards the nearest scanner station (the cloud's centroid
-   without stations). The rotation takes the disk's thin axis to the normal. Its two in-plane scales are half the mean
-   distance to the 4 nearest neighbours, never more than half a voxel (so no disk is wider than two voxels across at
+   without stations). The rotation takes the disk's thin axis to the normal. Its two in-plane scales are 0.75 of the mean
+   distance to the 4 nearest neighbours, never more than 0.75 of a voxel (so neighbours overlap and no disk is wider than three voxels across at
    2 sigma); the thin axis is a tenth of that. Opacity 0.95. Colour is the point's own, as the trainer stores it:
    SH0 = (rgb / 255 - 0.5) / 0.2821, higher bands zero.
 5. the products an export needs, from the points themselves: occupancy.json/.png from stages/occupancy.build_grid with
@@ -278,7 +278,9 @@ def disks(pts: np.ndarray, cols: np.ndarray, normals: np.ndarray, axis: np.ndarr
     t1 /= np.linalg.norm(t1, axis=1, keepdims=True)
     t2 = np.cross(normals, t1)
     R = np.stack([t1, t2, normals], axis=2)  # columns: the disk's axes, its thin one last
-    sig = np.clip(0.5 * spacing, 0.2 * voxel, 0.5 * voxel)
+    # 0.75 of the spacing: at 0.5 the real office showed its background through a grid of gaps between the disks (2026-11-13), where two
+    # neighbours together cover 82% halfway between them; at 0.75 they cover 94% there and 98% at the centre of four
+    sig = np.clip(0.75 * spacing, 0.3 * voxel, 0.75 * voxel)
     q = _quat(R)
     rgb = cols.astype(np.float32) / 255.0
     cols_out: dict[str, np.ndarray] = {"x": pts[:, 0], "y": pts[:, 1], "z": pts[:, 2], "nx": normals[:, 0], "ny": normals[:, 1], "nz": normals[:, 2]}

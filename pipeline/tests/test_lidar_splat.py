@@ -102,10 +102,12 @@ def test_a_station_in_the_next_room_does_not_turn_a_walls_normals_away():
     assert (out[:half, 0] > 0).all() and (out[half:, 0] < 0).all()
 
 
-def test_no_disk_is_wider_than_two_voxels_and_each_is_thin(twin):
+def test_no_disk_is_wider_than_three_voxels_neighbours_overlap_and_each_is_thin(twin):
     c, v = twin["cols"], twin["report"]["voxelM"]
     s = np.exp(np.stack([c["scale_0"], c["scale_1"], c["scale_2"]], 1))
-    assert (4 * s[:, :2].max(1) <= 2 * v * (1 + 1e-5)).all()
+    assert (4 * s[:, :2].max(1) <= 3 * v * (1 + 1e-5)).all()
+    # two disks one voxel apart must hide what is behind them halfway between: 1 - (1 - 0.95 exp(-d^2 / 2 sigma^2))^2 at d = v / 2
+    assert 1 - (1 - 0.95 * np.exp(-0.5 * (0.5 * v / np.median(s[:, 0])) ** 2)) ** 2 > 0.9
     assert (s[:, 2] <= 0.11 * s[:, :2].min(1)).all() and (s > 0).all()
     assert np.allclose(1 / (1 + np.exp(-c["opacity"])), 0.95, atol=1e-4)
 
