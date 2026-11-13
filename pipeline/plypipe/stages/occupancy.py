@@ -40,6 +40,22 @@ confirm it (plypipe.dense), is a range scan from every view, in 5 cm cells over 
 A view votes once per cell whatever its pixel count. Free space not connected to the walk goes back to unknown as
 above. Unknown holes enclosed by free cells are filled only up to 0.25 m2 and only if no view saw any of their cells
 blocked, so free space never closes over, or joins across, a cell that anything was seen in.
+
+The grid from a scan's own returns (`grid_from_pointcloud`, run by `plypipe lidar` for IMPROVEMENT-PLAN 8a) needs no
+poses at all: a laser scan of one station is the cloud, and the station's pose in the file is not a place anyone stood
+(on `lidar-office-1` it is 5 m outside its own cloud). In 5 cm cells over the same area:
+
+    blocked  by a cell holding `min_pts` returns between 0.2 m and 1.8 m above the floor: a wall, a desk, a chair
+    free     by a cell with a return on the floor (|y| < 0.08 m): the scanner saw the floor there
+             or by a cell with a return on the ceiling plane (1.8 m up to the measured ceiling + 15 cm) and no return
+             below it: the beam went over the cell to the ceiling, so nothing stands in it, and the floor under it is
+             only hidden (dark, glossy, or in a shadow of the scanner's own tripod). A ceiling that is under 0.6 m
+             above head height is not a ceiling (an outdoor scan, a cathedral): then only floor returns free cells
+    unknown  everything else: outside the scanned area, inside a wall, behind furniture
+
+Nothing is closed morphologically and no free space is dropped for being disconnected: a cell is free only where a
+return says so, and what the scanner never saw stays unknown, which the viewer blocks. Unknown pockets enclosed by
+free cells are filled up to 0.25 m2, and only where no return was seen in them.
 """
 
 from __future__ import annotations
@@ -323,6 +339,93 @@ def grid_from_depth(views, cam_path: np.ndarray, lo: np.ndarray, shape: tuple[in
             "depth": {"views": votes["views"], "minViews": min_views, "maxRange": max_range, "holeM2": hole_m2,
                       "seenFree": int((votes["free"] >= min_views).sum()), "seenBlocked": int(blocked.sum()),
                       "seenBlockedByFewer": int(((votes["blocked"] > 0) & ~blocked).sum()), **merged},
+            "stats": {"free": int((grid == FREE).sum()), "blocked": int((grid == BLOCKED).sum()),
+                      "unknown": int((grid == UNKNOWN).sum())}}
+    return grid, meta
+
+
+def ceiling_layer(y: np.ndarray, above: float = 1.8, step: float = 0.02, band: float = 0.03,
+                  fallback: float = 99.0) -> float:
+    """The ceiling: the densest layer of returns above head height (a scan also sees lights, ducts and, through a window,
+    the outside, which move a percentile); the `fallback` percentile when nothing is that far up."""
+    top = np.asarray(y, float)
+    top = top[top > above]
+    if len(top) < 100:
+        return float(np.percentile(y, fallback))
+    cnt, edges = np.histogram(top, np.arange(above, min(float(top.max()), above + 12.0) + step, step))
+    b = int(np.argmax(cnt))
+    layer = top[(top >= edges[b] - band) & (top <= edges[b + 1] + band)]
+    return float(np.median(layer))
+
+
+def pointcloud_votes(points: np.ndarray, lo: np.ndarray, cell: float, shape: tuple[int, int], band: tuple[float, float] = (0.2, 1.8),
+                     floor_band: float = 0.08, top: float | None = None, rays: tuple[np.ndarray, np.ndarray] | None = None,
+                     ray_below: float = 0.6, min_rays: int = 3, max_len: float = 12.0, chunk: int = 200_000) -> dict:
+    """Per cell, how many returns the scan has on the floor, in the walking band and on the ceiling plane, and whether
+    the scan's own sight lines crossed it (module docstring). `points` are in the scene frame with the floor at y = 0."""
+    H, W = shape
+    p = np.asarray(points, float).reshape(-1, 3)
+    masks = [("floor", lambda y: np.abs(y) < floor_band), ("solid", lambda y: (y >= band[0]) & (y <= band[1]))]
+    if top is not None:  # a ceiling return says the beam went over the cell; without a ceiling above the band there is none
+        masks.append(("ceiling", lambda y: (y > band[1]) & (y <= float(top))))
+    counts = {"floor": np.zeros(H * W, np.int64), "solid": np.zeros(H * W, np.int64), "ceiling": np.zeros(H * W, np.int64)}
+    for s in range(0, len(p), chunk):  # a 184 M-point cloud is never held as one boolean mask
+        q = p[s:s + chunk]
+        for name, rule in masks:
+            m = rule(q[:, 1])
+            if m.any():
+                r, c, _ = _cells(q[m], lo, cell, shape)
+                counts[name] += np.bincount(r * W + c, minlength=H * W)
+    seen, n_rays = np.zeros(shape, bool), 0
+    if rays is not None and len(rays[0]):
+        n_rays = len(rays[0])
+        seen = seen_free(rays[0], rays[1], lo, cell, shape, below=ray_below, max_len=max_len) >= min_rays
+    return {"floor": counts["floor"].reshape(shape), "solid": counts["solid"].reshape(shape),
+            "ceiling": counts["ceiling"].reshape(shape), "seen": seen, "rays": n_rays}
+
+
+def grid_from_pointcloud(points: np.ndarray, lo: np.ndarray | None = None, shape: tuple[int, int] | None = None, cell: float = DEPTH_CELL,
+                         band: tuple[float, float] = (0.2, 1.8), floor_band: float = 0.08, min_pts: int = 2, top: float | str | None = "auto",
+                         hole_m2: float = 0.25, margin: float = 0.5, rays: tuple[np.ndarray, np.ndarray] | None = None,
+                         min_rays: int = 3) -> tuple[np.ndarray, dict]:
+    """The walking grid from a scan's own returns (module docstring), over the area that starts at `lo` (x, z) with
+    `shape` cells, or over 1 % to 99 % of the cloud plus `margin` when neither is given.
+
+    `rays` (station to point, on a scan whose station is known) also frees cells the scanner saw through low down; a
+    station that is nowhere near its own cloud is not evidence and must be passed as None. `top` is the ceiling return
+    above which a cell is read as seen through: "auto" measures it (ceiling_layer), a number fixes it, None turns that
+    rule off."""
+    p = np.asarray(points, float).reshape(-1, 3)
+    if lo is None or shape is None:
+        xz = p[:, [0, 2]]
+        lo = np.percentile(xz, 1, axis=0) - margin
+        hi = np.percentile(xz, 99, axis=0) + margin
+        shape = (int(np.ceil((hi[1] - lo[1]) / cell)), int(np.ceil((hi[0] - lo[0]) / cell)))
+    H, W = shape
+    if W * H > 4_000_000:
+        raise ValueError(f"grid {W}x{H} too large; is the scale wrong?")
+    if top == "auto":
+        top = ceiling_layer(p[:, 1])
+    if top is not None and float(top) - band[1] < 0.6:  # nothing above head height to see through: no ceiling rule
+        top = None
+    votes = pointcloud_votes(p, np.asarray(lo, float), cell, shape, band, floor_band, top, rays, min_rays=min_rays)
+    blocked = votes["solid"] >= min_pts
+    seen_through = (votes["ceiling"] >= 1) & (votes["solid"] == 0)
+    free = (votes["floor"] >= 1) | seen_through | votes["seen"]
+    grid = np.full(shape, UNKNOWN, np.uint8)
+    grid[free] = FREE
+    grid[blocked] = BLOCKED
+    filled = fill_holes(grid, max(1, int(hole_m2 / (cell * cell))), veto=votes["solid"] > 0)
+    n_free, _ = cv2.connectedComponents((grid == FREE).astype(np.uint8), connectivity=4)  # the free areas, then the rest
+    meta = {"version": 1, "image": "occupancy.png", "cellSize": cell, "origin": [float(lo[0]), float(lo[1])],
+            "width": W, "height": H, "colAxis": "+x", "rowAxis": "+z",
+            "values": {"free": FREE, "blocked": BLOCKED, "unknown": UNKNOWN},
+            "obstacleBand": list(band), "floorBand": [-floor_band, floor_band],
+            "seenFree": {"rays": votes["rays"], "below": band[1], "minRays": min_rays, "cells": int(votes["seen"].sum())},
+            "holesFilled": filled, "source": "pointcloud",
+            "pointcloud": {"minPts": min_pts, "ceilingY": None if top is None else round(float(top), 3),
+                           "floorCells": int((votes["floor"] >= 1).sum()), "seenThroughCells": int(seen_through.sum()),
+                           "seenCells": int(votes["seen"].sum()), "freeComponents": n_free - 1},
             "stats": {"free": int((grid == FREE).sum()), "blocked": int((grid == BLOCKED).sum()),
                       "unknown": int((grid == UNKNOWN).sum())}}
     return grid, meta

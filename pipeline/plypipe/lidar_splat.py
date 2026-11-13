@@ -20,9 +20,12 @@ stations, all scans in one frame) or a coloured PLY (scripts/lidar/ingest_e57.py
    distance to the 4 nearest neighbours, never more than 0.75 of a voxel (so neighbours overlap and no disk is wider than three voxels across at
    2 sigma); the thin axis is a tenth of that. Opacity 0.95. Colour is the point's own, as the trainer stores it:
    SH0 = (rgb / 255 - 0.5) / 0.2821, higher bands zero.
-5. the products an export needs, from the points themselves: occupancy.json/.png from stages/occupancy.build_grid with
-   the scan's own sight lines (scanner station to floor point, the way the trained model's depth is used) and no depth
-   renders; shell.json from shell.build; a camera path that walks the stations on that grid, a spawn at the first.
+5. the products an export needs, from the points themselves: occupancy.json/.png from
+   stages/occupancy.grid_from_pointcloud, the grid of the scan's own returns (nothing is carved from a pose; the only
+   pose in `lidar-office-1` stands 5 m outside its own cloud, and that is reported, not used); places.json from the
+   measured furniture; shell.json from shell.build; and a walk: through the stations when a station is inside the cloud,
+   else over the standable floor (farthest-first waypoints joined by the cheapest lattice paths and straightened), with
+   the spawn at its first point. The walk is scored by plypipe.walkcheck, the viewer's own rules.
 
 The twin is then the existing export stage: scene.spz, scene_lite.spz, topview. What a trained job has and a scan does
 not (held-out photos, training views for the phone file's fine-tune, depth renders for the walking grid) is switched
@@ -425,14 +428,10 @@ def align(pts: np.ndarray, cols: np.ndarray, stations: np.ndarray | None, up: st
 
 def ceiling_height(y: np.ndarray, above: float = 1.8) -> float:
     """The ceiling: the densest layer of points above head height (a scan sees lights, ducts and the outside through
-    windows, which move a percentile); the 99th percentile when nothing is above head height."""
-    top = y[y > above]
-    if len(top) < 100:
-        return float(np.percentile(y, 99.0))
-    cnt, edges = np.histogram(top, np.arange(above, min(float(top.max()), above + 12.0) + 0.02, 0.02))
-    b = int(np.argmax(cnt))
-    layer = top[(top >= edges[b] - 0.03) & (top <= edges[b + 1] + 0.03)]
-    return float(np.median(layer))
+    windows, which move a percentile); the 99th percentile when nothing is above head height. The walking grid measures
+    its ceiling the same way (stages/occupancy.ceiling_layer), so the shell and the grid agree."""
+    from plypipe.stages.occupancy import ceiling_layer
+    return ceiling_layer(y, above)
 
 
 # ------------------------------------------------------------------ walking
@@ -443,17 +442,63 @@ def _shifted(arr: np.ndarray, dj: int, di: int) -> tuple[np.ndarray, np.ndarray]
     return arr[:h - dj, max(0, -di): w - max(0, di)], arr[dj:, max(0, di): w - max(0, -di)]
 
 
+def _lattice(ok: np.ndarray, keep: np.ndarray, step: float = walkcheck.STEP, clearance_m: float = 0.35):
+    """The 8-connected graph of the viewer's standable lattice over the cells in `keep`: node id per cell (-1 off it) and
+    the sparse graph, whose edges cost what a step costs with a penalty near blocked cells."""
+    import cv2
+    from scipy.sparse import coo_matrix
+    clear = cv2.distanceTransform(ok.astype(np.uint8), cv2.DIST_L2, 3) * step
+    cost = 1.0 + 4.0 * np.exp(-clear / clearance_m)
+    ids = -np.ones(ok.shape, np.int64)
+    ids[keep] = np.arange(int(keep.sum()))
+    rows, cols_, w = [], [], []
+    for dj, di in ((0, 1), (1, 0), (1, 1), (1, -1)):
+        a, b = _shifted(ids, dj, di)
+        ca, cb = _shifted(cost, dj, di)
+        m = (a >= 0) & (b >= 0)
+        rows.append(a[m])
+        cols_.append(b[m])
+        w.append(0.5 * (ca[m] + cb[m]) * step * math.hypot(dj, di))
+    r, c, wt = np.concatenate(rows), np.concatenate(cols_), np.concatenate(w)
+    n = int(keep.sum())
+    return ids, coo_matrix((np.r_[wt, wt], (np.r_[r, c], np.r_[c, r])), shape=(n, n)).tocsr()
+
+
+def roomy(grid: np.ndarray, meta: dict, ok: np.ndarray, margin: float = 0.03) -> np.ndarray:
+    """The viewer's standable lattice, minus the cells where the walker only just fits. `walkcheck.standable` tests eight
+    points on the walker's rim, and a blocked cell can sit between two of those rays: on the office scan that leaves cells
+    it calls standable with 17.7 cm to the wall for a 22 cm walker. This takes the grid's own distance to the nearest
+    blocked cell instead, so a walk keeps `margin` beyond the walker everywhere."""
+    import cv2
+    if ok.shape != grid.shape:  # a lattice that is not the grid's own cells: no exact distance to read
+        return ok
+    dist = cv2.distanceTransform((grid >= 128).astype(np.uint8), cv2.DIST_L2, 5) * float(meta["cellSize"])
+    return ok & (dist >= walkcheck.RADIUS + margin)
+
+
+def _legs(graph, nodes: list[int]) -> list[int]:
+    """The shortest path over `graph` through `nodes` in order, as node ids (the first node once, then every step)."""
+    from scipy.sparse.csgraph import dijkstra
+    path: list[int] = []
+    for a, b in zip(nodes[:-1], nodes[1:]):
+        _, pred = dijkstra(graph, indices=a, return_predecessors=True)
+        j, leg = b, []
+        while j >= 0 and j != a:
+            leg.append(j)
+            j = int(pred[j])
+        path += [a] + leg[::-1]
+    if nodes:
+        path.append(nodes[-1])
+    return path
+
+
 def route(grid: np.ndarray, meta: dict, stations_xz: np.ndarray, reach_m: float = 1.5, clearance_m: float = 0.35) -> tuple[np.ndarray, list[int]]:
     """A walk through the scanner stations in scan order on the occupancy grid, as xz points about 0.5 m apart, and which
     stations it passes. Each leg is the cheapest path over the lattice the viewer lets the visitor stand on, with a
     penalty near blocked cells so the route keeps to the middle of passages. A station the visitor cannot stand within
     `reach_m` of (a tripod in a closet, a room the scan only looked into) is left out."""
     import cv2
-    from scipy.sparse import coo_matrix
-    from scipy.sparse.csgraph import dijkstra
     ok, xs, zs = walkcheck.standable(grid, meta)
-    step = walkcheck.STEP
-    nz, nx = ok.shape
     ncomp, comp = cv2.connectedComponents(ok.astype(np.uint8), connectivity=8)
     X, Z = np.meshgrid(xs, zs)
     snap: list[tuple[int, int] | None] = []
@@ -466,32 +511,9 @@ def route(grid: np.ndarray, meta: dict, stations_xz: np.ndarray, reach_m: float 
         return np.zeros((0, 2)), []
     main = np.bincount(comps).argmax()  # the component most stations are in
     keep = [i for i, c in enumerate(snap) if c is not None and comp[c] == main]
-    clear = cv2.distanceTransform(ok.astype(np.uint8), cv2.DIST_L2, 3) * step
-    cost = 1.0 + 4.0 * np.exp(-clear / clearance_m)
-    ids = -np.ones(ok.shape, np.int64)
-    ids[ok & (comp == main)] = np.arange(int((ok & (comp == main)).sum()))
-    rows, cols_, w = [], [], []
-    for dj, di in ((0, 1), (1, 0), (1, 1), (1, -1)):
-        a, b = _shifted(ids, dj, di)
-        ca, cb = _shifted(cost, dj, di)
-        m = (a >= 0) & (b >= 0)
-        rows.append(a[m])
-        cols_.append(b[m])
-        w.append(0.5 * (ca[m] + cb[m]) * step * math.hypot(dj, di))
-    r, c, wt = np.concatenate(rows), np.concatenate(cols_), np.concatenate(w)
-    n = int((ids >= 0).sum())
-    graph = coo_matrix((np.r_[wt, wt], (np.r_[r, c], np.r_[c, r])), shape=(n, n)).tocsr()
+    ids, graph = _lattice(ok, ok & (comp == main), clearance_m=clearance_m)
     inv = np.stack(np.nonzero(ids >= 0), 1)  # node -> (row, column): the nodes were numbered in row-major order
-    node = lambda rc: int(ids[rc[0], rc[1]])
-    path: list[int] = []
-    for a, b in zip(keep[:-1], keep[1:]):
-        d, pred = dijkstra(graph, indices=node(snap[a]), return_predecessors=True)
-        j, leg = node(snap[b]), []
-        while j >= 0 and j != node(snap[a]):
-            leg.append(j)
-            j = int(pred[j])
-        path += [node(snap[a])] + leg[::-1]
-    path.append(node(snap[keep[-1]]))
+    path = _legs(graph, [int(ids[snap[i][0], snap[i][1]]) for i in keep])
     xz = np.stack([xs[inv[path, 1]], zs[inv[path, 0]]], 1)
     seg = np.r_[0.0, np.cumsum(np.linalg.norm(np.diff(xz, axis=0), axis=1))]
     if seg[-1] > 0:
@@ -500,44 +522,229 @@ def route(grid: np.ndarray, meta: dict, stations_xz: np.ndarray, reach_m: float 
     return xz, keep
 
 
+def _clear_line(ok: np.ndarray, xs: np.ndarray, zs: np.ndarray, a: np.ndarray, b: np.ndarray, every: float = 0.025) -> bool:
+    """Is the straight segment a -> b over the viewer's standable lattice the whole way? Sampled every 2.5 cm, and the
+    lattice's `ok` already carries the walker's radius around every sample."""
+    n = int(max(1, math.ceil(math.hypot(b[0] - a[0], b[1] - a[1]) / every)))
+    t = np.arange(n + 1) / n
+    i = np.clip(np.round((a[0] + (b[0] - a[0]) * t - xs[0]) / walkcheck.STEP).astype(int), 0, len(xs) - 1)
+    j = np.clip(np.round((a[1] + (b[1] - a[1]) * t - zs[0]) / walkcheck.STEP).astype(int), 0, len(zs) - 1)
+    return bool(ok[j, i].all())
+
+
+def _straighten(pts: np.ndarray, ok: np.ndarray, xs: np.ndarray, zs: np.ndarray) -> np.ndarray:
+    """The same line, with every point dropped that a straight standable segment can step over: from each kept point it
+    goes as far ahead as `_clear_line` allows. It never looks past the end of `pts`, so a leg that turns back on itself
+    keeps its shape."""
+    out = [pts[0]]
+    i = 0
+    while i < len(pts) - 1:
+        j = len(pts) - 1
+        while j > i + 1 and not _clear_line(ok, xs, zs, pts[i], pts[j]):
+            j -= 1
+        out.append(pts[j])
+        i = j
+    return np.asarray(out, float)
+
+
+def walk_route(grid: np.ndarray, meta: dict, start_xz: np.ndarray, count: int = 8, clearance_m: float = 0.35,
+               max_points: int = 40) -> tuple[np.ndarray, int]:
+    """A walk for a twin whose scan has no station a person stood at: `count` waypoints on the standable floor the start
+    is in, spread over it by walking distance (a room cut into aisles is walked along them, not across the desks between
+    them) and then taken in the order a visitor would, nearest first. Each leg is the cheapest lattice path and is
+    straightened on its own where the straight line stays standable. Returns the xz points, at most `max_points` of
+    them, and how many waypoints the walk reaches."""
+    import cv2
+    from scipy.sparse.csgraph import dijkstra
+    ok, xs, zs = walkcheck.standable(grid, meta)
+    ok = roomy(grid, meta, ok)
+    if not ok.any():
+        return np.zeros((0, 2)), 0
+    _, comp = cv2.connectedComponents(ok.astype(np.uint8), connectivity=8)
+    X, Z = np.meshgrid(xs, zs)
+    d = np.where(ok, np.hypot(X - start_xz[0], Z - start_xz[1]), np.inf)
+    rc = np.unravel_index(int(np.argmin(d)), d.shape)
+    keep = ok & (comp == comp[rc])  # the free area the spawn is in: a second room behind a closed door is its own walk
+    ids, graph = _lattice(ok, keep, clearance_m=clearance_m)
+    inv = np.stack(np.nonzero(ids >= 0), 1)  # node -> (row, column): the nodes were numbered in row-major order
+    here = int(ids[rc])
+
+    def dist(node: int) -> np.ndarray:
+        step = dijkstra(graph, indices=node)
+        return np.where(np.isfinite(step), step, -1.0)
+
+    picks = [here]
+    spread = dist(here)
+    while len(picks) < max(1, count):  # farthest-first by walking distance: the ends of the aisles, not their middles
+        k = int(np.argmax(spread))
+        if spread[k] < 1.0:
+            break
+        picks.append(k)
+        spread = np.minimum(spread, dist(k))
+    order = [picks[0]]
+    left = picks[1:]
+    while left:  # nearest first, as a visitor would take them
+        step = dijkstra(graph, indices=order[-1])
+        step = np.where(np.isfinite(step), step, np.inf)
+        k = int(np.argmin([step[j] for j in left]))
+        order.append(left.pop(k))
+    out = [np.array([xs[inv[order[0], 1]], zs[inv[order[0], 0]]])]
+    for a, b in zip(order[:-1], order[1:]):
+        nodes = _legs(graph, [a, b])
+        leg = np.stack([xs[inv[nodes, 1]], zs[inv[nodes, 0]]], 1)
+        out += list(_straighten(leg, ok, xs, zs)[1:])
+    out = np.asarray(out, float)[:max_points]
+    corner = np.r_[True, np.hypot(*np.diff(out, axis=0).T) > 0.3]  # a corner within 30 cm of the last one adds nothing
+    return out[corner], len(order)
+
+
 def open_spot(grid: np.ndarray, meta: dict) -> np.ndarray:
-    """Where a visitor starts when there are no stations: the standable point furthest from anything blocked."""
+    """Where a visitor starts when there are no stations: the roomiest point of the largest walkable area. A room can
+    hold several (desks in rows cut it up), and a twin should start where there is the most room to walk, not in the
+    widest pocket of a corner."""
     import cv2
     ok, xs, zs = walkcheck.standable(grid, meta)
+    ok = roomy(grid, meta, ok)
     if not ok.any():
         raise RuntimeError("no standable floor in the occupancy grid")
+    n, comp = cv2.connectedComponents(ok.astype(np.uint8), connectivity=8)
     clear = cv2.distanceTransform(ok.astype(np.uint8), cv2.DIST_L2, 3)
+    if n > 1:
+        sizes = np.bincount(comp.ravel())
+        sizes[0] = 0  # label 0 is every cell a visitor cannot stand on
+        clear = np.where(comp == int(np.argmax(sizes)), clear, -1.0)
     j, i = np.unravel_index(int(np.argmax(clear)), clear.shape)
     return np.array([xs[i], zs[j]])
 
 
+def usable_stations(pts: np.ndarray, stations: np.ndarray | None, ceiling: float, floor_m: float = 0.3) -> tuple[np.ndarray, dict]:
+    """The stations that could have scanned this cloud, and why the others could not. A station is used only if it stands
+    inside the cloud's plan area (1 % to 99 % of it) and between `floor_m` and the ceiling: the file's own pose can be
+    nowhere near its cloud (`lidar-office-1`: 5 m outside it, and rays from there carve free space through the walls),
+    and then the scan's returns are the only evidence there is."""
+    given = np.zeros((0, 3)) if stations is None else np.asarray(stations, float).reshape(-1, 3)
+    if not len(given):
+        return given, {"given": 0, "used": 0, "why": "the file has no scan pose"}
+    lo, hi = np.percentile(pts[:, [0, 2]], 1, axis=0), np.percentile(pts[:, [0, 2]], 99, axis=0)
+    inside = (given[:, 0] >= lo[0]) & (given[:, 0] <= hi[0]) & (given[:, 2] >= lo[1]) & (given[:, 2] <= hi[1])
+    up = (given[:, 1] >= floor_m) & (given[:, 1] <= ceiling)
+    keep = inside & up
+    note = {"given": int(len(given)), "used": int(keep.sum())}
+    if not keep.all():
+        out = np.hypot(np.maximum(0.0, np.maximum(lo[0] - given[:, 0], given[:, 0] - hi[0])),
+                       np.maximum(0.0, np.maximum(lo[1] - given[:, 2], given[:, 2] - hi[1])))
+        note["why"] = (f"{int((~keep).sum())} of {len(given)} outside the cloud: "
+                       f"{', '.join(f'{d:.1f} m from the nearest part of it' for d in np.round(out[~keep], 1))}")
+    else:
+        note["why"] = "every station is inside the cloud"
+    return given[keep], note
+
+
+def places_from_scan(grid: np.ndarray, meta: dict, pts: np.ndarray, walls: list[dict], ceiling: float, min_m2: float = 0.12,
+                     max_m2: float = 4.0, max_side: float = 3.0, tall: float = 2.2, off_wall: float = 0.35,
+                     cap: int = 24) -> dict:
+    """The scan's own furniture as the viewer's places.json, with no photos and no detector.
+
+    An object is a *thing standing on the floor*: a connected group of cells the grid blocks, at least `min_m2` and at
+    most `max_m2` of plan area, no longer than `max_side` along either axis (a row of desks pushed together is one group
+    and too long to call a desk), away from the shell's walls, and no taller than `tall` (a full-height partition is a
+    wall, and naming it a cabinet would be a guess). Height and footprint come from the cloud's own points inside that
+    group's box, and the name from the two: a low table under 0.5 m, a desk under 0.85 m and over 0.9 m across, a chair
+    under 1 m, a partition under 0.4 m thick, a cabinet at 1.3 m and over, a desk otherwise. That is a guess from size
+    alone, which is all a file with no photos supports; the report and docs/EXPERIMENTS.md say so."""
+    blocked = (grid == 0).astype(np.uint8)  # occupancy.BLOCKED; the lidar stage writes it, and 0 is what the viewer reads
+    p = np.asarray(pts, float)
+    near_wall = np.zeros(grid.shape, bool)
+    cell, (ox, oz) = float(meta["cellSize"]), meta["origin"]
+    for w in walls:
+        ax, az = w["a"]
+        bx, bz = w["b"]
+        dx, dz = bx - ax, bz - az
+        t = np.clip(((p[:, 0] - ax) * dx + (p[:, 2] - az) * dz) / (dx * dx + dz * dz or 1.0), 0.0, 1.0)
+        m = np.hypot(p[:, 0] - (ax + dx * t), p[:, 2] - (az + dz * t)) <= off_wall
+        c = np.floor((p[m, 0] - ox) / cell).astype(int)
+        r = np.floor((p[m, 2] - oz) / cell).astype(int)
+        ok = (c >= 0) & (c < grid.shape[1]) & (r >= 0) & (r < grid.shape[0])
+        near_wall[r[ok], c[ok]] = True
+    blocked[near_wall] = 0
+    import cv2
+    n, lab, stats, _ = cv2.connectedComponentsWithStats(blocked, connectivity=8)
+    found = []
+    for k in range(1, n):
+        x, y, w, h, area = stats[k]
+        if not (min_m2 <= area * cell * cell <= max_m2) or max(w, h) * cell > max_side:
+            continue
+        x0, x1 = ox + x * cell, ox + (x + w) * cell
+        z0, z1 = oz + y * cell, oz + (y + h) * cell
+        inside = (p[:, 0] >= x0) & (p[:, 0] <= x1) & (p[:, 2] >= z0) & (p[:, 2] <= z1) & (p[:, 1] > 0.1) & (p[:, 1] < min(2.5, ceiling - 0.3))
+        q = p[inside]
+        if len(q) < 40:
+            continue
+        lo, hi = np.percentile(q, 2, axis=0), np.percentile(q, 98, axis=0)
+        height = float(hi[1] - lo[1])
+        if height < 0.25 or height > tall:
+            continue
+        bw, bd = float(hi[0] - lo[0]), float(hi[2] - lo[2])
+        kind = ("low-table" if height < 0.5 else "desk" if height < 0.85 and max(bw, bd) > 0.9 else
+                "chair" if height < 1.0 else "partition" if min(bw, bd) < 0.4 else "cabinet" if height >= 1.3 else "desk")
+        centre = [(lo[0] + hi[0]) / 2, (lo[1] + hi[1]) / 2, (lo[2] + hi[2]) / 2]
+        found.append({"kind": kind, "center": centre, "half": [bw / 2, height / 2, bd / 2], "points": int(len(q)),
+                      "footprintM2": round(float(area * cell * cell), 3)})
+    found.sort(key=lambda o: -o["points"])
+    found = found[:cap]
+    biggest = max((int(v) for v in np.unique(lab, return_counts=True)[1][1:]), default=0) * cell * cell if n > 1 else 0.0
+    count: dict[str, int] = {}
+    cat = {"desk": "Furniture", "chair": "Furniture", "low-table": "Furniture", "cabinet": "Storage", "partition": "Things"}
+    places = []
+    for i, o in enumerate(found):
+        count[o["kind"]] = count.get(o["kind"], 0) + 1
+        places.append({"id": f"{o['kind']}-{count[o['kind']]}", "name": f"{o['kind'].replace('-', ' ').title()} {count[o['kind']]}",
+                       "cat": cat.get(o["kind"], "Things"), "p": [round(float(v), 3) for v in o["center"]],
+                       "half": [round(float(v), 3) for v in o["half"]], "footprintM2": o["footprintM2"], "points": o["points"],
+                       "pinned": i < 6})
+    out = {"version": 1, "source": "scan-objects" if places else "none",
+           "method": (f"things standing on the floor: blocked groups of {min_m2} to {max_m2} m2, no side over {max_side} m, "
+                      f"no taller than {tall} m, {off_wall} m off the measured walls; named from height and footprint alone"),
+           "counts": count, "places": places}
+    if not places:
+        out["why"] = (f"nothing in this scan stands alone: its furniture is one connected group of blocked cells, "
+                      f"{biggest:.1f} m2 across, and a whole room's worth of desks joined by their own clutter cannot be cut "
+                      f"into objects without a detector. The file has no photos to run one on. The twin still ships a walk: "
+                      f"Walk needs the grid and a spawn, not pins")
+    return out
+
+
 def products(ctx: Ctx, pts: np.ndarray, stations: np.ndarray | None, T: np.ndarray, info: dict, splat_info: dict) -> dict:
-    """occupancy.json/.png, shell.json and scene.json from the scan's points in the scene frame (`pts`, float32) and the
-    stations in it."""
+    """occupancy.json/.png, places.json, shell.json and scene.json from the scan's points in the scene frame (`pts`,
+    float32) and the stations in it. The grid is the scan's own returns (stages/occupancy.grid_from_pointcloud); a
+    station inside the cloud also lets its sight lines free what it saw through, and its stations become the walk."""
     from plypipe.stages import occupancy
     cell = float(ctx.opt("cell", 0.05))
-    cams = stations if stations is not None and len(stations) else np.zeros((0, 3))
+    ceiling = ceiling_height(pts[:, 1])
+    given = np.zeros((0, 3)) if stations is None else np.asarray(stations, float).reshape(-1, 3)
+    cams, station_note = usable_stations(pts, given, ceiling)
     rng = np.random.default_rng(3)
-    low = np.flatnonzero((pts[:, 1] > -0.1) & (pts[:, 1] < 0.6))
-    low = low[rng.choice(len(low), min(len(low), 100_000), replace=False)] if len(low) else low
-    if len(cams) and len(low):  # the scanner's own sight lines to everything it saw low down: free space, as a trained twin's depth is
-        from scipy.spatial import cKDTree
-        _, j = cKDTree(cams).query(pts[low], workers=-1)
-        rays = (cams[j], pts[low])
-    else:
-        rays = None
-    # build_grid frees a corridor along its camera path, and a scanner's stations are not a walk: a line between two of them
-    # would cut through a table. Each station goes in as its own 20 cm stub, which path_segments never joins to the next
-    stubs = np.stack([cams + d for d in ((-0.1, 0, 0), (0, 0, 0), (0.1, 0, 0))], 1).reshape(-1, 3)
-    grid, meta = occupancy.build_grid(pts, stubs, cell=cell, rays=rays, min_pts=2)
-    meta["source"] = "lidar"
+    rays = None
+    if len(cams):  # the scanner's own sight lines to everything it saw low down: free space, as a trained twin's depth is
+        low = np.flatnonzero((pts[:, 1] > -0.1) & (pts[:, 1] < 0.6))
+        low = low[rng.choice(len(low), min(len(low), 100_000), replace=False)] if len(low) else low
+        if len(low):
+            from scipy.spatial import cKDTree
+            _, j = cKDTree(cams).query(pts[low], workers=-1)
+            rays = (cams[j], pts[low])
+    grid, meta = occupancy.grid_from_pointcloud(pts, cell=cell, rays=rays)
+    meta["producer"] = "lidar"
+    meta["stations"] = station_note
+    route_note = {"stations": station_note["given"], "walkable": 0, "pathPoints": 0}
     if len(cams):
         xz, kept = route(grid, meta, cams[:, [0, 2]])
-    else:
-        xz, kept = open_spot(grid, meta)[None], []
-    route_note = {"stations": len(cams), "walkable": len(kept), "pathPoints": len(xz)}
-    if len(xz) == 0:  # no station can be stood at: start at the roomiest spot
+        route_note.update(stationsUsed=len(cams), walkable=len(kept), pathPoints=len(xz), waypoints="stations")
+    else:  # no station: a walk of its own over the standable floor
+        xz, waypoints = walk_route(grid, meta, open_spot(grid, meta))
+        route_note.update(stationsUsed=0, walkable=waypoints, pathPoints=len(xz), waypoints="walk")
+    if len(xz) == 0:  # nothing standable at all: start at the roomiest spot, where there is one
         xz = open_spot(grid, meta)[None]
+        route_note["pathPoints"] = 1
     path3 = np.c_[xz[:, 0], np.full(len(xz), EYE), xz[:, 1]]
     ahead = path3[min(len(path3) - 1, 4)] - path3[0]
     ahead[1] = 0.0
@@ -545,21 +752,30 @@ def products(ctx: Ctx, pts: np.ndarray, stations: np.ndarray | None, T: np.ndarr
         ahead = np.array([pts[:, 0].mean() - path3[0, 0], 0.0, pts[:, 2].mean() - path3[0, 2]])
     ahead /= np.linalg.norm(ahead) or 1.0
     spawn = {"position": [round(float(v), 3) for v in path3[0]], "lookAt": [round(float(path3[0, 0] + ahead[0]), 3), EYE, round(float(path3[0, 2] + ahead[2]), 3)]}
-    meta["walk"] = walkcheck.check(grid, meta, (path3[0, 0], path3[0, 2]), cams[:, [0, 2]] if len(cams) else xz)
+    shell = {**shell_mod.build(pts, 0.0, ceiling, []), "source": "lidar scan"}
+    (ctx.out / "shell.json").write_text(json.dumps(shell, indent=1))
+    place_data = places_from_scan(grid, meta, pts, shell["walls"], ceiling)
+    (ctx.out / "places.json").write_text(json.dumps(place_data, indent=1))
+    place_xz = [pl["p"][::2] for pl in place_data["places"] if pl.get("p")]
+    meta["walk"] = walkcheck.check(grid, meta, (path3[0, 0], path3[0, 2]), xz if len(cams) == 0 else cams[:, [0, 2]], place_xz)
+    if not len(cams):  # a scan has no capture positions: what is checked is the walk this stage ships
+        meta["walk"]["source"] = "the walk's own points"
     occupancy._write(ctx, grid, meta)
 
-    ceiling = ceiling_height(pts[:, 1])
-    (ctx.out / "shell.json").write_text(json.dumps({**shell_mod.build(pts, 0.0, ceiling, []), "source": "lidar scan"}, indent=1))
+    heights = [s[1] for s in given if 0.3 < s[1] < ceiling]
     bounds = geometry.robust_bounds(pts, lo=0.2, hi=99.8, margin=0.1)
     bounds["min"][1] = min(bounds["min"][1], -0.1)
     update_scene(ctx, {
         "version": 1, "units": "meters", "up": [0, 1, 0], "handedness": "right", "floorY": 0.0, "scale": 1.0, "scaleSource": "lidar",
-        "cameraHeight": round(float(np.median(cams[:, 1])), 3) if len(cams) else None, "transform": T.tolist(), "bounds": bounds,
+        "cameraHeight": round(float(np.median(heights)), 3) if heights else None, "transform": T.tolist(), "bounds": bounds,
         "cameraPath": [[round(float(v), 3) for v in p] for p in path3], "spawn": spawn, "tour": tour_mod.build_tour(path3, bounds),
-        "shell": "shell.json", "lidar": {**splat_info, "stationsScene": [[round(float(v), 3) for v in s] for s in cams], "ceilingY": round(ceiling, 3),
-                                         "align": {k: info[k] for k in ("up", "upEvidence", "yawDeg", "floorTiltDeg") if k in info}}})
+        "shell": "shell.json", "places": "places.json",
+        "lidar": {**splat_info, "stationsScene": [[round(float(v), 3) for v in s] for s in np.asarray(stations if stations is not None else []).reshape(-1, 3)],
+                  "stationsUsed": station_note, "ceilingY": round(ceiling, 3),
+                  "align": {k: info[k] for k in ("up", "upEvidence", "yawDeg", "floorTiltDeg") if k in info}}})
     return {"walk": meta["walk"], "route": route_note, "grid": {"cell": cell, "width": meta["width"], "height": meta["height"], **meta["stats"]},
-            "ceilingY": round(ceiling, 3), "walls": len(json.loads((ctx.out / "shell.json").read_text())["walls"])}
+            "pointcloud": meta["pointcloud"], "stations": station_note, "ceilingY": round(ceiling, 3), "walls": len(shell["walls"]),
+            "places": {"count": len(place_data["places"]), "counts": place_data["counts"]}}
 
 
 # ------------------------------------------------------------------ the stage
