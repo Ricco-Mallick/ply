@@ -448,15 +448,18 @@ def _dense_occupancy(ctx: Ctx, ply: Path, holdout: int, aa: bool) -> dict:
 def _tsdf_mesh(ctx: Ctx, fusion) -> dict:
     """mesh.glb and collision.glb from the depth the dense pass just fused (stages/mesh.py), recorded in scene.json. The splat
     export stands whatever happens here."""
+    from plypipe import dense
     from plypipe.stages import mesh as mesh_stage
     try:
-        out = mesh_stage.record(ctx, fusion.finish(ctx.out))
+        out = mesh_stage.record(ctx, fusion.finish(ctx.out, mesh_stage.dense_reference(ctx.out / dense.FILE)))
     except Exception as e:
         ctx.log.emit("export", "warn", f"tsdf mesh not built: {str(e)[-160:]}")
         return {"built": False, "why": f"failed: {str(e)[-160:]}"}
     if out.get("built"):
         ctx.log.emit("export", "progress", f"tsdf mesh: {out['triangles']} triangles at {out['voxelCm']} cm, collision {out['collisionTriangles']}, "
                      f"{out['volumeMB']} MB volume, {out['fuseSeconds']} s fusing, {out['meshSeconds']} s meshing")
+    else:
+        ctx.log.emit("export", "warn", f"tsdf mesh not shipped, no mesh.glb or collision.glb written: {out.get('why')}")
     return out
 
 

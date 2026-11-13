@@ -173,6 +173,9 @@ VOXEL_RANGE = (0.02, 0.04)
 VOXEL_BUDGET = 60e6        # voxels held at once
 TRUNC_VOXELS = 3.0         # truncation, in voxels (and at least 6 cm: a 10 cm partition must not be seen through from its other face)
 MAX_WEIGHT = 64.0
+SPECK_M2 = 0.25            # a connected piece of surface under this (a 50 cm square) is a floater or a flake, not a wall, a pew or a step
+MIN_SHARE = 0.1            # a mesh under this share of its target, or under MIN_SPAN of the dense points' extent on any axis, is not shipped
+MIN_SPAN = 0.4
 CUBE = np.array([(0, 0, 0), (1, 0, 0), (1, 1, 0), (0, 1, 0), (0, 0, 1), (1, 0, 1), (1, 1, 1), (0, 1, 1)])
 TETS = [(0, 5, 1, 6), (0, 1, 2, 6), (0, 2, 3, 6), (0, 3, 7, 6), (0, 7, 4, 6), (0, 4, 5, 6)]
 
@@ -438,21 +441,40 @@ def decimate(vertices: np.ndarray, faces: np.ndarray, colours: np.ndarray | None
     vn = np.stack([sum(np.bincount(f[:, k], weights=fn[:, a], minlength=len(v)) for k in range(3)) for a in range(3)], 1)   # their dominant
     side = np.argmax(np.abs(vn), 1) * 2 + (vn[np.arange(len(v)), np.argmax(np.abs(vn), 1)] < 0)    # axis and sign, so that two sheets a
     # few centimetres apart (a thin partition) are never one vertex: a collision mesh must not put the wall between its faces
+    vw = sum(np.bincount(f[:, k], weights=np.linalg.norm(fn, axis=1), minlength=len(v)) for k in range(3))
 
     def cluster(cell):
         q = np.floor((v - origin) / cell).astype(np.int64)
         dims = q.max(0) + 1
-        _, inv = np.unique(((q[:, 0] * dims[1] + q[:, 1]) * dims[2] + q[:, 2]) * 6 + side, return_inverse=True)
+        _, cid = np.unique((q[:, 0] * dims[1] + q[:, 1]) * dims[2] + q[:, 2], return_inverse=True)
+        # Noise scatters a flat patch's vertices over all six sides; a side with under a quarter of its cell's weight joins the
+        # heaviest, or one cell becomes six vertices and the faces between them a pile on one plane (19 k vertices under 299 k
+        # triangles on a 1 cm noised chapel). A second sheet of its own weight, the thin partition's, stays.
+        w = np.bincount(cid * 6 + side, weights=vw, minlength=(int(cid.max()) + 1) * 6).reshape(-1, 6)
+        eff = np.where(w[cid, side] >= 0.25 * w.max(1)[cid], side, w.argmax(1)[cid])
+        _, inv = np.unique(cid * 6 + eff, return_inverse=True)
         cf = inv[f]
         return inv, cf, (cf[:, 0] != cf[:, 1]) & (cf[:, 1] != cf[:, 2]) & (cf[:, 0] != cf[:, 2])
 
+    def distinct(cf, keep):
+        """Triangles left once the same corner triple, made by two folded sheets, is counted once: what the output will hold. Counting
+        the kept faces instead overshoots wherever noise spreads a vertex's side over all six, by a fifth of all faces on a hall
+        noised by a third of a voxel, and then no cell reached the target. A 64-bit hash of the sorted triple: a collision is negligible at these sizes."""
+        t = cf[keep].astype(np.uint64)
+        a, c = t.min(1), t.max(1)
+        return int(len(np.unique(a * np.uint64(0x9E3779B97F4A7C15) + (t.sum(1) - a - c) * np.uint64(0xC2B2AE3D27D4EB4F) + c * np.uint64(0x165667B19E3779F9))))
+
     lo, hi = span / 4096, span / 2
+    cell = min(max(math.sqrt(np.linalg.norm(fn, axis=1).sum() / target), lo), hi)   # about target / 2 cells of the surface's area: where the search starts
     for _ in range(iters):
-        mid = math.sqrt(lo * hi)
-        if int(cluster(mid)[2].sum()) > target:
-            lo = mid
+        got = distinct(*cluster(cell)[1:])
+        if got > target:
+            lo = cell
         else:
-            hi = mid
+            hi = cell
+            if got >= 0.99 * target:
+                break
+        cell = math.sqrt(lo * hi) if lo > span / 4096 and hi < span / 2 else min(max(cell * (1.5 if got > target else 1 / 1.5), span / 4096), span / 2)
     cell = hi
     inv, cf, keep = cluster(cell)
     nc = int(inv.max()) + 1
@@ -491,25 +513,48 @@ def decimate(vertices: np.ndarray, faces: np.ndarray, colours: np.ndarray | None
     return x[used].astype(np.float32), out_f, out_c
 
 
-def drop_specks(vertices, faces, colours, min_share: float = 0.002, min_faces: int = 200):
-    """Remove connected pieces of under `min_share` of the triangles (and under `min_faces`): floaters the depth confirmed. Needs
-    scipy, which the worker's image does not have: without it the mesh is returned as it is."""
-    try:
-        from scipy.sparse import coo_matrix
-        from scipy.sparse.csgraph import connected_components
-    except ImportError:
-        return vertices, faces, colours
-    n = len(vertices)
+def components(n: int, faces) -> np.ndarray:
+    """Connected-component label of each of `n` vertices over the edges of `faces`. Numpy only (the worker's image has no scipy):
+    each round hooks the larger root of every edge under the smaller, then jumps pointers, so rounds are few and edges inside
+    one component drop out as they are found."""
+    a = np.concatenate([faces[:, 0], faces[:, 1]]).astype(np.int32)
+    b = np.concatenate([faces[:, 1], faces[:, 2]]).astype(np.int32)
+    label = np.arange(n, dtype=np.int32)
+    while len(a):
+        la, lb = label[a], label[b]
+        open_ = la != lb
+        a, b, la, lb = a[open_], b[open_], la[open_], lb[open_]
+        if not len(a):
+            break
+        label[np.maximum(la, lb)] = np.minimum(la, lb)   # a root points at a smaller label of its own component, whichever edge wins
+        while True:
+            up = label[label]
+            if (up == label).all():
+                break
+            label = up
+    return label
+
+
+def drop_specks(vertices, faces, colours, min_area: float = SPECK_M2):
+    """Remove connected pieces of surface under `min_area` m2: floaters and flakes the depth confirmed. The size is physical so
+    that it means the same at 2 cm and at 4 cm, and the same on a fragmented real fusion as on a clean synthetic room, where a
+    share of the triangles (0.2 %, which was 4 m2 and took a third of the chapel) did not. Returns (vertices, faces, colours,
+    stats) with the area kept and dropped in m2 and the pieces dropped."""
     if not len(faces):
-        return vertices, faces, colours
-    e = np.concatenate([faces[:, [0, 1]], faces[:, [1, 2]]])
-    _, lab = connected_components(coo_matrix((np.ones(len(e)), (e[:, 0], e[:, 1])), shape=(n, n)), directed=False)
-    size = np.bincount(lab[faces[:, 0]], minlength=int(lab.max()) + 1)
-    keep_f = size[lab[faces[:, 0]]] >= max(min_faces, min_share * len(faces))
+        return vertices, faces, colours, {"keptM2": 0.0, "droppedM2": 0.0, "droppedPieces": 0}
+    n = len(vertices)
+    v = np.asarray(vertices, np.float64)
+    area = np.linalg.norm(np.cross(v[faces[:, 1]] - v[faces[:, 0]], v[faces[:, 2]] - v[faces[:, 0]]), axis=1) / 2
+    lab = components(n, faces)
+    piece = lab[faces[:, 0]]
+    total = np.bincount(piece, weights=area, minlength=n)
+    keep_f = total[piece] >= min_area
+    stats = {"keptM2": round(float(area[keep_f].sum()), 1), "droppedM2": round(float(area[~keep_f].sum()), 1),
+             "droppedPieces": int(len(np.unique(piece[~keep_f])))}
     used = np.unique(faces[keep_f])
     remap = np.full(n, -1, np.int64)
     remap[used] = np.arange(len(used))
-    return vertices[used], remap[faces[keep_f]], None if colours is None else colours[used]
+    return vertices[used], remap[faces[keep_f]], None if colours is None else colours[used], stats
 
 
 def write_glb(path, vertices, faces, colours=None) -> int:
@@ -542,24 +587,56 @@ class Fusion:
         self.tsdf.integrate(p.depth, p.cam.K, p.cam.R, p.cam.t, p.rgb)
         self.views += 1
 
-    def finish(self, out_dir: Path) -> dict:
+    def finish(self, out_dir: Path, reference=None) -> dict:
+        """`reference` is `dense_reference(...)` of the dense points: with it a mesh that covers far less than they do is refused."""
         t1 = time.time()
         ts = self.tsdf
         if ts is None or not ts.blocks:
             return {"built": False, "why": "no depth was fused"}
         v, c, f = ts.extract()
         raw = len(f)
-        v, f, c = drop_specks(v, f, c)
-        speck = raw - len(f)
+        v, f, c, specks = drop_specks(v, f, c)
         mv, mf, mc = decimate(v, f, c, self.faces)
         cv, cf, _ = decimate(mv, mf, None, self.collision)
+        out = {"voxelCm": round(ts.v * 100, 1), "truncationCm": round(ts.mu * 100, 1), "views": self.views, "blocks": ts.blocks,
+               "volumeMB": round(ts.megabytes, 1), "rawTriangles": raw, "specksDropped": raw - len(f),
+               "specks": {**specks, "underM2": SPECK_M2}, "triangles": int(len(mf)), "collisionTriangles": int(len(cf)), **({"denseSurfaceM2": reference["surfaceM2"]} if reference else {})}
+        why = refusal(len(f), mv, mf, cv, cf, self.faces, self.collision, reference)
+        if why:
+            return {"built": False, "why": why, **out, "fuseSeconds": round(t1 - self.t0, 1), "meshSeconds": round(time.time() - t1, 1)}
         out_dir = Path(out_dir)
         mb = write_glb(out_dir / "mesh.glb", mv, mf, mc)
         cb = write_glb(out_dir / "collision.glb", cv, cf)
-        return {"built": True, "voxelCm": round(ts.v * 100, 1), "truncationCm": round(ts.mu * 100, 1), "views": self.views, "blocks": ts.blocks,
-                "volumeMB": round(ts.megabytes, 1), "rawTriangles": raw, "specksDropped": speck, "triangles": int(len(mf)), "collisionTriangles": int(len(cf)),
-                "meshMB": round(mb / 2 ** 20, 2), "collisionMB": round(cb / 2 ** 20, 2), "fuseSeconds": round(t1 - self.t0, 1),
+        return {"built": True, **out, "meshMB": round(mb / 2 ** 20, 2), "collisionMB": round(cb / 2 ** 20, 2), "fuseSeconds": round(t1 - self.t0, 1),
                 "meshSeconds": round(time.time() - t1, 1)}
+
+
+def dense_reference(points_path) -> dict | None:
+    """Bounds of the dense points and an upper bound of their surface (one voxel face each: the points are one per voxel, and the
+    depth's thickness makes it generous), the yardstick `refusal` holds a mesh against. None without the file."""
+    p = Path(points_path)
+    if not p.exists():
+        return None
+    z = np.load(p)
+    pts = z["points"]
+    return {"min": pts.min(0), "max": pts.max(0), "surfaceM2": round(float(len(pts)) * float(z["voxel"]) ** 2, 0)}
+
+
+def refusal(have: int, mv, mf, cv, cf, faces: int, collision: int, reference=None) -> str | None:
+    """Why a decimated mesh must not ship, or None. A mesh of under MIN_SHARE of its target (a smaller one than the target is
+    only fine when that is all there was: `have` triangles went in), or whose bounds are under MIN_SPAN of the dense points' on
+    any axis, is a failed run, not a small room: the chapel's came out at 176 triangles of a 300,000 target."""
+    if not have or not len(mf):
+        return "no surface was left after the specks were dropped"
+    for name, got, target in (("mesh", len(mf), faces), ("collision mesh", len(cf), collision)):
+        want = min(target, have)
+        if got < MIN_SHARE * want:
+            return f"the {name} has {got} triangles, under {MIN_SHARE:.0%} of its {want}"
+    if reference is not None and len(mv):
+        span = (mv.max(0) - mv.min(0)) / np.maximum(reference["max"] - reference["min"], 1e-6)
+        if span.min() < MIN_SPAN:
+            return f"the mesh covers {span.min():.0%} of the dense points' extent on its worst axis, under {MIN_SPAN:.0%}"
+    return None
 
 
 def tsdf_stage(ctx) -> dict:
@@ -587,7 +664,10 @@ def finish_job(ctx, fusion: Fusion, cams, rendered) -> dict:
     fusion.begin(cams)
     for p in dense.consistent_points(rendered, fuse=True):
         fusion.add(p)
-    return record(ctx, fusion.finish(ctx.out))
+    out = record(ctx, fusion.finish(ctx.out, dense_reference(ctx.out / dense.FILE)))
+    if not out.get("built"):
+        ctx.log.emit("mesh", "warn", f"tsdf mesh not shipped, no mesh.glb or collision.glb written: {out.get('why')}")
+    return out
 
 
 def record(ctx, out: dict) -> dict:
