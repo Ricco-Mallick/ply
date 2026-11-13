@@ -109,3 +109,40 @@ def test_a_variant_is_solved_scored_saved_and_usable_by_the_eval_runner(monkeypa
     assert json.loads((saved / "result.json").read_text())["variant"] == "keyframes"
     assert evalrun.check_job(saved / "job") == []                                      # train and export can start from it as it is
     assert not (saved / "job" / "colmap" / "database.db").exists() and not (saved / "job" / "frames").exists()
+
+
+BA_SCRIPT = Path(__file__).resolve().parents[1] / "modal" / "sfm_gpu_ba_check.py"
+
+
+def load_ba_check():
+    spec = importlib.util.spec_from_file_location("sfm_gpu_ba_check_under_test", BA_SCRIPT)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def test_the_gpu_bundle_adjustment_check_loads_and_probes_the_options_on_the_cpu_build(monkeypatch):
+    pycolmap = pytest.importorskip("pycolmap")
+    for k in ("MODAL_TOKEN_ID", "MODAL_TOKEN_SECRET", "MODAL_PROFILE"):
+        monkeypatch.delenv(k, raising=False)
+    monkeypatch.setenv("MODAL_CONFIG_PATH", "/nonexistent/modal.toml")
+    m = load_ba_check()
+    assert m.app.name == "ply-sfm-ba-check" and callable(m.run.local) and callable(m.main)
+    info = m.probe(pycolmap)
+    assert info["ceresUseGpu"] and info["baUseGpu"] and info["caspar"] and info["backends"] == ["CASPAR", "CERES"] and info["hasCuda"] is False
+    assert m.run_solver("ceres-cpu", Path("/nonexistent/model"))["ran"] is False   # a solver that dies is a row, not an exception
+
+
+@pytest.mark.slow
+def test_the_check_times_each_solver_from_the_same_start_and_reports_the_one_that_cannot_run(tmp_path, synthetic_scene):
+    from test_sfm_plan import _resolve
+    pytest.importorskip("pycolmap")
+    _resolve(synthetic_scene, tmp_path, "--mapper", "incremental")
+    m = load_ba_check()
+    got = m.check(tmp_path / "job" / "colmap" / "sparse" / "0", tmp_path / "work", frames=30)
+    cpu = got["solvers"]["ceres-cpu"]
+    assert got["start"]["frames"] == 30 and cpu["ran"] and cpu["finalCost"] < 0.01 * cpu["initialCost"]
+    assert cpu["meanErrorPxAfter"] < got["start"]["meanErrorPx"] / 5
+    assert got["solvers"]["ceres-gpu"]["initialCost"] == pytest.approx(cpu["initialCost"])          # one start for every solver
+    assert got["solvers"]["caspar"]["ran"] is False and "CASPAR" in got["solvers"]["caspar"]["why"]   # this wheel has no CASPAR
+    assert "caspar" not in got["ran"] and json.dumps(got)
