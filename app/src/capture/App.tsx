@@ -45,11 +45,19 @@ export function App() {
   const onUpload = async (files: File[]) => {
     const c = ensureCapture(); setErr(null); go('analysing'); const clips: Clip[] = [];
     for (const [i, f] of files.entries()) {
+      const id = newId();
       try {
-        setProg({ name: f.name, p: 0 }); const id = newId(); await storeUpload(id, f);
+        setProg({ name: f.name, p: 0 }); await storeUpload(id, f);
         const meta = await analyseFile(f, p => setProg({ name: f.name, p }));
         clips.push({ ...meta, id, name: `clip-${String(c.clips.length + i + 1).padStart(2, '0')}-${f.name.replace(/[^\w.-]+/g, '_')}`, source: 'upload' });
-      } catch (e) { setErr(`${f.name}: ${(e as Error).message}`); }
+      } catch (e) {
+        // C1: a clip the browser cannot decode is still a clip. Keep it with the metadata the file itself carries, and
+        // say what was skipped, rather than dropping footage the SOP allows (HEVC from a phone is the common case).
+        setErr(`${f.name}: the browser could not analyse it (${(e as Error).message}); kept without a quality score`);
+        clips.push({ id, name: `clip-${String(c.clips.length + i + 1).padStart(2, '0')}-${f.name.replace(/[^\w.-]+/g, '_')}`,
+                     source: 'upload', mime: f.type || 'video/mp4', size: f.size, duration: 0, width: 0, height: 0,
+                     createdAt: Date.now(), quality: [], sensors: [], path: [] });
+      }
     }
     setProg(null); if (!clips.length) { go('start'); return; }
     update({ ...c, clips: [...c.clips, ...clips] }); go('review');

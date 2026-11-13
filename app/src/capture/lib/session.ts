@@ -69,9 +69,12 @@ export class Session {
 export async function analyseFile(file: File, onProgress: (p: number) => void): Promise<Omit<Clip, 'id' | 'name' | 'source'>> {
   const v = document.createElement('video'); v.muted = true; v.playsInline = true; v.preload = 'auto'; v.src = URL.createObjectURL(file);
   await new Promise<void>((res, rej) => { v.onloadedmetadata = () => res(); v.onerror = () => rej(new Error('This video could not be read by the browser')); });
-  const a = new Analyzer(), q: Quality[] = [], step = .5, dur = v.duration || 0;
-  for (let t = 0; t < dur; t += step) {
-    v.currentTime = t; await new Promise<void>(r => { v.onseeked = () => r(); });
+  const a = new Analyzer(), q: Quality[] = [], step = .5, dur = Number.isFinite(v.duration) ? Math.max(0, v.duration) : 0;
+  // C1: a clip whose duration is unknown, or whose seek never fires, must not hang the upload. Bound both.
+  const budgetMs = 20_000, started = Date.now();
+  for (let t = 0; t < dur && Date.now() - started < budgetMs; t += step) {
+    v.currentTime = t;
+    await new Promise<void>(r => { const timer = setTimeout(r, 2_000); v.onseeked = () => { clearTimeout(timer); r(); }; });
     const s = a.measure(v, v.videoWidth, v.videoHeight, t * 1000); s.t = t * 1000; s.flow = 0; q.push(s); onProgress(t / dur);
   }
   const w = v.videoWidth, h = v.videoHeight; URL.revokeObjectURL(v.src);
