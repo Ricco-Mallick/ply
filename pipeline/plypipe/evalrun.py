@@ -23,6 +23,7 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
+from plypipe import mushroom
 from plypipe.plan import LITE_FINETUNE_STEPS
 
 SCHEMA = 1
@@ -87,6 +88,14 @@ SCENARIOS: dict[str, dict] = {
     "drjohnson": {"src": "drjohnson/prep", "base": SMALL, "cpu": 4, "memory_gib": 16, "index": False,
                   "seconds_per_step": {"L40S": 6.9 * 60 / 30_000, "L4": 2 * 6.9 * 60 / 30_000}, "overhead_min": 4},
 }
+# The two MuSHRoom rooms (pipeline/modal/mushroom_seed.py leaves each one's solved job and its laser reference on the Volume). Quick length
+# is the plan's (S3: both rooms end to end at Quick): 7,000 steps, the preset's floor, on a 600k cap that a 6 x 4 m room does not fill. Every
+# 10th frame is held out as the dataset's own test.txt does. The container and pace are Dr Johnson's: 330 to 390 frames at 738 x 994 px.
+MUSHROOM = ["--preset", "quick", "--iterations", "7000", "--cap-max", "600000", "--holdout", "10", "--holdout-block", "10"]
+for _room in mushroom.ROOMS:
+    SCENARIOS[f"mushroom-{_room.replace('_', '-')}"] = {
+        **{k: v for k, v in SCENARIOS["drjohnson"].items() if k != "src"}, "src": f"mushroom/{_room}/job", "base": MUSHROOM,
+        "reference": f"mushroom/{_room}/reference"}
 
 
 def variant_args(name: str, scenario: str = "chapel") -> list[str]:
@@ -240,7 +249,7 @@ def make_job(scenario: str, src: str, variant: str, args: str = "", force: bool 
     return {"scenario": scenario, "src": (src or s["src"]).strip("/"), "variant": variant, "args": v["args"], "argsSource": v["source"],
             "role": v["role"], "note": v["note"], "force": force, "gpus": list(gpus), "ceilingMin": ceiling,
             "cpu": s["cpu"], "memoryGib": s["memory_gib"], "needsIndex": s.get("index", True),
-            "estimates": estimates, "revision": revision or {},
+            "estimates": estimates, "revision": revision or {}, **({"reference": s["reference"]} if s.get("reference") else {}),
             **({"exportFrom": v["exportFrom"], "trainArgs": v["trainArgs"]} if export_from else {})}
 
 
@@ -481,8 +490,10 @@ def _pick(d: dict | None, keys=SCORES) -> dict | None:
     return {k: d[k] for k in keys if isinstance(d, dict) and d.get(k) is not None} or None
 
 
-def assemble(job: dict, report: dict, *, gpu: dict, seconds: dict, sizes: dict, invocation: dict, previous: dict | None = None) -> dict:
-    """metrics.json from the job's report.json. A run that stopped early still gets one, with `complete` false and what is missing."""
+def assemble(job: dict, report: dict, *, gpu: dict, seconds: dict, sizes: dict, invocation: dict, previous: dict | None = None,
+             geometry: dict | None = None) -> dict:
+    """metrics.json from the job's report.json. A run that stopped early still gets one, with `complete` false and what is missing.
+    `geometry`: the scores against a laser reference (mushroom.score_job), for the scenarios that have one."""
     train, export = report.get("train") or {}, report.get("export") or {}
     shipped = export.get("shippedEval") or {}
     every = _pick(train.get("eval"))
@@ -509,6 +520,7 @@ def assemble(job: dict, report: dict, *, gpu: dict, seconds: dict, sizes: dict, 
                    "shipped": export.get("gaussiansOut"), "keptFraction": export.get("keptFraction"), "phone": export.get("liteGaussians")},
         "files": sizes, "seconds": {**seconds, "train": train.get("seconds"), "export": export.get("seconds")},
         "gate": {"ok": quality.get("ok"), "issues": [{"level": i.get("level"), "code": i.get("code")} for i in quality.get("issues") or []]} if quality else None,
+        **({"geometry": geometry} if geometry else {}),
         "invocations": invocations, "costUsd": cost,
         "wallMinutes": round(sum(i.get("wallSeconds") or 0 for i in invocations) / 60, 1),
     }

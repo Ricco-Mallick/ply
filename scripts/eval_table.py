@@ -101,6 +101,26 @@ def details(runs: dict[str, dict], names: list[str]) -> list[str]:
     return [*out, ""]
 
 
+def laser(runs: dict[str, dict], names: list[str]) -> list[str]:
+    """Scale and geometry against a laser scan (the MuSHRoom scenarios): what plypipe.mushroom.score_job put in metrics.json."""
+    shown = [n for n in names if runs[n].get("geometry")]
+    if not shown:
+        return []
+    out = ["## Against the laser scan", "",
+           "| variant | scale error % | cameras matched / inliers | camera fit rms cm | splat F 5 cm (P / R) | splat F 10 cm | chamfer cm |", "|---|---:|---:|---:|---:|---:|---:|"]
+    for n in shown:
+        g = runs[n]["geometry"]
+        if g.get("error"):
+            out.append(f"| {n} | scoring failed: {g['error']} | | | | | |")
+            continue
+        c, s = g.get("cameras") or {}, g.get("splats") or {}
+        f5, f10 = s.get("f5cm") or {}, s.get("f10cm") or {}
+        cm = lambda m: "–" if m is None else f"{m * 100:.1f}"  # noqa: E731
+        out.append(f"| {n} | {fmt(g.get('scaleErrorPct'), 2, True)} | {c.get('matched', '–')} / {c.get('inliers', '–')} | {cm(c.get('rmsM'))} | "
+                   f"{fmt(f5.get('f'), 3)} ({fmt(f5.get('precision'), 2)} / {fmt(f5.get('recall'), 2)}) | {fmt(f10.get('f'), 3)} | {cm(s.get('chamferM'))} |")
+    return [*out, "", "Scale error is signed: positive means the twin's metres are longer than the room's. Splat scores are in the twin's own frame.", ""]
+
+
 def dense_cell(d: dict) -> str:
     """Kept in step with plypipe.evalrun.dense_cell; this script reads metrics files and does not import the pipeline."""
     def walk(w: dict | None) -> str:
@@ -145,7 +165,7 @@ def verdict(delta: float, floor: float, higher_better: bool) -> str:
 def render(runs: dict[str, dict], given: list[str] | None = None) -> str:
     bases = baseline_names(runs, given)
     names = order(runs, bases)
-    out = ["## Results", "", *main_table(runs, names), "", *details(runs, names)]
+    out = ["## Results", "", *main_table(runs, names), "", *details(runs, names), *laser(runs, names)]
     if len(bases) < 2:
         have = ", ".join(bases) or "none"
         out += [f"Noise floor: needs two complete baselines (found: {have}). Run q0a and q0b first.", ""]

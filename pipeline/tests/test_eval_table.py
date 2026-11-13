@@ -134,3 +134,15 @@ def test_the_walking_grid_reads_the_same_here_and_in_the_runs_summary():
     for d in ({"used": "depth", "views": 52, "seconds": 41.5, "walk": {"cameras": 1.0, "standableM2": 61.2}, "sparseWalk": {"cameras": None, "standableM2": 0.0}},
               {"used": "sparse", "why": "failed: x"}, {"used": "sparse"}):
         assert eval_table.dense_cell(d) == evalrun.dense_cell(d)
+
+
+def test_runs_scored_against_a_laser_scan_get_their_own_table_with_a_signed_scale_error(tmp_path):
+    geometry = {"scaleErrorPct": -3.456, "scale": 1.0358, "cameras": {"twin": 330, "matched": 320, "inliers": 300, "rmsM": 0.031, "medianM": 0.02},
+                "splats": {"points": 400000, "chamferM": 0.0421, "f5cm": {"precision": 0.61, "recall": 0.55, "f": 0.5784}, "f10cm": {"precision": 0.8, "recall": 0.7, "f": 0.7467}}}
+    write(tmp_path, {**metrics("q0a", role="baseline"), "geometry": geometry}, {**metrics("q2"), "geometry": {"error": "ValueError: no cameras match"}}, metrics("q4a"))
+    out = eval_table.render(eval_table.load_runs(tmp_path))
+    assert "## Against the laser scan" in out
+    assert "| q0a | -3.46 | 320 / 300 | 3.1 | 0.578 (0.61 / 0.55) | 0.747 | 4.2 |" in out
+    assert "| q2 | scoring failed: ValueError: no cameras match |" in out and "| q4a |" not in out.split("## Against the laser scan")[1]
+    write(tmp_path / "plain", metrics("q0a"))
+    assert "laser" not in eval_table.render(eval_table.load_runs(tmp_path / "plain"))

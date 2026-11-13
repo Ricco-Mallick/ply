@@ -316,9 +316,10 @@ def load_reference(folder: str | Path) -> dict:
             "points": np.load(folder / "ref_points.npy")}
 
 
-def score_job(job: str | Path, reference: dict, splat_alpha: float = 0.5, max_twin: int = 400_000) -> dict:
-    """The laser-reference scores of a finished job: the twin's metric scale (from its camera solve) and, when the job has a splat, how
-    well the splat's centres lie on the scan (precision and recall at 5 and 10 cm, chamfer), in the twin's own frame."""
+def score_job(job: str | Path, reference: dict, splat_alpha: float = 0.5, max_twin: int = 400_000, splats: bool = True) -> dict:
+    """The laser-reference scores of a finished job: the twin's metric scale (from its camera solve) and, when the job has a splat and
+    `splats` is true, how well the splat's centres lie on the scan (precision and recall at 5 and 10 cm, chamfer), in the twin's own frame.
+    The nearest-point search runs on the GPU when torch finds one (400k splats against a 1.5M-point scan is minutes on 4 CPU cores)."""
     job = Path(job)
     names, centres = read_twin_cameras(job / "data" / "sparse" / "0")
     sim = match_and_fit(names, centres, reference["names"], reference["centres"], reference.get("inputNames"))
@@ -326,7 +327,7 @@ def score_job(job: str | Path, reference: dict, splat_alpha: float = 0.5, max_tw
            "inliers": int(sim.inliers.sum()), "rmsM": round(sim.rms, 3), "medianM": round(sim.median, 3)},
            "reference": {"poses": reference["meta"].get("poses"), "alignment": reference["meta"].get("direction")}}
     ply = job / "scene.ply"
-    if ply.exists():
+    if splats and ply.exists():
         from plypipe import topview
         s = topview.read_ply(ply)
         keep = s.alpha >= splat_alpha
