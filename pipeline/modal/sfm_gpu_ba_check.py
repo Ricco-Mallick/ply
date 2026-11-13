@@ -34,6 +34,7 @@ SOLVER_TIMEOUT_S = 240
 SOLVERS = ("ceres-cpu", "ceres-gpu", "caspar")
 
 image = worker_image.add_local_file(HERE / "ply_modal.py", "/root/ply_modal.py")
+GPUS = ["L4", "L40S"]  # an L40S when Modal has no L4 free
 app = modal.App("ply-sfm-ba-check", image=image)
 vol = modal.Volume.from_name("ply-bench")
 VOL = Path("/vol")
@@ -124,7 +125,7 @@ def check(model: Path, work: Path, frames: int = FRAMES) -> dict:
     return {"probe": info, "start": start, "ran": [n for n, r in rows.items() if r.get("ran")], "solvers": rows}
 
 
-@app.function(gpu="L4", timeout=TIMEOUT_MIN * 60, volumes={"/vol": vol})
+@app.function(gpu=GPUS, timeout=TIMEOUT_MIN * 60, volumes={"/vol": vol})
 def run() -> dict:
     out = subprocess.run(["nvidia-smi", "--query-gpu=name,memory.total", "--format=csv,noheader"], capture_output=True, text=True).stdout.strip()
     result = {"gpu": out, **check(VOL / MODEL, Path("/tmp/ba-check"))}
