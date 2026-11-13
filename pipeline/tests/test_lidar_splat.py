@@ -242,3 +242,30 @@ def test_the_whole_twin_is_exported_to_spz_with_the_scan_options(scan, tmp_path)
     assert ex["gaussiansOut"] > 0.95 * lid["splats"] and "viewerEval" not in ex and "denseOccupancy" not in ex
     assert json.loads((out / "scene.json").read_text())["splat"] == {"file": "scene.spz", "lite": "scene_lite.spz", "format": "spz"}
     assert any("held-out" in s for s in lid["skipped"])
+
+
+def test_a_twin_over_the_phone_size_gets_a_coarser_file_merged_on_the_cpu(scan, tmp_path):
+    write_npz(tmp_path / "scan.npz", to_file_frame(scan))
+    out = tmp_path / "job"
+    assert main(["lidar", str(tmp_path / "scan.npz"), "--out", str(out), "--lite-max", "60000", "--no-export", "--quiet", "--sh-degree", "0"]) == 0
+    lite = json.loads((out / "report.json").read_text())["lidar"]["lite"]
+    assert 20_000 < lite["splats"] <= 60_000 and lite["voxelM"] > 0.015
+    _, full = clean.read_ply(out / "scene.ply")
+    _, c = clean.read_ply(out / L.LITE_SRC)
+    assert len(c["x"]) == lite["splats"]
+    from scipy.spatial import cKDTree
+    d, _ = cKDTree(centres(full)).query(centres(c))
+    assert d.max() <= lite["voxelM"], "a merged splat sits within a voxel of the splats it replaced"
+    assert np.allclose(np.linalg.norm(axes_of(c)[:, 2], axis=1), 1) and sum(k.startswith("f_rest_") for k in c) == 0
+
+
+@needs_npx
+def test_the_phone_file_is_cut_without_splat_transforms_decimation_which_needs_a_gpu(scan, tmp_path):
+    write_npz(tmp_path / "scan.npz", to_file_frame(scan))
+    out = tmp_path / "job"
+    assert main(["lidar", str(tmp_path / "scan.npz"), "--out", str(out), "--lite-max", "60000", "--quiet", "--sh-degree", "0"]) == 0
+    import gzip
+    count = lambda name: int.from_bytes(gzip.open(out / name).read(12)[8:12], "little")
+    assert 20_000 < count("scene_lite.spz") <= 60_000 and count("scene.spz") > 200_000
+    assert not (out / L.LITE_SRC).exists()
+    assert json.loads((out / "report.json").read_text())["export"]["liteGaussians"] == count("scene_lite.spz")

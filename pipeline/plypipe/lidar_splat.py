@@ -45,7 +45,8 @@ from plypipe import geometry, plan as plan_mod
 from plypipe import shell as shell_mod
 from plypipe import tour as tour_mod
 from plypipe import walkcheck
-from plypipe.util import Ctx, mark_done, update_scene
+from plypipe.util import Ctx, mark_done, splat_transform_cmd, update_scene
+from plypipe.util import run as export_run
 
 C0 = 0.28209479177387814
 VOXEL = 0.01
@@ -55,6 +56,7 @@ NEIGHBOURS = 16
 EYE = 1.6             # spawn and path height, as stages/align.py
 PRIOR_Z = 1.25        # E57's world frame is +Z up: another axis must score this much more to win
 STAGE = "lidar"
+LITE_SRC = "scene_lite_src.ply"
 
 
 def splat_cap() -> int:
@@ -290,6 +292,31 @@ def disks(pts: np.ndarray, cols: np.ndarray, normals: np.ndarray, axis: np.ndarr
     for i in range(4):
         cols_out[f"rot_{i}"] = q[:, i].astype(np.float32)
     return cols_out
+
+
+def coarsen(pts: np.ndarray, cols: np.ndarray, normals: np.ndarray, axis: np.ndarray, spacing: np.ndarray, voxel: float, cap: int
+            ) -> tuple[np.ndarray, ...]:
+    """The splats merged per coarser voxel until at most `cap` are left: the mean centre and colour, the mean normal (a
+    corner's two faces average to a diagonal, which a phone-sized file can afford), the first member's in-plane axis, and
+    the spacing grown with the voxel. Returns those five and the voxel used."""
+    v = voxel * max(1.03, math.sqrt(len(pts) / cap) * 1.02)
+    for _ in range(12):
+        cells = np.floor((pts - pts.min(0)) / v).astype(np.int64)
+        _, first, inv = np.unique(_pack(cells), return_index=True, return_inverse=True)
+        if len(first) <= cap:
+            break
+        v *= max(1.03, math.sqrt(len(first) / cap) * 1.02)
+    n = np.bincount(inv, minlength=len(first)).astype(np.float64)
+
+    def mean(a: np.ndarray) -> np.ndarray:
+        return np.stack([np.bincount(inv, a[:, j].astype(np.float64), minlength=len(first)) for j in range(a.shape[1])], 1) / n[:, None]
+
+    nrm = mean(normals)
+    ln = np.linalg.norm(nrm, axis=1)
+    nrm = np.where(ln[:, None] > 1e-3, nrm / np.maximum(ln, 1e-9)[:, None], normals[first])
+    sp = np.bincount(inv, spacing.astype(np.float64), minlength=len(first)) / n * (v / voxel)
+    return (mean(pts).astype(np.float32), np.clip(np.round(mean(cols)), 0, 255).astype(np.uint8), nrm.astype(np.float32),
+            axis[first], sp.astype(np.float32), v)
 
 
 def write_ply(path: Path, cols: dict[str, np.ndarray], chunk: int = 500_000) -> None:
@@ -544,6 +571,10 @@ def _peak_mb() -> int:
 
 def run_stage(ctx: Ctx, source: Path) -> dict:
     t0 = time.time()
+    try:  # k-nearest neighbours and the station walk need it; the worker image carries numpy and torch only
+        import scipy  # noqa: F401
+    except ImportError as e:
+        raise RuntimeError("plypipe lidar needs scipy (pip install 'plypipe[lidar]' or scipy>=1.11)") from e
     phases: dict[str, float] = {}
 
     def lap(name: str) -> None:
@@ -569,6 +600,14 @@ def run_stage(ctx: Ctx, source: Path) -> dict:
     sh = int(ctx.opt("sh_degree", 3))
     write_ply(ctx.out / "scene.ply", disks(centres, colours, normals, axis, spacing, voxel, sh))
     lap("ply")
+    lite = None
+    from plypipe.stages.export import LITE_MAX
+    lite_max = int(ctx.opt("lite_max") or LITE_MAX)
+    if len(centres) > lite_max:  # export's own cut (splat-transform -d) needs a WebGPU adapter, which a CPU container has not
+        lc, lcol, ln, la, ls, lv = coarsen(centres, colours, normals, axis, spacing, voxel, lite_max)
+        write_ply(ctx.out / LITE_SRC, disks(lc, lcol, ln, la, ls, lv, min(sh, 2)))
+        lite = {"splats": len(lc), "voxelM": round(lv, 5)}
+        ctx.log.emit("lidar", "progress", f"phone file: {len(lc)} splats at a {lv * 100:.2f} cm voxel")
     f = fscore(centres, scene_pts, 0.01)
     lap("fscore")
     splat_info = {"source": Path(source).name, "points": n_in, "splats": len(centres), "voxelM": round(voxel, 5), "voxelRequestedM": voxel0, "capSplats": cap,
@@ -576,7 +615,7 @@ def run_stage(ctx: Ctx, source: Path) -> dict:
     out = products(ctx, scene_pts, st, T, info, splat_info)
     lap("products")
     return {**splat_info, "up": info["up"], "upEvidence": info["upEvidence"], "yawDeg": info["yawDeg"], "floorTiltDeg": info["floorTiltDeg"],
-            "fScore": f, "coarsened": voxel > voxel0, "skipped": list(SKIPPED), **out, "seconds": round(time.time() - t0, 1),
+            "fScore": f, "coarsened": voxel > voxel0, "lite": lite, "skipped": list(SKIPPED), **out, "seconds": round(time.time() - t0, 1),
             "phaseSeconds": phases, "peakMB": _peak_mb()}
 
 
@@ -590,9 +629,17 @@ def run(ctx: Ctx, source: Path) -> dict:
     # splat-transform's value filters would be probed against a model whose opacity and scale are constants: skip the two passes
     prev = os.environ.get("PLY_EXPORT_PROBES")
     os.environ["PLY_EXPORT_PROBES"] = "0"
+    coarse = ctx.out / LITE_SRC
     try:
         ctx.opts.update({"holdout": 0, "lite_finetune": 0, "dense_occupancy": False})
+        if rep.get("lite"):
+            ctx.opts["lite_max"] = rep["splats"]  # export then makes no cut of its own, and its phone file is replaced below
         ex = export.run_stage(ctx)
+        if rep.get("lite"):
+            lite = ctx.out / "scene_lite.spz"
+            export_run([*splat_transform_cmd(), "-w", "--spz-version", "3", str(coarse), str(lite)], ctx, "export")
+            ex.update({"liteGaussians": rep["lite"]["splats"], "liteMB": round(lite.stat().st_size / 2**20, 2)})
+            coarse.unlink(missing_ok=True)
     finally:
         if prev is None:
             os.environ.pop("PLY_EXPORT_PROBES", None)
