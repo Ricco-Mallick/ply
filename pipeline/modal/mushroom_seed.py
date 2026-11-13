@@ -56,7 +56,7 @@ WORK = Path("/tmp/mushroom-work")
 FETCH_TIMEOUT_S = max(mushroom_fetch.fetch_estimate(r)["timeoutSeconds"] for r in mushroom.ROOMS)
 SOLVE_TIMEOUT_S = (math.ceil(mushroom_fetch.STOP_LOSS * SOLVE_MIN) + SOLVE_GRACE_MIN) * 60
 
-cpu_image = (modal.Image.debian_slim(python_version="3.12").pip_install("numpy>=1.26").add_local_dir(PIPE / "plypipe", "/root/pipeline/plypipe"))
+cpu_image = (modal.Image.debian_slim(python_version="3.12").pip_install("numpy>=1.26", "scipy>=1.13")  # scipy: the nearest-point search that picks the alignment direction (the first fetch died without it).add_local_dir(PIPE / "plypipe", "/root/pipeline/plypipe"))
 app = modal.App("ply-mushroom-seed")
 vol = modal.Volume.from_name("ply-bench")  # not created here, so a wrong account fails at once
 
