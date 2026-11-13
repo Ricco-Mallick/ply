@@ -148,11 +148,11 @@ run needs the owner's go-ahead and follows plan section 13: one launch, its log 
     at start.
 
 Not for hand-off, because each needs a judgement or the owner:
+
+- **The exposure look-test is with the owner**: https://ricco.codes/ply/ab.html shows the two chapel twins
   (`chapel-ab-a`, `chapel-ab-b` on the results dataset) side by side on one camera. They are the Volume's
   `chapel/eval/q0a-merged` and `chapel/eval/q1b-nosettle`, in that order; the owner picks blind. Q1 ships only if
   the owner prefers the second.
-  (`chapel-ab-a`, `chapel-ab-b` on the results dataset) side by side on one camera. Which is which is in
-  `EXPERIMENTS.md` (Q1b on both scenes: A is `q0a-merged`, B is `q1b-nosettle`). Q1 ships only if B looks better.
 - What goes into the combined run of phase 7: Q6 and the depth walking grid are in; an opacity regulariser of 0.005
   only with see-through no higher than the baseline's (decision 10); whatever of phase 3 passes its ship rule. Phase
   4's Q3 still waits for the chapel's 4K frames and Q4b for depth priors (phase 5's `priors` stage now saves them).
