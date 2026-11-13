@@ -186,6 +186,7 @@ def build_parser() -> argparse.ArgumentParser:
                         "capture positions are walkable on it. The default where a GPU can render")
     g.add_argument("--no-dense-occupancy", dest="dense_occupancy", action="store_false",
                    help="export: keep the walking grid from the camera solve")
+<<<<<<< HEAD
     g.add_argument("--dense-layout", dest="dense_layout", action="store_true", default=True,
                    help="export: measure the walls, doors and ceiling (shell.json) from dense_points.npz and the camera path, "
                         "and use it when it passes its own checks, else keep the sparse shell. The default where dense points exist")
@@ -196,6 +197,21 @@ def build_parser() -> argparse.ArgumentParser:
                         "pass into mesh.glb (about 300k triangles, vertex colours) and collision.glb (about 20k); needs a GPU and the dense pass")
     _add_rescale(sub)
     _add_priors(sub, r)
+=======
+    lp = sub.add_parser("lidar", help="a laser scan (points .npz from scripts/lidar/inspect_e57.py, or a coloured .ply) as a twin: no training")
+    lp.add_argument("input", type=Path, help="points-1cm.npz (points, colors, stations) or a coloured PLY")
+    lp.add_argument("--out", type=Path, required=True)
+    lp.add_argument("--voxel", type=float, default=0.01, help="metres between splats; coarsened when the cloud is over the High splat count")
+    lp.add_argument("--cap", type=int, help="splat cap (default the High preset's, 2,000,000)")
+    lp.add_argument("--up", default="auto", choices=["auto", *(s + a for s in "+-" for a in "xyz")], help="the file's up axis (default: from its surfaces)")
+    lp.add_argument("--sh-degree", type=int, default=3, choices=[0, 1, 2, 3], help="SH degree written; bands above 0 are zero (3 is the trainer's layout)")
+    lp.add_argument("--cell", type=float, default=0.05, help="walking grid cell in metres")
+    lp.add_argument("--lite-max", type=int, help="splats in the phone file (default 800000)")
+    lp.add_argument("--no-clean", action="store_true", help="export without the cleanup filters")
+    lp.add_argument("--no-crop", action="store_true")
+    lp.add_argument("--no-export", action="store_true", help="write scene.ply, scene.json, occupancy and shell only")
+    lp.add_argument("--quiet", action="store_true")
+>>>>>>> hoplite/sikyon-d854705c--lidar
     return ap
 
 
@@ -216,11 +232,17 @@ def _priors_main(a) -> int:  # noqa: ANN001
 
 def main(argv: list[str] | None = None) -> int:
     a = build_parser().parse_args(argv)
+<<<<<<< HEAD
     if a.cmd == "rescale":
         from plypipe import rescale
         return rescale.main(a)
     if a.cmd == "priors":
         return _priors_main(a)
+=======
+    if a.cmd == "lidar":
+        from plypipe import lidar_splat
+        return lidar_splat.main(a)
+>>>>>>> hoplite/sikyon-d854705c--lidar
     out: Path = a.out
     out.mkdir(parents=True, exist_ok=True)
     log = Log(out, quiet=a.quiet)
