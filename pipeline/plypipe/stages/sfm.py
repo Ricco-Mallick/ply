@@ -6,7 +6,9 @@ be loaded. One SIMPLE_RADIAL camera shared by every frame (a phone video is one 
 Pairs: exhaustive for small captures (<= exhaustive_max frames, best loop closure), sequential
 with quadratic overlap otherwise (video order is a strong prior).
 Mapper: global SfM (GLOMAP, merged into COLMAP 4.x), keeping the largest model; ordered video of
-incremental_min frames or more goes straight to the incremental mapper (see choose_mapper).
+incremental_min frames or more goes straight to the incremental mapper (see choose_mapper). Two faster solves
+for long captures are opt-in (--mapper): hierarchical (clusters mapped in parallel, merged, one bundle adjustment)
+and keyframes (every few frames solved first, the rest registered against them with their poses fixed).
 
 Outputs:
     colmap/database.db, colmap/sparse/0          raw model (SIMPLE_RADIAL, binary)
@@ -20,6 +22,7 @@ import hashlib
 import json
 import os
 import shutil
+import time
 import urllib.request
 from pathlib import Path
 
@@ -34,6 +37,7 @@ VOCAB_TREES = {
              "96ca8ec8ea60b1f73465aaf2c401fd3b3ca75cdba2d3c50d6a2f6f760f275ddc"),
 }
 ORDERED_SOURCES = ("video", "videos", "ar")
+FAST_MAPPERS = ("hierarchical", "keyframes")  # opt-in; checked and re-solved incrementally like the global mapper
 
 
 def vocab_tree(features: str, cache: Path | None = None) -> Path | None:
@@ -275,6 +279,107 @@ def incremental_options(pycolmap, n_images: int, max_runtime_s: int | None = Non
     return opts
 
 
+def select_keyframes(names: list[str], clip_of: dict[str, str] | None = None, step: int = 4, max_gap: int = 8,
+                     linked=None) -> list[str]:
+    """Frames to solve first: every `step`-th frame of each clip plus its first and last, so no clip boundary is lost.
+    A gap wider than `max_gap`, or between two frames `linked(a, b)` says share no verified matches, is halved until it
+    is not: sequential matching pairs frame i only with i+1, i+2, i+4, i+8 ... (measured on a 120-frame scene: 118 pairs
+    at offset 1, 113 at 2, 11 at 3), so keyframes three apart have no direct match and the solve falls apart at 2 of 41."""
+    keys: list[str] = []
+    runs: list[list[str]] = []
+    for name in sorted(names):
+        if runs and (clip_of.get(name) if clip_of else None) == (clip_of.get(runs[-1][-1]) if clip_of else None):
+            runs[-1].append(name)
+        else:
+            runs.append([name])
+    for run in runs:
+        marks = sorted(set(range(0, len(run), max(1, step))) | {len(run) - 1})
+        out = [marks[0]]
+        for b in marks[1:]:
+            todo = [(out[-1], b)]
+            while todo:
+                lo, hi = todo.pop()
+                if hi - lo > 1 and (hi - lo > max_gap or (linked is not None and not linked(run[lo], run[hi]))):
+                    mid = (lo + hi) // 2
+                    todo += [(mid, hi), (lo, mid)]
+                else:
+                    out.append(hi)
+        keys += [run[i] for i in out]
+    return keys
+
+
+def linked_pairs(pycolmap, db: Path, min_inliers: int = 30):
+    """linked(a, b): do these two frames share at least `min_inliers` geometrically verified matches in the database?"""
+    d = pycolmap.Database.open(str(db))
+    try:
+        ids = {im.name: im.image_id for im in d.read_all_images()}
+        pair_ids, counts = d.read_two_view_geometry_num_inliers()
+    finally:
+        d.close()
+    good = {int(p) for p, c in zip(pair_ids, counts) if c >= min_inliers}
+    return lambda a, b: (min(ids[a], ids[b]) * 2147483647 + max(ids[a], ids[b])) in good
+
+
+def _final_bundle(pycolmap, rec) -> None:
+    """One bundle adjustment over everything, intrinsics and points free (the incremental mapper's own setting)."""
+    pycolmap.bundle_adjustment(rec, pycolmap.BundleAdjustmentOptions())
+
+
+def _map_hierarchical(ctx: Ctx, pycolmap, db: Path, images: Path, out: Path, n_images: int, seconds: dict):
+    """Clusters of at most --hier-leaf-max frames are mapped in parallel and merged; the merge does no bundle
+    adjustment (the 120-frame test scene came out at 0.236 px, 0.186 px after one), so one runs over the biggest model."""
+    leaf = int(ctx.opt("hier_leaf_max", 500))
+    opts = pycolmap.HierarchicalPipelineOptions()
+    opts.clustering_options.leaf_max_num_images = leaf
+    opts.incremental_options = incremental_options(pycolmap, min(n_images, leaf), ctx.opt("incremental_max_s"))
+    out.mkdir(parents=True, exist_ok=True)
+    t = time.time()
+    models = pycolmap.hierarchical_mapping(db, images, out, opts)
+    seconds["hierarchical"] = round(time.time() - t, 1)
+    best = _best(models)
+    if best is not None:
+        t = time.time()
+        _final_bundle(pycolmap, best)
+        seconds["bundle"] = round(time.time() - t, 1)
+    return models
+
+
+def _map_keyframes(ctx: Ctx, pycolmap, db: Path, images: Path, out: Path, n_images: int, clips: dict[str, str] | None,
+                   seconds: dict, extra: dict):
+    """Keyframes first, then the other frames registered against that model with the keyframes' poses held (the
+    mapper's fix_existing_frames; naming only the rest in image_names registered 119 of 120 frames, so the list is left empty), then one bundle
+    adjustment over everything. On the 120-frame test scene the keyframes' poses moved by 3e-15 m in the register step."""
+    names = sorted(p.name for p in images.glob("*.jpg"))
+    keys = select_keyframes(names, clips, int(ctx.opt("keyframe_step", 4)), int(ctx.opt("keyframe_max_gap", 8)),
+                            linked_pairs(pycolmap, db))
+    extra["keyframes"] = len(keys)
+    out.mkdir(parents=True, exist_ok=True)
+    ctx.log.emit("sfm", "progress", f"solving {len(keys)} keyframes of {n_images} first")
+    opts = incremental_options(pycolmap, len(keys), ctx.opt("incremental_max_s"))
+    opts.image_names = keys
+    t = time.time()
+    first = _best(pycolmap.incremental_mapping(db, images, out / "keyframes", opts))
+    seconds["keyframes"] = round(time.time() - t, 1)
+    if first is None:
+        return {}
+    kdir = out / "keyframes" / "best"
+    kdir.mkdir(parents=True, exist_ok=True)
+    first.write(kdir)
+    ctx.log.emit("sfm", "progress", f"{first.num_reg_images()} keyframes solved: registering the other frames")
+    opts = incremental_options(pycolmap, n_images, ctx.opt("incremental_max_s"))
+    opts.fix_existing_frames = True
+    t = time.time()
+    models = pycolmap.incremental_mapping(db, images, out / "registered", opts, input_path=str(kdir))
+    seconds["register"] = round(time.time() - t, 1)
+    best = models.get(0)  # the extended keyframe model; later ids are new models grown from frames it could not take
+    if best is None:
+        return {}
+    t = time.time()
+    _final_bundle(pycolmap, best)
+    seconds["bundle"] = round(time.time() - t, 1)
+    return {0: best}
+
+
 def run_stage(ctx: Ctx) -> dict:
     pycolmap = _pycolmap()
     images = ctx.frames_dir
@@ -402,24 +507,32 @@ def _map(ctx: Ctx, pycolmap, cdir: Path, db: Path, images: Path, n_images: int, 
     mapper, mapper_why = choose_mapper(ctx.opt("mapper"), source, n_images, int(ctx.opt("incremental_min", 400)))
     ctx.log.emit("sfm", "progress", f"{mapper} mapping ({mapper_why})")
     raw_out = cdir / "sparse_all"
+    ordered = source in ORDERED_SOURCES
+    clips = clip_index(ctx.out) if ordered else None
+    seconds: dict[str, float] = {}
+    extra: dict = {}
+    t0 = time.time()
     if mapper == "incremental":
         # no time cap unless asked: there is no other model to fall back on, so a cut-off would only ship a partial one
         models = pycolmap.incremental_mapping(db, images, raw_out,
                                               incremental_options(pycolmap, n_images, ctx.opt("incremental_max_s")))
+    elif mapper == "hierarchical":
+        models = _map_hierarchical(ctx, pycolmap, db, images, raw_out, n_images, seconds)
+    elif mapper == "keyframes":
+        models = _map_keyframes(ctx, pycolmap, db, images, raw_out, n_images, clips, seconds, extra)
     else:
         models = pycolmap.global_mapping(db, images, raw_out, pycolmap.GlobalPipelineOptions())
-    if not models:
+    seconds = seconds or {"mapper": round(time.time() - t0, 1)}
+    if not models and not (mapper in FAST_MAPPERS and not ctx.opt("no_mapper_fallback")):
         raise RuntimeError(f"{mapper} mapping produced no model: capture lacks overlap or texture (see docs/SOP.md)")
     best = _best(models)
-    ordered = source in ORDERED_SOURCES
-    clips = clip_index(ctx.out) if ordered else None
 
     def clean(rec) -> tuple[list[str], list[str], int]:
         unanchored = drop_unanchored(rec)
         spikes = drop_spikes(rec, clip_of=clips) if ordered else []
         return unanchored, spikes, (trajectory_jumps(rec, clip_of=clips) if ordered else 0)
 
-    dropped, spikes, jumps = clean(best)
+    dropped, spikes, jumps = clean(best) if best is not None else ([], [], 0)
     if dropped:
         ctx.log.emit("sfm", "warn", f"{len(dropped)} views had no anchor in the solve (too few points, or far from "
                      f"every other camera) and were dropped: {', '.join(dropped[:8])}{' …' if len(dropped) > 8 else ''}")
@@ -429,21 +542,25 @@ def _map(ctx: Ctx, pycolmap, cdir: Path, db: Path, images: Path, n_images: int, 
     # the global mapper can fold a video walk into a model with an excellent reprojection error (glomap#145);
     # a camera path that jumps, or a solve that drops views, is re-solved incrementally and the better model kept
     fallback = None
-    reg_ratio = best.num_reg_images() / n_images
-    if mapper == "global" and not ctx.opt("no_mapper_fallback") and (jumps or reg_ratio < 0.9):
+    reg_ratio = best.num_reg_images() / n_images if best is not None else 0.0
+    if mapper in ("global", *FAST_MAPPERS) and not ctx.opt("no_mapper_fallback") and (jumps or reg_ratio < 0.9):
         why = f"{jumps} path jumps" if jumps else f"{reg_ratio:.0%} registered"
-        ctx.log.emit("sfm", "warn", f"global solve looks wrong ({why}): solving again with the incremental mapper")
+        ctx.log.emit("sfm", "warn", f"{mapper} solve looks wrong ({why}): solving again with the incremental mapper")
         opts = incremental_options(pycolmap, n_images, int(ctx.opt("incremental_max_s", 5400)))
+        t0 = time.time()
         inc = pycolmap.incremental_mapping(db, images, cdir / "sparse_inc", opts)
+        seconds["fallback"] = round(time.time() - t0, 1)
         alt = _best(inc)
-        fallback = {"reason": why, "global": {"registered": best.num_reg_images(), "jumps": jumps}, "used": "global"}
+        fallback = {"reason": why, mapper: {"registered": best.num_reg_images() if best is not None else 0, "jumps": jumps}, "used": mapper}
         if alt is not None:
             alt_dropped, alt_spikes, alt_jumps = clean(alt)
             fallback["incremental"] = {"registered": alt.num_reg_images(), "jumps": alt_jumps}
             score = lambda m, j: (j == 0 and m.num_reg_images() >= 0.6 * n_images, m.num_reg_images())
-            if score(alt, alt_jumps) > score(best, jumps):
+            if best is None or score(alt, alt_jumps) > score(best, jumps):
                 best, jumps, models, dropped, spikes, fallback["used"] = alt, alt_jumps, inc, alt_dropped, alt_spikes, "incremental"
         ctx.log.emit("sfm", "progress", f"kept the {fallback['used']} model")
+    if best is None:
+        raise RuntimeError(f"{mapper} mapping produced no model: capture lacks overlap or texture (see docs/SOP.md)")
     if jumps:
         ctx.log.emit("sfm", "warn", f"camera path has {jumps} discontinuities between consecutive frames: the model "
                      "may be folded. Recapture (SOP: slower turns) if the twin shows doubled walls.")
@@ -462,7 +579,7 @@ def _map(ctx: Ctx, pycolmap, cdir: Path, db: Path, images: Path, n_images: int, 
     rec.write_text(txt)
 
     reg = rec.num_reg_images()
-    report = {"features": features, "featuresRequested": requested, "matcher": matcher, "loopDetection": loops, "mapper": mapper, "mapperReason": mapper_why, "mapperFallback": fallback,
+    report = {"features": features, "featuresRequested": requested, "matcher": matcher, "loopDetection": loops, "mapper": mapper, "mapperReason": mapper_why, "mapperFallback": fallback, "mapperSeconds": seconds, **extra,
               "trajectoryJumps": jumps, "droppedViews": len(dropped) + len(spikes), "droppedSpikes": spikes, "images": n_images, "registered": reg,
               "registeredRatio": reg / n_images, "models": len(models), "points": rec.num_points3D(),
               "meanReprojErrorPx": float(rec.compute_mean_reprojection_error()),

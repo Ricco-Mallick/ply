@@ -94,11 +94,18 @@ def build_parser() -> argparse.ArgumentParser:
     g.add_argument("--device", choices=["auto", "cuda", "cpu"], default="auto")
     # no argparse default: an explicit choice beats the automatic one (ordered video of --incremental-min frames or
     # more goes straight to the incremental mapper), and a default would look explicit
-    g.add_argument("--mapper", choices=["global", "incremental"],
+    g.add_argument("--mapper", choices=["global", "incremental", "hierarchical", "keyframes"],
                    help="global SfM (fast) or incremental (slower, more robust on rotation-heavy captures). "
+                        "hierarchical: clusters of --hier-leaf-max frames mapped in parallel, merged, one bundle adjustment. "
+                        "keyframes: every --keyframe-step-th frame solved first, the rest registered against them. "
                         "Default: global, except ordered video of --incremental-min frames or more")
     g.add_argument("--incremental-min", type=int, default=400,
                    help="ordered video with at least this many frames skips the global mapper when --mapper is not given")
+    g.add_argument("--hier-leaf-max", type=int, default=500, help="--mapper hierarchical: frames per cluster, at most")
+    g.add_argument("--keyframe-step", type=int, default=4,
+                   help="--mapper keyframes: every Nth frame of a clip (plus its first and last) is a keyframe. 4, not 3: "
+                        "sequential matching pairs frames at offsets 1, 2, 4, 8 ..., so keyframes 3 apart share no matches")
+    g.add_argument("--keyframe-max-gap", type=int, default=8, help="--mapper keyframes: most frames between two keyframes")
     g.add_argument("--focal-35mm", type=float,
                    help="35 mm-equivalent focal of the lens used (phone spec, e.g. 24 for the S24 FE main camera; "
                         "~26 with video stabilisation crop). Starts SfM from the right intrinsics.")
