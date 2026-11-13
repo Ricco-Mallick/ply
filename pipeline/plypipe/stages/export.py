@@ -466,12 +466,12 @@ def _tsdf_mesh(ctx: Ctx, fusion) -> dict:
 def _dense_layout(ctx: Ctx) -> dict | None:
     """The measured layer (shell.json) rebuilt from dense_points.npz and the camera path (plypipe.shell.layout), shipped
     when it passes its own checks and otherwise left as the sparse shell, with the reasons written into that file under
-    `denseLayout` and the failed layout kept as shell_dense.json. None when the option is off or there are no dense
-    points: the job is then exactly what it was."""
+    `denseLayout` and the failed layout kept as shell_dense.json. None when the option is off (it is opt-in: --dense-layout,
+    until a layout has been scored against a laser reference) or there are no dense points: the job is then exactly what it was."""
     from plypipe import colmap_txt, dense, geometry, shell as shell_mod
 
     src = ctx.out / dense.FILE
-    if not ctx.opt("dense_layout", True) or not src.exists():
+    if not ctx.opt("dense_layout", False) or not src.exists():
         return None
     t0 = time.time()
     try:
@@ -494,14 +494,15 @@ def _dense_layout(ctx: Ctx) -> dict | None:
     if ok:
         sp.write_text(json.dumps(new, indent=1))
         doors = sum(o["kind"] == "door" for o in new["openings"])
-        ctx.log.emit("export", "progress", f"layout from dense points: {len(new['walls'])} walls, {doors} doors, ceiling {new['ceilingY']} m")
+        ctx.log.emit("export", "progress", f"layout from dense points: {len(new['walls'])} walls, {doors} doors, ceiling {new['ceilingY']} m"
+                     + "".join(f"; dropped {d['cls']} on wall {d['wall']}: {d['reason']}" for d in new.get("droppedOpenings", [])))
     else:
         if old:
             sp.write_text(json.dumps({**old, "source": old.get("source", "sparse"), "denseLayout": {"ok": False, "reasons": new["validation"]["reasons"]}}, indent=1))
         ctx.log.emit("export", "warn", f"dense layout not used: {why}")
     return {"used": "dense" if ok else "sparse", **({} if ok else {"why": why}), "walls": len(new["walls"]),
             "doors": sum(o["kind"] == "door" for o in new["openings"]), "windows": sum(o["kind"] == "window" for o in new["openings"]),
-            "rejectedDetections": len(new["rejected"]), "seconds": round(time.time() - t0, 1)}
+            "rejectedDetections": len(new["rejected"]), **({"droppedOpenings": new["droppedOpenings"]} if new.get("droppedOpenings") else {}), "seconds": round(time.time() - t0, 1)}
 
 
 def _topview(ctx: Ctx, source: Path) -> dict | None:

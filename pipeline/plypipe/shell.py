@@ -615,9 +615,28 @@ def layout(points: np.ndarray, normals: np.ndarray, path: np.ndarray, *, detecti
             openings.append({"kind": "window", "wall": near[1], "u": round(near[0][0], 3), "width": round(min(width, w["length"]), 3),
                              "sill": round(max(0.0, float(p[1]) - half[1] - floor), 3), "height": round(2 * half[1], 3), "name": "Window", "source": "detection"})
     out["walls"] = [{k: v for k, v in w.items() if k != "_piece"} for w in walls]
-    out["openings"] = openings
+    out["openings"], out["droppedOpenings"] = prune_openings(openings, out["walls"], points, floor)
     out["validation"] = validate(out, points, path)
     return out
+
+
+def prune_openings(openings: list[dict], walls: list[dict], points: np.ndarray, floor: float) -> tuple[list[dict], list[dict]]:
+    """(kept, dropped): an opening under OPENING_MIN in either direction, or a door on a solid wall, is dropped with its reason
+    and the layout stands: a bad window says nothing about the walls (the chapel's 12 walls were thrown away for two windows of
+    0.44 x 1.39 m and 0.73 x 0.15 m). What makes the walls themselves untrustworthy still fails `validate`."""
+    kept, dropped = [], []
+    for o in openings:
+        why = None
+        if o["width"] < OPENING_MIN or o["height"] < OPENING_MIN:
+            why = f"{o['width']:.2f} x {o['height']:.2f} m, under {OPENING_MIN} m"
+        elif o["kind"] == "door" and 0 <= o["wall"] < len(walls):
+            w = walls[o["wall"]]
+            a = np.array(w["a"], float)
+            d = (np.array(w["b"], float) - a) / (w["length"] or 1.0)
+            fill = slab_fill(points, a, d, o["u"] - o["width"] / 2 + 0.1, o["u"] + o["width"] / 2 - 0.1, floor + 0.3, floor + min(o["height"], DOOR_MIN_HEIGHT))
+            why = f"stands on a solid wall (the plane is {fill:.0%} full)" if fill > SOLID else None
+        (dropped if why else kept).append({"cls": o["kind"], "wall": o["wall"], "reason": why} if why else o)
+    return kept, dropped
 
 
 def _objects(boxes: list[dict]) -> list[dict]:
