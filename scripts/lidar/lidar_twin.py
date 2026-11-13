@@ -12,7 +12,14 @@ stay on the container's disk: 250 MB per million splats at SH degree 3, 62 MB at
 `--dst` names the volume folder (default `twin`, so a rerun replaces it; give a new name to keep the old one), and
 `--publish <scene id>` uploads the files the viewer needs to the results dataset, scenes/<scene id>/ on Hugging Face,
 through plypipe.hf (the ply-hf secret's HF token; no other secret and no GPU). It never writes the same scene id twice
-by accident: the name is the caller's, and `lidar-office-8a` and `-8b` are separate prefixes.
+by accident: the name is the caller's, and `lidar-office-8a` and `-8b` are separate prefixes. A folder that already
+holds a scene.json and a report.json is not rebuilt (`--force` says otherwise), so a run that failed at the upload only
+needs publishing again.
+
+The experiments account's ply-hf secret holds a **read-only** token: a `--publish` there fails with 403 (2026-11-13).
+The riccomarcelino and ricco-mallick workspaces can write, so the office twin was built on the experiments account,
+its folder copied to the other account's ply-bench with `modal volume get` / `put` (sha256 equal), and published from
+there. Giving the experiments account a write token would make it one command.
 
 It runs `python -m plypipe lidar` from the repository's own plypipe folder, so the twin is what the tests checked. The phone
 file (scene_lite.spz, 800 k splats) is merged on the CPU by lidar_splat: splat-transform's own `-d` cut needs a WebGPU adapter
@@ -43,7 +50,7 @@ image = (modal.Image.debian_slim(python_version="3.12")
          .apt_install("curl", "ca-certificates")
          .run_commands("curl -fsSL https://deb.nodesource.com/setup_22.x | bash - && apt-get install -y nodejs",
                        "npm i -g @playcanvas/splat-transform@3.10.1 && npx -y @playcanvas/splat-transform@3.10.1 --version")
-         .pip_install("numpy>=1.26", "opencv-python-headless>=4.9", "scipy>=1.11")
+         .pip_install("numpy>=1.26", "opencv-python-headless>=4.9", "scipy>=1.11", "huggingface_hub>=0.23")
          .add_local_dir(PLYPIPE, "/root/pipeline/plypipe"))
 VOL, ROOT = "/vol", "/root/pipeline"  # where the container mounts the Volume and the plypipe folder
 KEEP = ("scene.spz", "scene_lite.spz", "scene.json", "occupancy.json", "occupancy.png", "shell.json", "topview.webp", "places.json",
@@ -55,30 +62,41 @@ REPO = "Ricco-Marcelino/ply-data"
 
 @app.function(image=image, cpu=4, memory=12288, timeout=1800, volumes={VOL: vol}, secrets=[modal.Secret.from_name("ply-hf")])
 def twin(name: str = "office-1", points: str = "points-1cm.npz", args: str = "--sh-degree 0", dst: str = "twin",
-         publish: str = ""):
+         publish: str = "", force: bool = False):
     """lidar/<name>/<points> -> lidar/<name>/<dst>/, and with `publish`, the viewer's files to scenes/<publish>/ on the
-    results dataset. `args` are more plypipe lidar options, e.g. "--cap 1500000 --up z"."""
+    results dataset. `args` are more plypipe lidar options, e.g. "--cap 1500000 --up z". A folder that already holds a
+    scene.json and a report.json is not built again (`force` says otherwise): a run that failed after the twin was
+    written, at the upload for instance, publishes what is there."""
     src = Path(VOL) / "lidar" / name / points
     out = Path(VOL) / "lidar" / name / dst
     work = Path("/tmp/twin")
-    shutil.rmtree(work, ignore_errors=True)
     t0 = time.time()
-    cmd = [sys.executable, "-m", "plypipe", "lidar", str(src), "--out", str(work), *args.split()]
-    print("running", " ".join(cmd), flush=True)
-    run = subprocess.run(cmd, cwd=ROOT, env={**os.environ, "PYTHONPATH": ROOT})
-    out.mkdir(parents=True, exist_ok=True)
-    for f in KEEP:
-        if (work / f).exists():
-            shutil.copy2(work / f, out / f)
-    vol.commit()
-    report = {"exit": run.returncode, "seconds": round(time.time() - t0, 1), "twin": str(out),
+    built = (out / "scene.json").exists() and (out / "report.json").exists() and not force
+    if built:
+        print(f"reusing {out}: its scene.json and report.json are there (--force rebuilds it)", flush=True)
+        rep = out / "report.json"
+    else:
+        shutil.rmtree(work, ignore_errors=True)
+        cmd = [sys.executable, "-m", "plypipe", "lidar", str(src), "--out", str(work), *args.split()]
+        print("running", " ".join(cmd), flush=True)
+        run = subprocess.run(cmd, cwd=ROOT, env={**os.environ, "PYTHONPATH": ROOT})
+        if run.returncode:
+            print("LIDAR_TWIN " + json.dumps({"exit": run.returncode, "twin": str(out)}), flush=True)
+            raise RuntimeError(f"plypipe lidar exited {run.returncode}")
+        out.mkdir(parents=True, exist_ok=True)
+        for f in KEEP:
+            if (work / f).exists():
+                shutil.copy2(work / f, out / f)
+        vol.commit()
+        rep = work / "report.json"
+    report = {"exit": 0, "seconds": round(time.time() - t0, 1), "twin": str(out), "reused": built,
               "bytes": {f.name: f.stat().st_size for f in sorted(out.iterdir())}}
-    rep = work / "report.json"
     if rep.exists():
         lid = json.loads(rep.read_text()).get("lidar", {})
         report["lidar"] = {k: lid.get(k) for k in ("points", "splats", "voxelM", "fScore", "up", "yawDeg", "phaseSeconds", "peakMB",
                                                   "grid", "walk", "route", "stations", "pointcloud", "places", "ceilingY")}
     if publish:
+        sys.path.insert(0, ROOT)  # the function's own interpreter: only the subprocess got PYTHONPATH
         from plypipe import hf
         os.environ.setdefault("PLY_HF_REPO", REPO)
         files = [(f"scenes/{publish}/{f}", out / f) for f in PUBLISH if (out / f).exists()]
@@ -86,14 +104,12 @@ def twin(name: str = "office-1", points: str = "points-1cm.npz", args: str = "--
         report["published"] = {"repo": os.environ["PLY_HF_REPO"], "prefix": f"scenes/{publish}", "files": [f for f, _ in files],
                                "url": hf.url(f"scenes/{publish}/scene.json")}
     print("LIDAR_TWIN " + json.dumps(report), flush=True)
-    if run.returncode:
-        raise RuntimeError(f"plypipe lidar exited {run.returncode}")
     return report
 
 
 @app.local_entrypoint()
 def main(name: str = "office-1", points: str = "points-1cm.npz", args: str = "--sh-degree 0", dst: str = "twin",
-         publish: str = ""):
-    call = twin.spawn(name, points, args, dst, publish)
+         publish: str = "", force: bool = False):
+    call = twin.spawn(name, points, args, dst, publish, force)
     print(f"[lidar] twin started, call {call.object_id}; read it with `modal app logs ply-lidar-twin` (LIDAR_TWIN line) "
           f"or `modal volume ls ply-bench lidar/{name}/twin`", flush=True)

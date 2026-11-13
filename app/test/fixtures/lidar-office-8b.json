@@ -1,0 +1,99 @@
+{
+ "scene": "lidar-office-8b",
+ "source": "https://ply-api.ricco-ply.workers.dev/v1/scenes/lidar-office-8b",
+ "written": "2026-11-13",
+ "cell": 0.05,
+ "origin": [
+  -6.905242919921875,
+  5.264655618667603
+ ],
+ "width": 170,
+ "height": 134,
+ "values": {
+  "free": 255,
+  "blocked": 0,
+  "unknown": 127
+ },
+ "counts": {
+  "free": 9750,
+  "blocked": 7461,
+  "unknown": 5569
+ },
+ "walk": {
+  "radius": 0.22,
+  "standableM2": 6.46,
+  "cameras": 1.0,
+  "places": null,
+  "pass": true,
+  "source": "the walk's own points"
+ },
+ "spawn": [
+  -4.48,
+  9.54
+ ],
+ "cameraPath": [
+  [
+   -4.48,
+   9.54
+  ],
+  [
+   -3.58,
+   9.19
+  ],
+  [
+   -3.58,
+   8.74
+  ],
+  [
+   -2.93,
+   9.99
+  ],
+  [
+   -2.58,
+   8.94
+  ],
+  [
+   -1.48,
+   9.34
+  ],
+  [
+   -1.03,
+   9.09
+  ],
+  [
+   -2.13,
+   10.59
+  ],
+  [
+   -2.13,
+   10.24
+  ],
+  [
+   -2.63,
+   9.74
+  ],
+  [
+   -4.68,
+   9.04
+  ],
+  [
+   -4.83,
+   8.34
+  ],
+  [
+   -4.18,
+   8.19
+  ],
+  [
+   -4.78,
+   7.69
+  ],
+  [
+   -5.03,
+   6.84
+  ]
+ ],
+ "places": [],
+ "sha256": "13156fb564f5397e4b825946b4a187c66d6b60f8fdfc4a564cf06475fe0dc989",
+ "bytes": 22780
+}

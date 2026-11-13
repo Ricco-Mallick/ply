@@ -547,6 +547,45 @@ its metric depth to the solve's depth at the track points, then the median over 
   walking check reports no capture position walkable (6.5 m² to stand on); Walk starts from the nearest free cell.
   The plan's other two ship conditions are unmeasured: the phone file on a real phone, and wall crossings.
 
+### Phase 6: the scan's own walking grid, a walk on it, and wall crossings (2026-11-13)
+
+- **The station is not evidence.** The file's one scan pose sits **5.8 m outside its own cloud**, so the 8a grid's
+  sight lines were cast from a point that cannot have seen the room: of 8a's 11,041 free cells, 1,320 lay *beyond* the
+  four wall lines the twin measured, freed through them. 8b leaves 175 there, and those are the outer half of the wall
+  thickness. `occupancy.build_grid` is the camera pipeline's route and
+  needs a walk to anchor to; the new `occupancy.grid_from_pointcloud` needs nothing but the cloud, and
+  `lidar_splat.usable_stations` now rejects a pose outside the cloud and says so in the report and in
+  `scene.json` (`lidar.stationsUsed`).
+- **The grid** (5 cm cells, 170 × 134 = 22,780 over 8.5 × 6.7 m): **9,750 free, 7,461 blocked, 5,569 unknown**, 50
+  unknown pockets filled. 9,937 cells hold a floor return; 8,846 more are free because a return on the ceiling plane
+  with nothing under it says the beam went over the cell (the dark wooden floor near the window, where a grazing beam
+  gets no return at all). What the scanner never saw stays unknown, which the viewer blocks. Free space breaks into
+  101 areas, the largest 6.46 m² of walker-width floor: this office is desks along all four walls plus a row down the
+  middle, so the standing room is aisles, not a hall.
+- **A walk without a station:** `lidar_splat.walk_route` puts 8 waypoints on the standable lattice of the start's own
+  area, spread by *walking* distance, taken nearest first, each leg the cheapest lattice path and straightened only
+  where the straight line is standable with 3 cm beyond the walker's 22 cm. `roomy` drops the cells the viewer's
+  eight-ray test passes but the grid's own distance calls 17.7 cm from a wall: a 15-point walk, 8 tour keyframes,
+  spawn at its start, `walkcheck` 6.46 m² standable, `pass` true, `cameras` 1.0 (there are no capture positions on a
+  scan, so what is scored is the walk the twin ships).
+- **Places: none, measured.** A places list would need objects, and this file has no photos to run a detector on.
+  Measured alone, its furniture is **one connected group of blocked cells 9.8 m² across**: nothing stands apart to
+  name. `places.json` is published with `source: "none"` and that reason in it; the viewer shows no pin, and Walk
+  needs the grid and a spawn, not pins.
+- **Wall crossings, on the real grid** (`app/test/walk-lidar.test.mts`, the viewer's own mover and Walk frame): the
+  walker held 16 headings into the walls for 5 s each at 9.68 m/s (Shift, wheel at its limit) from 5 start cells, at
+  4 ms, 16 ms and 100 ms frames and with a 2 s hitch in one: **320 runs, 0 frames outside the walker's radius, 0
+  frames inside a blocked cell**; all 320 pressed into something, 191 of them travelling over half a metre first. 448
+  longer moves (1 cm to 1e9 m) all end where it fits, and the six guided routes along the published walk are found,
+  clear to 0.285 m at the closest point and followed to their ends without a stop.
+- **Published as `lidar-office-8b`** (`scenes/lidar-office-8b` on `ply-data`), 8a left untouched. The splat files are
+  byte-identical to 8a's (`scene.spz` c6baaff9, `scene_lite.spz` 01948df0) and so is `topview.webp`: only the grid,
+  `scene.json` (walk, tour), `places.json` and `occupancy.*` changed. Built on the experiments account in 125 s at
+  1.6 GB peak ($0.01); published from the `riccomarcelino` account, whose `ply-hf` secret holds the write token (the
+  experiments account's is read-only, so the built folder was copied across both volumes first, sha256 equal).
+  Viewer: `walk.html?scene=https%3A%2F%2Fply-api.ricco-ply.workers.dev%2Fv1%2Fscenes%2Flidar-office-8b%2Fscene.json`.
+- **Left:** the phone file on a real phone. The wall-crossing test walks the grid, not a handset.
+
 ### Phase 3: the chapel's matches, made again (2026-11-13)
 
 No run had kept the chapel's `database.db`. `pipeline/modal/sfm_match.py` made the features and matches again with

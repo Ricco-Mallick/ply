@@ -122,12 +122,18 @@ run needs the owner's go-ahead and follows plan section 13: one launch, its log 
    account's `ply-bench` under `mushroom/`, solved by our pipeline and trained at Quick, and every eval table of the
    scenarios `mushroom-honka` and `mushroom-coffee-room` has "Against the laser scan". Today's scale guess is +5.16%
    and +3.12% off the laser.
-8. ~~Phase 6, step 0~~ Done 2026-11-13: `lidar-office-1` is one unified cloud (184.6 M points, colour and intensity,
-   no normals, one pose) with **no photos** (`images2D` is empty), so route 8b (training on the scanner's photos)
-   is not possible with this file. Route 8a (`plypipe lidar`, one disk per 1 cm voxel) is built and tested on a
+8. ~~Phase 6, step 0 and 8a~~ Done 2026-11-13: `lidar-office-1` is one unified cloud (184.6 M points, colour and
+   intensity, no normals, one pose) with **no photos** (`images2D` is empty), so route 8b (training on the scanner's
+   photos) is not possible with this file. Route 8a (`plypipe lidar`, one disk per 1 cm voxel) is built and tested on a
    synthetic scanned room and run on the real file: 1.92M splats in 128 s on 4 CPUs, published as `lidar-office-8a`
-   and looked at in the viewer (`EXPERIMENTS.md`). Left: a walking route (the file has no scanner station a person
-   stood at), the phone file on a real phone, and wall crossings.
+   and looked at in the viewer (`EXPERIMENTS.md`). ~~The walking route and wall crossings~~ Done 2026-11-13, published
+   as **`lidar-office-8b`**, 8a left as it was (`EXPERIMENTS.md`). The grid is the scan's own returns
+   (`occupancy.grid_from_pointcloud`: 5 cm cells, 9,750 free, 7,461 blocked, 5,569 unknown) because the file's one
+   scan pose stands 5.8 m outside its own cloud and rays from it freed space through the walls; a walk of 15 points
+   and 8 tour keyframes runs the 6.46 m² of walker-width floor, and the walker held 16 headings into the walls for 5 s
+   from 5 starts at four frame patterns never entered a blocked cell (320 runs, 0). Places are measured, not invented:
+   the furniture here is one connected 9.8 m² group, so `places.json` is published empty with that reason in it. Left:
+   **the phone file on a real phone**, the only ship condition of phase 6 still unmeasured.
 9. **Mesh (2.4) and layout (2.5)**: built, tested on synthetic rooms, and **not good enough on a real twin**; both are
    opt-in (`--mesh tsdf`, `--dense-layout`) and neither is scored against a laser yet. On the chapel (`EXPERIMENTS.md`):
    the mesh's first run was simplified to 176 triangles; with that fixed it reaches its counts (298k and 20k, 100 s on
