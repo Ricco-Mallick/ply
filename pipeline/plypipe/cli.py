@@ -195,6 +195,8 @@ def build_parser() -> argparse.ArgumentParser:
     g.add_argument("--mesh", choices=["colmap", "tsdf"], default="colmap",
                    help="colmap (default): the mesh stage's COLMAP patch-match stereo and Poisson, mesh.ply. tsdf: export fuses the depth of its dense "
                         "pass into mesh.glb (about 300k triangles, vertex colours) and collision.glb (about 20k); needs a GPU and the dense pass")
+    g.add_argument("--mesh-keep-raw", action="store_true",
+                   help="--mesh tsdf: also save the extraction before anything is dropped or simplified, as mesh_raw.npz (hundreds of MB)")
     _add_rescale(sub)
     _add_priors(sub, r)
     lp = sub.add_parser("lidar", help="a laser scan (points .npz from scripts/lidar/inspect_e57.py, or a coloured .ply) as a twin: no training")

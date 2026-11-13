@@ -432,6 +432,7 @@ def _dense_occupancy(ctx: Ctx, ply: Path, holdout: int, aa: bool) -> dict:
         if ctx.opt("mesh") == "tsdf":
             import torch
             fusion = mesh_stage.Fusion("cuda" if torch.cuda.is_available() else "cpu")
+            fusion.keep_raw = bool(ctx.opt("mesh_keep_raw"))
         out = occupancy.from_depth(ctx, ply, holdout, aa, fusion=fusion)
     except Exception as e:
         out, fusion = {"used": "sparse", "why": f"failed: {str(e)[-160:]}"}, None

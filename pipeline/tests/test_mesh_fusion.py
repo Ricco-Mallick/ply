@@ -237,3 +237,20 @@ def test_a_mesh_that_is_a_tenth_of_its_target_or_a_fraction_of_the_rooms_is_not_
     assert rep["built"] is False and "extent" in rep["why"] and not (tmp_path / "mesh.glb").exists()
     rep = fused.finish(tmp_path, whole)
     assert rep["built"] is True and rep["denseSurfaceM2"] == 120.0 and (tmp_path / "mesh.glb").exists() and rep["specks"]["keptM2"] > 50
+
+
+def test_a_soup_of_crossing_faces_is_refused_and_the_raw_extraction_is_kept_on_request(fused, tmp_path):
+    rng = np.random.default_rng(3)
+    v = rng.uniform(0, 4, (1000, 3))
+    soup = rng.integers(0, 1000, (5700, 3))   # the chapel's first counted mesh: 5.7 triangles per vertex
+    sheet = np.array([[i, i + 1, i + 2] for i in range(0, 996, 1)])   # a strip: one triangle per vertex
+    assert "per vertex" in mesh.refusal(10 ** 6, v, soup, v, sheet, 5700, 990)
+    assert "collision mesh" in mesh.refusal(10 ** 6, v, sheet, v, soup, 990, 5700)
+    assert mesh.refusal(10 ** 6, v, sheet, v, sheet, 990, 990) is None
+    fused.keep_raw = True
+    try:
+        rep = fused.finish(tmp_path)
+    finally:
+        fused.keep_raw = False
+    raw = np.load(tmp_path / "mesh_raw.npz")
+    assert len(raw["faces"]) == rep["rawTriangles"] and raw["vertices"].shape[1] == 3 and len(raw["colours"]) == len(raw["vertices"])

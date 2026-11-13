@@ -176,6 +176,9 @@ MAX_WEIGHT = 64.0
 SPECK_M2 = 0.25            # a connected piece of surface under this (a 50 cm square) is a floater or a flake, not a wall, a pew or a step
 MIN_SHARE = 0.1            # a mesh under this share of its target, or under MIN_SPAN of the dense points' extent on any axis, is not shipped
 MIN_SPAN = 0.4
+# a surface has about two triangles per vertex. The chapel's first counted mesh had 5.7 (298,319 on 52,277 vertices, in 182,297 pieces
+# none larger than 261 triangles: a soup of crossing faces, 2026-11-13), which a count and an extent do not catch
+MAX_FACES_PER_VERTEX = 3.0
 CUBE = np.array([(0, 0, 0), (1, 0, 0), (1, 1, 0), (0, 1, 0), (0, 0, 1), (1, 0, 1), (1, 1, 1), (0, 1, 1)])
 TETS = [(0, 5, 1, 6), (0, 1, 2, 6), (0, 2, 3, 6), (0, 3, 7, 6), (0, 7, 4, 6), (0, 4, 5, 6)]
 
@@ -574,6 +577,7 @@ class Fusion:
         self.device, self.fixed, self.faces, self.collision, self.margin = device, voxel, faces, collision, margin
         self.tsdf: Tsdf | None = None
         self.views = 0
+        self.keep_raw = False  # export sets it for --mesh-keep-raw: the extraction is saved as mesh_raw.npz before anything is dropped
         self.t0 = time.time()
 
     def begin(self, views) -> None:
@@ -595,6 +599,8 @@ class Fusion:
             return {"built": False, "why": "no depth was fused"}
         v, c, f = ts.extract()
         raw = len(f)
+        if self.keep_raw:
+            np.savez(Path(out_dir) / "mesh_raw.npz", vertices=np.asarray(v, np.float32), faces=np.asarray(f, np.int32), colours=np.asarray(c, np.uint8))
         v, f, c, specks = drop_specks(v, f, c)
         mv, mf, mc = decimate(v, f, c, self.faces)
         cv, cf, _ = decimate(mv, mf, None, self.collision)
@@ -632,6 +638,10 @@ def refusal(have: int, mv, mf, cv, cf, faces: int, collision: int, reference=Non
         want = min(target, have)
         if got < MIN_SHARE * want:
             return f"the {name} has {got} triangles, under {MIN_SHARE:.0%} of its {want}"
+    for name, vv, ff in (("mesh", mv, mf), ("collision mesh", cv, cf)):
+        per = len(ff) / max(1, len(np.unique(ff)))
+        if per > MAX_FACES_PER_VERTEX:
+            return f"the {name} has {per:.1f} triangles per vertex, over {MAX_FACES_PER_VERTEX:.0f}: crossing faces, not a surface"
     if reference is not None and len(mv):
         span = (mv.max(0) - mv.min(0)) / np.maximum(reference["max"] - reference["min"], 1e-6)
         if span.min() < MIN_SPAN:
