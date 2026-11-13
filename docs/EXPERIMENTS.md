@@ -552,7 +552,40 @@ its metric depth to the solve's depth at the track points, then the median over 
 No run had kept the chapel's `database.db`. `pipeline/modal/sfm_match.py` made the features and matches again with
 the first job's settings (SIFT, sequential with loop detection): 1,236 frames, 9.1M keypoints, 15,760 pairs matched
 and 10,553 verified, 602 s of matching in 777 s on an L40S ($0.31), a 1.4 GB database saved beside the job. The
-incremental, hierarchical and keyframe solves all map this one database (results below when they land).
+incremental, hierarchical and keyframe solves all map this one database.
+
+### Phase 3: three solves of the chapel on one database (2026-11-13)
+
+`pipeline/modal/sfm_cpu.py`, 8 cores and 32 GiB each, one box per variant, launched together. ATE is against the
+solve `chapel-high-2` was trained on (a different run of the matcher, so not zero for anyone).
+
+| variant | solve min | × incremental | registered | reprojection px | ATE rmse / median cm | fell back | cost |
+|---|---:|---:|---:|---:|---:|---|---:|
+| incremental (1a, the reference) | 61.0 | 1.00 | 1,222 / 1,236 | 0.582 | 6.75 / 0.53 | – | $0.73 |
+| keyframes (1b) | 53.0 | 0.87 | 1,217 / 1,236 | 0.580 | 6.82 / 0.77 | no | $0.62 |
+| hierarchical (1g) | 58.8 | 0.96 | 1,222 / 1,236 | 0.582 | 6.75 / 0.54 | **yes, to incremental** | $0.70 |
+
+- **Keyframes (1b) is 13% faster, not 30%: dropped.** Its parts: 346 keyframes solved in 4.0 min, the other 871
+  frames registered in 18.2 min, and one final bundle adjustment of 30.5 min, which is where the saving went. It
+  registered 5 frames fewer (0.4%) and its median camera is 0.24 cm further from the reference.
+- **Hierarchical (1g) failed its quality check: dropped.** The clusters took 6.0 min and the merged bundle adjustment
+  18.0 min, 24 minutes in all, but the merged model had 1,191 frames and **15 jumps in the camera path** (the clusters
+  were not joined cleanly), so the stage solved incrementally again as designed (34.3 min) and shipped that.
+- **The boxes are not equal, and that is the largest effect measured here.** The same incremental solve of the same
+  database took 60.5 min on one 8-core box and 34.3 min on another (the hierarchical run's fallback): 1.76×. The
+  final bundle adjustment shows the same factor (18.0 min on that box, 30.5 min on the keyframes box). So a ratio
+  between two boxes is good to no better than that; within one box, hierarchical's 24 min against its own 34 min of
+  incremental is the only like-for-like figure, 0.70, and that variant failed on quality. The script records the CPU
+  model as "unknown" (Modal hides it), so a future comparison must run its variants one after another on one box.
+- **GPU bundle adjustment (1f): not available.** On 60 frames (`sfm_gpu_ba_check.py`, $0.03), `use_gpu` ran but
+  changed nothing: the solver stayed SuiteSparse on the CPU (19.5 s against 18.5 s, the same final cost), and the
+  CASPAR backend is not compiled into pycolmap-cuda12 4.2.1 ("built without CASPAR_ENABLED").
+- **Core count (1c) not run:** it is for a winner, there is none, and one 16-core run could not be told apart from
+  the 1.76× between boxes.
+
+**Phase 3 ends with nothing to ship beyond 1a**, which is already live (plan section 7: "or the variant is dropped").
+Both mappers stay in the code as opt-in (`--mapper hierarchical|keyframes`), with their fallback. Where the time
+is, for whoever returns to this: the final global bundle adjustment (18 to 30 min of a 53 to 61 min solve).
 
 ### Phase 2: the layout and the mesh from depth on the real chapel (2026-11-13)
 
@@ -563,6 +596,14 @@ First run (`q0a-layout`, export only, `--mesh tsdf`, L40S, $0.24): both new part
   duplicate triangles, which a noisy surface keeps producing at every cell size, so it ran to the coarsest cell.
   Fixed (distinct triangles, a speck is a piece under 0.25 m², a mesh under a tenth of its target is not written);
   on a 12.3M-triangle stand-in with 1 cm noise it now gives 298k and 19.9k triangles.
+- **Mesh, second run** (`q0a-mesh`, on an L4, the first chapel-size dense pass on one: 42 s fusing, 59 s meshing,
+  the walking grid unchanged at 16.35 m²): 298,319 and 19,976 triangles, 4.2 MB and 0.25 MB, 845 m² kept and 251 m²
+  dropped in 84,294 specks. The counts are met and **the mesh is not a surface**: 52,277 vertices under 298,319
+  triangles (5.7 per vertex where a surface has 2), 182,297 connected pieces, the largest of 261 triangles. Drawn
+  from the spawn point the altar and the arches are recognisable far away and the near walls are ragged sheets of
+  crossing triangles. Export now refuses a mesh over three triangles per vertex, and `--mesh-keep-raw` saves the
+  extraction for the next step (`q0a-meshraw`). **The TSDF mesh does not ship.** The plan foresaw this for 3b
+  ("depth from an unregularised splat is weakest exactly on plain walls") and names 3c and 3d as what follows.
 - **Layout:** 12 walls (the sparse shell has 6), discarded because two lifted windows were under 0.5 m. An opening
   that fails its own check is now dropped and the walls stand. Run again on the chapel's dense points on a CPU, it
   validates, and it is **worse than the sparse shell on this room**: both long sides are found, in fragments offset
