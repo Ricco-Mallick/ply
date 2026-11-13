@@ -51,6 +51,16 @@ def _stage_fn(name: str):
     raise KeyError(name)
 
 
+def _add_rescale(sub) -> None:
+    r = sub.add_parser("rescale", help="rescale a finished twin (a published folder or a job folder) to a measured length, without retraining")
+    r.add_argument("folder", type=Path, help="the twin folder: scene.json and the files next to it")
+    r.add_argument("--factor", type=float, help="multiply every length in the twin by this")
+    r.add_argument("--known", type=float, metavar="M_TRUE", help="a length in metres, measured in the room")
+    r.add_argument("--measured", type=float, metavar="M_TWIN", help="the same length measured in the twin (factor = known / measured)")
+    r.add_argument("--force", action="store_true", help="allow a factor outside 0.2 to 5")
+    r.add_argument("--dry-run", action="store_true", help="say what would change; write nothing")
+
+
 def build_parser() -> argparse.ArgumentParser:
     ap = argparse.ArgumentParser(prog="plypipe", description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--version", action="version", version=__version__)
@@ -157,11 +167,15 @@ def build_parser() -> argparse.ArgumentParser:
                         "capture positions are walkable on it. The default where a GPU can render")
     g.add_argument("--no-dense-occupancy", dest="dense_occupancy", action="store_false",
                    help="export: keep the walking grid from the camera solve")
+    _add_rescale(sub)
     return ap
 
 
 def main(argv: list[str] | None = None) -> int:
     a = build_parser().parse_args(argv)
+    if a.cmd == "rescale":
+        from plypipe import rescale
+        return rescale.main(a)
     out: Path = a.out
     out.mkdir(parents=True, exist_ok=True)
     log = Log(out, quiet=a.quiet)
