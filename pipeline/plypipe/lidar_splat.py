@@ -537,8 +537,19 @@ SKIPPED = ("viewer evaluation and the cleanup choices measured with it (held-out
            "the walking grid from depth (a renderer and photos: the grid is the scan's own, see `occupancy`)")
 
 
+def _peak_mb() -> int:
+    import resource
+    return resource.getrusage(resource.RUSAGE_SELF).ru_maxrss // 1024  # KiB on Linux
+
+
 def run_stage(ctx: Ctx, source: Path) -> dict:
     t0 = time.time()
+    phases: dict[str, float] = {}
+
+    def lap(name: str) -> None:
+        phases[name] = round(time.time() - t0, 1)
+        ctx.log.emit("lidar", "progress", f"{name} done at {phases[name]} s, peak {_peak_mb()} MB")
+
     d = load_points(source)
     pts, cols, stations = d["points"], d["colors"], d["stations"]
     n_in = len(pts)
@@ -552,15 +563,21 @@ def run_stage(ctx: Ctx, source: Path) -> dict:
     centres, colours, voxel = thin_to_cap(scene_pts, cols, voxel0, cap)
     ctx.log.emit("lidar", "progress", f"{len(centres)} splats at a {voxel * 100:.2f} cm voxel" + ("" if voxel == voxel0 else f" (coarsened from {voxel0 * 100:.2f} cm to stay under {cap})"))
     normals, axis, spacing, nbr = local_frames(centres, k=int(ctx.opt("k", NEIGHBOURS)), sigma=0.5 * voxel)
+    lap("frames")
     normals = orient(centres, normals, st, nbr)
+    lap("orient")
     sh = int(ctx.opt("sh_degree", 3))
     write_ply(ctx.out / "scene.ply", disks(centres, colours, normals, axis, spacing, voxel, sh))
+    lap("ply")
     f = fscore(centres, scene_pts, 0.01)
+    lap("fscore")
     splat_info = {"source": Path(source).name, "points": n_in, "splats": len(centres), "voxelM": round(voxel, 5), "voxelRequestedM": voxel0, "capSplats": cap,
                   "origin": np.asarray(d["origin"]).tolist(), "shDegree": sh}
     out = products(ctx, scene_pts, st, T, info, splat_info)
+    lap("products")
     return {**splat_info, "up": info["up"], "upEvidence": info["upEvidence"], "yawDeg": info["yawDeg"], "floorTiltDeg": info["floorTiltDeg"],
-            "fScore": f, "coarsened": voxel > voxel0, "skipped": list(SKIPPED), **out, "seconds": round(time.time() - t0, 1)}
+            "fScore": f, "coarsened": voxel > voxel0, "skipped": list(SKIPPED), **out, "seconds": round(time.time() - t0, 1),
+            "phaseSeconds": phases, "peakMB": _peak_mb()}
 
 
 def run(ctx: Ctx, source: Path) -> dict:

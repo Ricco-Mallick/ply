@@ -9,13 +9,20 @@ Both steps start one CPU function with .spawn() and return: read the result from
 Volume (lidar/office-1/office-1.e57); the second step and `plypipe lidar` never download it again. The timeouts are the
 stop-loss (docs/MISTAKES.md): a function that runs into one is killed and bills its whole timeout at most.
 
-`inspect` reads headers and the first 200k points of each scan (never a whole scan): 2 CPUs, 8 GB, 1800 s. The download
-and the header read take minutes; about $0.02.
+No secret is needed: the Drive link is public (scripts/lidar/ingest_e57.py used it the same way; the HF READ token in ply-hf
+is not touched). The only Volume is ply-bench.
+
+`inspect` reads headers and the first 200k points of each scan (never a whole scan): 2 CPUs, 8 GB (a 2M-point chunk and the
+header tree are all it holds), 900 s. Estimate 10 minutes, nearly all of it the Drive download (a few GB at 5 to 10 MB/s) and
+the headers; 1.5 x that is the timeout. About $0.02, at most $0.03.
 
 `export_points` streams every scan in 2M-point chunks into a hash of 1 cm voxels (the mean position and colour of what
-falls in each), so the 184.6 M points are never in memory at once, only the voxels: at most ~30 M of them at 56 bytes,
-about 2 GB, three times that while a chunk is merged in. 4 CPUs, 16 GB, 3600 s; the merge sorts, which is the cost.
-Expected 5 to 15 minutes and under $0.15; the timeout caps it at $0.35.
+falls in each), so the 184.6 M points are never in memory at once, only the voxels: at most ~30 M of them at 64 bytes
+(key, count, xyz sum, rgb sum), about 2 GB, three times that while a chunk is merged in (measured here: 3.0 GB peak at 15 M
+voxels, one merge 5 s, so about 6 GB at 30 M and 8 s a merge). 4 CPUs, 16 GB, 1800 s. Estimate 20 minutes: 93 merges at
+5 to 8 s is up to 12 minutes, the read of 184.6 M points at 2 to 5 M points/s is 1 to 2 more, a first download is 5 to 8;
+1.5 x that is the timeout. About $0.10 ($0.000088 a second for 4 CPUs and 16 GB), the timeout caps it at $0.16. The log
+prints the points read and the voxels after every chunk, so a run that is too slow shows its rate within a minute.
 """
 import json
 import os
@@ -165,7 +172,7 @@ def image_summary(node, scans):
     return out
 
 
-@app.function(image=image, cpu=2, memory=8192, timeout=1800, volumes={"/vol": vol})
+@app.function(image=image, cpu=2, memory=8192, timeout=900, volumes={"/vol": vol})
 def inspect():
     import numpy as np
     import pye57
@@ -239,7 +246,7 @@ def merge(acc, keys, pts, rgb):
     return k[first], fold(acc[1], cnt), fold(acc[2], s), fold(acc[3], c)
 
 
-@app.function(image=image, cpu=4, memory=16384, timeout=3600, volumes={"/vol": vol})
+@app.function(image=image, cpu=4, memory=16384, timeout=1800, volumes={"/vol": vol})
 def export_points(voxel: float = 0.01):
     """Every scan in one frame (the file's global frame, minus its own centre), thinned to one point per `voxel`, as
     lidar/office-1/points-<n>cm.npz: points float32 [N,3] and colours uint8 [N,3], metres, relative to `origin` (float64);
