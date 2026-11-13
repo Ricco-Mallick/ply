@@ -227,3 +227,11 @@ def test_big_lone_splats_are_surfaces_not_floaters(tmp_path):
         f.write(header.encode()); np.asarray(rows, np.float32).tofile(f)
     stats = clean.floater_filter(tmp_path / "in.ply", tmp_path / "out.ply")
     assert stats["kept"] == 2 and stats["removedIsolated"] == 1
+
+
+def test_the_run_parser_accepts_no_clean():
+    """The export has always read `no_clean`; the run parser never offered it, so cleanup could not be turned off."""
+    from plypipe.cli import build_parser
+    args = build_parser().parse_args(["run", "in", "--out", "work/x", "--no-clean"])
+    assert args.no_clean is True, "plypipe run --no-clean must reach the export stage"
+    assert build_parser().parse_args(["run", "in", "--out", "work/x"]).no_clean is False
