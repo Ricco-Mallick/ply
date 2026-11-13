@@ -426,17 +426,38 @@ def _dense_occupancy(ctx: Ctx, ply: Path, holdout: int, aa: bool) -> dict:
     unless fewer capture positions are walkable on it than on the camera solve's. Whatever goes wrong in it, the export
     stands with the grid it had; without a GPU nothing is built and the report says so."""
     t0 = time.time()
+    fusion = None
     try:
-        from plypipe.stages import occupancy
-        out = occupancy.from_depth(ctx, ply, holdout, aa)
+        from plypipe.stages import mesh as mesh_stage, occupancy
+        if ctx.opt("mesh") == "tsdf":
+            import torch
+            fusion = mesh_stage.Fusion("cuda" if torch.cuda.is_available() else "cpu")
+        out = occupancy.from_depth(ctx, ply, holdout, aa, fusion=fusion)
     except Exception as e:
-        out = {"used": "sparse", "why": f"failed: {str(e)[-160:]}"}
+        out, fusion = {"used": "sparse", "why": f"failed: {str(e)[-160:]}"}, None
+    if fusion is not None and fusion.tsdf is not None and fusion.views:
+        out["tsdfMesh"] = _tsdf_mesh(ctx, fusion)
     if out["used"] == "depth":
         ctx.log.emit("export", "progress", f"walking grid from depth: {out['views']} views, capture positions {out['walk']['cameras'] or 0:.0%} "
                      f"walkable, {out['walk']['standableM2']} m2 to stand on ({out['sparseWalk']['standableM2']} m2 on the sparse grid)")
     else:
         ctx.log.emit("export", "warn", f"walking grid from depth not used: {out['why']}")
     return {**out, "seconds": round(time.time() - t0, 1)}
+
+
+def _tsdf_mesh(ctx: Ctx, fusion) -> dict:
+    """mesh.glb and collision.glb from the depth the dense pass just fused (stages/mesh.py), recorded in scene.json. The splat
+    export stands whatever happens here."""
+    from plypipe.stages import mesh as mesh_stage
+    try:
+        out = mesh_stage.record(ctx, fusion.finish(ctx.out))
+    except Exception as e:
+        ctx.log.emit("export", "warn", f"tsdf mesh not built: {str(e)[-160:]}")
+        return {"built": False, "why": f"failed: {str(e)[-160:]}"}
+    if out.get("built"):
+        ctx.log.emit("export", "progress", f"tsdf mesh: {out['triangles']} triangles at {out['voxelCm']} cm, collision {out['collisionTriangles']}, "
+                     f"{out['volumeMB']} MB volume, {out['fuseSeconds']} s fusing, {out['meshSeconds']} s meshing")
+    return out
 
 
 def _dense_layout(ctx: Ctx) -> dict | None:

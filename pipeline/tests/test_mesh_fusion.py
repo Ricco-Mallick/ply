@@ -103,3 +103,29 @@ def test_the_voxel_is_chosen_by_the_size_of_the_scene_and_a_chapel_fits_in_memor
     chapel = mesh.choose_voxel((25, 12, 8))
     assert 0.02 <= chapel <= 0.03
     assert mesh.choose_voxel((200, 40, 30)) == 0.04
+
+
+def test_export_builds_the_tsdf_mesh_from_its_own_dense_pass_only_when_asked(tmp_path, monkeypatch):
+    import json
+    from test_nav import job, ray_cast
+    from plypipe.stages import export
+
+    def render(ply, views, antialiased=True, colour=False):
+        for v in ray_cast(ply, views, antialiased):
+            v.rgb = np.broadcast_to(np.array(COLOUR, np.uint8), (v.height, v.width, 3)).copy() if colour else None
+            yield v
+
+    monkeypatch.setattr(dense, "render_views", render)
+    (tmp_path / "off").mkdir()
+    ctx = job(tmp_path / "off", floor_points=200)
+    assert "tsdfMesh" not in export._dense_occupancy(ctx, tmp_path / "off" / "scene_clean.ply", 30, True) and not (tmp_path / "off" / "mesh.glb").exists()
+    monkeypatch.setattr(mesh, "choose_voxel", lambda extent, **kw: 0.04)            # a coarse voxel keeps this test short
+    (tmp_path / "on").mkdir()
+    ctx = job(tmp_path / "on", floor_points=200)
+    ctx.opts["mesh"] = "tsdf"
+    rep = export._dense_occupancy(ctx, tmp_path / "on" / "scene_clean.ply", 30, True)
+    got = rep["tsdfMesh"]
+    assert got["built"] and got["voxelCm"] == 4.0 and got["triangles"] <= mesh.MESH_FACES * 1.05 and rep["used"] == "depth"
+    assert trimesh.load(tmp_path / "on" / "mesh.glb", force="mesh").vertices.shape[0] > 1000 and (tmp_path / "on" / "collision.glb").exists()
+    scene = json.loads((tmp_path / "on" / "scene.json").read_text())
+    assert scene["mesh"]["file"] == "mesh.glb" and scene["mesh"]["source"] == "tsdf" and scene["mesh"]["collision"] == "collision.glb"
