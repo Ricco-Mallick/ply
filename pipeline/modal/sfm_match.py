@@ -36,6 +36,7 @@ from ply_modal import image as worker_image  # noqa: E402
 from plypipe import evalrun, solvebench  # noqa: E402
 
 image = worker_image.add_local_file(HERE / "ply_modal.py", "/root/ply_modal.py")
+GPUS = ["L4", "L40S"]  # an L40S when Modal has no L4 free (2026-11-13: an L4-only launch waited 12 minutes without starting)
 app = modal.App("ply-sfm-match", image=image)
 vol = modal.Volume.from_name("ply-bench")
 VOL = Path("/vol")
@@ -117,7 +118,7 @@ def run_match(src: Path, force: bool, gpu: dict, extra: str = "", started: float
     return record
 
 
-@app.function(gpu="L4", cpu=solvebench.MATCH_CORES, memory=solvebench.MEMORY_GIB[solvebench.MATCH_CORES] * 1024,
+@app.function(gpu=GPUS, cpu=solvebench.MATCH_CORES, memory=solvebench.MEMORY_GIB[solvebench.MATCH_CORES] * 1024,
               timeout=solvebench.match_deadline_min() * 60, volumes={"/vol": vol})
 def match(job: dict) -> dict:
     started = time.time()
