@@ -54,7 +54,7 @@ THIN = 0.1            # thickness of a disk as a share of its in-plane scale
 NEIGHBOURS = 16
 EYE = 1.6             # spawn and path height, as stages/align.py
 PRIOR_Z = 1.25        # E57's world frame is +Z up: another axis must score this much more to win
-SUMMARY = "lidar"
+STAGE = "lidar"
 
 
 def splat_cap() -> int:
@@ -497,8 +497,7 @@ def products(ctx: Ctx, pts: np.ndarray, stations: np.ndarray | None, T: np.ndarr
         rays = None
     # build_grid frees a corridor along its camera path, and a scanner's stations are not a walk: a line between two of them
     # would cut through a table. Each station goes in as its own 20 cm stub, which path_segments never joins to the next
-    stubs = np.concatenate([cams + d for d in ((-0.1, 0, 0), (0, 0, 0), (0.1, 0, 0))]) if len(cams) else cams
-    stubs = stubs.reshape(3, len(cams), 3).transpose(1, 0, 2).reshape(-1, 3) if len(cams) else stubs
+    stubs = np.stack([cams + d for d in ((-0.1, 0, 0), (0, 0, 0), (0.1, 0, 0))], 1).reshape(-1, 3)
     grid, meta = occupancy.build_grid(pts, stubs, cell=cell, rays=rays, min_pts=2)
     meta["source"] = "lidar"
     if len(cams):
@@ -568,7 +567,7 @@ def run(ctx: Ctx, source: Path) -> dict:
     """The whole twin: this stage, then the export stage with the options a scan can use. Returns the export report."""
     from plypipe.stages import export
     rep = run_stage(ctx, source)
-    mark_done(ctx, SUMMARY, rep)
+    mark_done(ctx, STAGE, rep)
     if ctx.opt("no_export"):
         return rep
     # splat-transform's value filters would be probed against a model whose opacity and scale are constants: skip the two passes
