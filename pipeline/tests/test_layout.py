@@ -124,6 +124,30 @@ def test_a_door_detected_on_a_solid_wall_is_rejected(two_rooms):
     assert out["rejected"] == [{"cls": "door", "reason": "solid wall", "fill": out["rejected"][0]["fill"]}] and out["rejected"][0]["fill"] > 0.9
 
 
+def test_a_window_that_fails_its_own_check_is_dropped_and_counted_and_the_walls_stand(two_rooms, tmp_path):
+    """The chapel's 12 walls were discarded for two windows of 0.44 x 1.39 m and 0.73 x 0.15 m."""
+    pts, nrm, path = two_rooms
+    good = {"cls": "window", "p": [2.0, 1.5, 0.06], "half": [0.5, 0.4, 0.05], "views": 4}
+    narrow = {"cls": "window", "p": [5.0, 1.5, 0.06], "half": [0.22, 0.7, 0.05], "views": 4}
+    low = {"cls": "window", "p": [7.0, 1.5, 0.06], "half": [0.37, 0.075, 0.05], "views": 4}
+    out = shell.layout(pts, nrm, path, detections=[good, narrow, low])
+    assert out["validation"]["ok"], out["validation"]
+    assert [o["kind"] for o in out["openings"]].count("window") == 1 and len(out["walls"]) == len(shell.layout(pts, nrm, path)["walls"])
+    assert sorted(d["reason"] for d in out["droppedOpenings"]) == ["0.44 x 1.40 m, under 0.5 m", "0.74 x 0.15 m, under 0.5 m"]
+    ctx = write_job(tmp_path, pts, nrm, nav_model())
+    (tmp_path / "places.json").write_text(json.dumps({"places": [{"id": f"w{i}", "p": d["p"], "ai": {"cls": "window", "half": d["half"], "frames": 4}} for i, d in enumerate([good, narrow, low])]}))
+    got = export._dense_layout(ctx)
+    assert got["used"] == "dense" and got["windows"] == 1 and [d["cls"] for d in got["droppedOpenings"]] == ["window", "window"]
+
+
+def test_a_door_on_a_solid_wall_is_still_rejected_as_an_opening_not_kept(box_room):
+    pts, nrm, path = box_room
+    out = shell.layout(pts, nrm, path)
+    door = {"kind": "door", "wall": 0, "u": 2.0, "width": 0.9, "sill": 0.0, "height": 2.0}
+    kept, dropped = shell.prune_openings([door], out["walls"], pts, out["floorY"])
+    assert kept == [] and dropped[0]["cls"] == "door" and "solid wall" in dropped[0]["reason"]
+
+
 def test_validation_fails_a_door_drawn_on_a_solid_wall(box_room):
     pts, nrm, path = box_room
     out = shell.layout(pts, nrm, path)
@@ -174,7 +198,7 @@ def test_a_long_wall_a_few_degrees_off_is_left_alone_and_a_short_one_is_turned()
 # ------------------------------------------------------------------ export
 
 def write_job(tmp_path, pts, nrm, path_model, with_sparse=True):
-    ctx = Ctx(out=tmp_path, log=Log(tmp_path, quiet=True), opts={})
+    ctx = Ctx(out=tmp_path, log=Log(tmp_path, quiet=True), opts={"dense_layout": True})
     np.savez_compressed(tmp_path / dense.FILE, points=pts.astype(np.float32), normals=nrm.astype(np.float16), voxel=np.float32(0.02))
     colmap_txt.write_model(path_model, ctx.data_dir / "sparse" / "0")
     if with_sparse:
@@ -212,6 +236,8 @@ def test_export_leaves_a_job_without_dense_points_or_with_the_option_off_exactly
     assert export._dense_layout(ctx) is None and (tmp_path / "shell.json").read_text() == text
     (tmp_path / "elsewhere.npz").rename(tmp_path / dense.FILE)
     ctx.opts["dense_layout"] = False
+    assert export._dense_layout(ctx) is None and (tmp_path / "shell.json").read_text() == text and not (tmp_path / "shell_dense.json").exists()
+    del ctx.opts["dense_layout"]   # the dense layout is opt-in until it has been scored against a laser reference
     assert export._dense_layout(ctx) is None and (tmp_path / "shell.json").read_text() == text and not (tmp_path / "shell_dense.json").exists()
 
 
