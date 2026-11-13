@@ -12,11 +12,12 @@ It runs `python -m plypipe lidar` from the repository's own plypipe folder, so t
 file (scene_lite.spz, 800 k splats) is merged on the CPU by lidar_splat: splat-transform's own `-d` cut needs a WebGPU adapter
 and fails on a container with no GPU (tests/test_export.py's phone-file test fails the same way on a CPU machine). The work
 is capped at the High preset's 2 M splats: an office thinned to 1 cm has 5 to 30 M points, coarsened to about 1.5 to 3 cm.
-Measured on 2 contended CPUs here, per million splats: 20 s for local planes, 165 s for the scanner-visibility test of the
-normals (the cost, and it grows with the number of stations), 5 s for the rest of the stage, 0.55 GB of memory over a 0.6 GB
-base; the 30 M input points add about 3 GB while they are thinned. Export (three splat-transform runs) is 1 to 2 minutes
-at 2 M splats. So 2 M splats: 12 minutes and 2 to 5 GB. Estimate 20 minutes with the read of the npz and a slower machine;
-1.5 x that is the 1800 s timeout. 4 CPUs, 12 GB: $0.000079 a second, about $0.09 expected, $0.14 at the timeout.
+Measured on this 2-CPU machine, shared with other jobs, on 2.7 M synthetic points with 18 stations at the 2 M cap: 47 s to
+read, align and thin and to find local planes, 238 s for the scanner-visibility test of the normals (the cost; it grows with
+the splat count and the number of stations), 11 s for the rest of the stage, then export (three splat-transform runs) about
+35 s: 5.5 minutes in all, 1.5 GB peak. A real 30 M-point npz adds about 3 GB and 2 minutes while it is thinned and held
+against the splats for the F-score. Estimate 20 minutes for 2 M splats and an unknown number of stations; 1.5 x that is the
+1800 s timeout. 4 CPUs, 12 GB: $0.000079 a second, about $0.05 expected, $0.14 at the timeout.
 """
 import json
 import os
