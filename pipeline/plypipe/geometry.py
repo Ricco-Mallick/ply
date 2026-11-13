@@ -317,8 +317,9 @@ def nn_distance(points: np.ndarray, ref: np.ndarray, chunk: int = 4096) -> np.nd
         return cKDTree(ref).query(points, workers=-1)[0]
     except ImportError:
         import torch
-        r = torch.as_tensor(np.ascontiguousarray(ref, dtype=np.float32))
-        out = [torch.cdist(torch.as_tensor(np.ascontiguousarray(points[i:i + chunk], dtype=np.float32)), r).min(1).values.numpy()
+        dev = "cuda" if torch.cuda.is_available() else "cpu"
+        r = torch.as_tensor(np.ascontiguousarray(ref, dtype=np.float32), device=dev)
+        out = [torch.cdist(torch.as_tensor(np.ascontiguousarray(points[i:i + chunk], dtype=np.float32), device=dev), r).min(1).values.cpu().numpy()
                for i in range(0, len(points), chunk)]
         return np.concatenate(out).astype(np.float64) if out else np.zeros(0)
 

@@ -218,3 +218,38 @@ def test_reference_folder_loads_what_the_seed_writes(tmp_path):
     np.save(tmp_path / "ref_points.npy", np.zeros((4, 3), np.float32))
     ref = mushroom.load_reference(tmp_path)
     assert ref["names"] == ["frame_00001"] and ref["centres"].shape == (1, 3) and ref["points"].shape == (4, 3)
+
+
+def test_twin_numbers_index_the_input_folder_not_the_posed_frames():
+    posed = ["frame_00001", "frame_00003", "frame_00004"]  # frame_00002 is in the folder but has no pose
+    rt, rr = mushroom.match(["000000.jpg", "000001.jpg", "000002.jpg", "000003.jpg"], posed, ["frame_00001", "frame_00002", "frame_00003", "frame_00004"])
+    assert rt.tolist() == [0, 2, 3] and rr.tolist() == [0, 1, 2]
+
+
+def test_archive_members_go_where_the_seed_needs_them():
+    t = mushroom.member_target
+    base = "room_datasets/honka/iphone/long_capture/"
+    assert t("honka", base + "images/frame_00244.jpg") == ("in", "frame_00244.jpg")
+    assert t("honka", base + "transformations_colmap.json") == ("raw", "transformations_colmap.json")
+    assert t("honka", "room_datasets/honka/gt_pd.ply") == ("raw", "gt_pd.ply") and t("honka", "room_datasets/honka/icp_iphone.json") == ("raw", "icp_iphone.json")
+    for skipped in (base + "depth/frame_00001.png", base + "polycam_mesh/textured.obj", base + "polycam_pointcloud.ply",
+                    "room_datasets/honka/iphone/short_capture/images/frame_00001.jpg", base + "images/", "room_datasets/kokko/gt_pd.ply"):
+        assert t("honka", skipped) is None
+
+
+def test_reference_is_built_from_the_pose_files_alignment_and_scan(tmp_path):
+    rng = np.random.default_rng(9)
+    c2w = walk(40)
+    s, R, t = random_similarity(rng, 1.0)
+    to_scan = np.eye(4)
+    to_scan[:3, :3], to_scan[:3, 3] = R, t
+    in_pose_frame = np.linalg.inv(to_scan)[None] @ c2w  # the cameras as the pose file stores them
+    (tmp_path / "transformations.json").write_text(json.dumps(dataset_json(in_pose_frame)))
+    (tmp_path / "icp_iphone.json").write_text(json.dumps({"gt_transformation": np.linalg.inv(to_scan).ravel().tolist()}))  # stored the other way round
+    scan = rng.uniform(0, 1, (30000, 3)) * ROOM
+    meta, cloud = mushroom.build_reference({"transformations.json": tmp_path / "transformations.json"}, tmp_path / "icp_iphone.json", scan,
+                                           [f"frame_{i + 1:05d}" for i in range(40)] + ["frame_00099"], cell=0.1)
+    assert meta["direction"]["direction"] == "inverted" and meta["direction"]["confident"] and meta["poses"] == "transformations.json"
+    assert np.allclose(np.array(meta["centres"]), c2w[:, :3, 3], atol=1e-4)
+    assert len(cloud) < len(scan) and meta["inputNames"][-1] == "frame_00099"
+    json.dumps(meta)  # plain numbers only, ready for meta.json

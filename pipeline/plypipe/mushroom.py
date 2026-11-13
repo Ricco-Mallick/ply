@@ -28,6 +28,41 @@ from plypipe import geometry
 
 GL_TO_CV = np.diag([1.0, -1.0, -1.0, 1.0])  # camera axes: OpenGL (y up, z back) -> COLMAP/OpenCV (y down, z forward)
 
+# The two rooms (Zenodo API records read 2026-11-13, licence CC-BY-4.0 on all). The four smallest iPhone downloads are koivu (146.6 MB,
+# 294 posed frames: under 300), honka (170.7 MB, 334), kokko (181.4 MB, 348) and coffee_room (183.1 MB, 388). kokko is passed over: its
+# 133 ms exposure blurs the frames (median Laplacian variance 94 against honka's 574 and coffee_room's 397 on 8 frames each).
+# honka is the plain room (6.1 x 3.9 x 2.3 m); coffee_room (6.3 x 5.0 x 3.1 m) shows a door and a folding partition in the one frame
+# looked at, so it is taken as the room with a way into a second space (not checked against the laser scan).
+ZENODO = "https://zenodo.org/api/records/{record}/files/{name}/content"
+ROOMS: dict[str, dict] = {
+    "honka": {"iphone": {"record": 10230733, "name": "honka_iphone.tar.gz", "bytes": 170_700_232, "md5": "f1ef5f46cd19ad0219f68d74758acf17"},
+              "scan": {"record": 10222321, "name": "honka_mesh_pd.tar.gz", "bytes": 239_649_902, "md5": "75091793bf13919cb61e346300e3f828"},
+              "posedFrames": 334, "sizeM": (6.1, 3.9, 2.3)},
+    "coffee_room": {"iphone": {"record": 10230733, "name": "coffee_room_iphone.tar.gz", "bytes": 183_080_957, "md5": "cb467b3ad18d8f2c83dbf97a486d378b"},
+                    "scan": {"record": 10222321, "name": "coffee_room_mesh_pd.tar.gz", "bytes": 288_148_502, "md5": "d051bb90179d53374c1bb0c6ec4b0745"},
+                    "posedFrames": 388, "sizeM": (6.3, 5.0, 3.1)},
+}
+
+
+def archive_url(entry: dict) -> str:
+    return ZENODO.format(record=entry["record"], name=entry["name"])
+
+
+def member_target(room: str, member: str) -> tuple[str, str] | None:
+    """Where a member of a room's archives goes: ("in", name) for a long-capture photo, ("raw", name) for the pose files, the test split,
+    and the scan's cloud, mesh and alignment; None for everything else (depth, the short capture, Polycam's own mesh and cloud)."""
+    parts = member.strip("/").split("/")
+    if len(parts) < 3 or parts[0] != "room_datasets" or parts[1] != room:
+        return None
+    rest, name = parts[2:], parts[-1]
+    if rest[:3] == ["iphone", "long_capture", "images"] and len(rest) == 4 and name.lower().endswith(".jpg"):
+        return "in", name
+    if rest[:2] == ["iphone", "long_capture"] and len(rest) == 3 and name in ("transformations.json", "transformations_colmap.json", "test.txt"):
+        return "raw", name
+    if len(rest) == 1 and name in ("gt_pd.ply", "gt_mesh.ply", "icp_iphone.json"):
+        return "raw", name
+    return None
+
 
 # ------------------------------------------------------------------ the dataset's files
 
@@ -157,24 +192,26 @@ def scale_error_pct(sim: Similarity) -> float:
     return float((1.0 / sim.scale - 1.0) * 100.0)
 
 
-def match(twin_names: list[str], reference_names: list[str]) -> tuple[np.ndarray, np.ndarray]:
+def match(twin_names: list[str], reference_names: list[str], input_names: list[str] | None = None) -> tuple[np.ndarray, np.ndarray]:
     """Row numbers of the twin's cameras and of the reference's that are the same frame. The pipeline renumbers a folder of photos
-    000000.jpg, 000001.jpg ... in name order (`input_order`), so a twin name's number indexes the sorted reference names; a name in
-    the reference's own style (frame_00012) matches by name."""
+    000000.jpg, 000001.jpg ... in name order (`input_order`), so a twin name's number indexes the sorted names of the folder it was
+    given (`input_names`, default the reference's own: the folder may hold frames the reference has no pose for); a name in the
+    reference's own style (frame_00012) matches by name."""
     ref = {n: i for i, n in enumerate(reference_names)}
-    order = input_order(reference_names)
+    order = input_order(input_names if input_names is not None else reference_names)
     rows_t, rows_r = [], []
     for k, name in enumerate(twin_names):
         stem = Path(name).stem
         if stem in ref:
             rows_t.append(k), rows_r.append(ref[stem])
-        elif stem.isdigit() and int(stem) < len(order):
+        elif stem.isdigit() and int(stem) < len(order) and order[int(stem)] in ref:
             rows_t.append(k), rows_r.append(ref[order[int(stem)]])
     return np.array(rows_t, int), np.array(rows_r, int)
 
 
-def match_and_fit(twin_names: list[str], twin_centres: np.ndarray, reference_names: list[str], reference_centres: np.ndarray) -> Similarity:
-    rt, rr = match(twin_names, reference_names)
+def match_and_fit(twin_names: list[str], twin_centres: np.ndarray, reference_names: list[str], reference_centres: np.ndarray,
+                  input_names: list[str] | None = None) -> Similarity:
+    rt, rr = match(twin_names, reference_names, input_names)
     if len(rt) < 4:
         raise ValueError(f"only {len(rt)} of the twin's {len(twin_names)} cameras match a reference frame")
     return fit_similarity(np.asarray(twin_centres)[rt], np.asarray(reference_centres)[rr])
@@ -247,12 +284,36 @@ def read_twin_cameras(sparse_dir: str | Path) -> tuple[list[str], np.ndarray]:
     return [im.name for im in ims], centres
 
 
+def build_reference(pose_files: dict[str, Path], alignment: Path, scan: np.ndarray, input_names: list[str], cell: float = 0.02,
+                    limit: int = 1_500_000) -> tuple[dict, np.ndarray]:
+    """What a run is scored against, from the dataset's files: the laser cloud thinned to one point per `cell` metres, and for the pose
+    file whose cameras sit nearest the scan (honka and kokko have two: ARKit's and COLMAP's, in one frame) their names and centres in
+    the scan frame, with how the alignment was oriented. Returns (meta for meta.json, the thinned cloud)."""
+    cloud = thin(np.asarray(scan, np.float32), cell, limit)
+    T = read_alignment(alignment)
+    tried = []
+    for label, path in pose_files.items():
+        poses = read_poses(path)
+        to_scan, info = orient_alignment(T, poses.c2w[:, :3, 3], cloud)
+        aligned = scan_frame_poses(poses, to_scan)
+        centres = aligned.c2w[:, :3, 3]
+        tried.append({"file": label, "frames": len(poses.names), "medianToScanM": round(_nn_median(centres, cloud), 3), **info,
+                      "names": poses.names, "centres": centres})
+    pick = min(tried, key=lambda r: r["medianToScanM"])
+    meta = {"poses": pick["file"], "names": pick["names"], "centres": np.round(pick["centres"], 5).tolist(), "inputNames": sorted(input_names),
+            "direction": {k: pick[k] for k in ("direction", "medianToScanAsStoredM", "medianToScanInvertedM", "confident")},
+            "candidates": [{k: v for k, v in r.items() if k not in ("names", "centres")} for r in tried],
+            "scanPoints": int(len(cloud)), "cellM": cell, "alignment": T.tolist()}
+    return meta, cloud
+
+
 def load_reference(folder: str | Path) -> dict:
-    """What mushroom_seed.py leaves in <room>/reference: meta.json (frame names, alignment, direction), poses.json, ref_points.npy (scan
-    cloud in the scan frame) and the aligned camera centres, all small."""
+    """What mushroom_seed.py leaves in <room>/reference: meta.json (frame names and scan-frame centres, the input folder's names, how the
+    alignment was oriented) and ref_points.npy, the thinned scan cloud."""
     folder = Path(folder)
     meta = json.loads((folder / "meta.json").read_text())
-    return {"meta": meta, "names": meta["names"], "centres": np.array(meta["centres"], float), "points": np.load(folder / "ref_points.npy")}
+    return {"meta": meta, "names": meta["names"], "inputNames": meta.get("inputNames"), "centres": np.array(meta["centres"], float),
+            "points": np.load(folder / "ref_points.npy")}
 
 
 def score_job(job: str | Path, reference: dict, splat_alpha: float = 0.5, max_twin: int = 400_000) -> dict:
@@ -260,9 +321,10 @@ def score_job(job: str | Path, reference: dict, splat_alpha: float = 0.5, max_tw
     well the splat's centres lie on the scan (precision and recall at 5 and 10 cm, chamfer), in the twin's own frame."""
     job = Path(job)
     names, centres = read_twin_cameras(job / "data" / "sparse" / "0")
-    sim = match_and_fit(names, centres, reference["names"], reference["centres"])
+    sim = match_and_fit(names, centres, reference["names"], reference["centres"], reference.get("inputNames"))
     out = {"scaleErrorPct": round(scale_error_pct(sim), 2), "scale": round(sim.scale, 4), "cameras": {"twin": len(names), "matched": sim.n,
-           "inliers": int(sim.inliers.sum()), "rmsM": round(sim.rms, 3), "medianM": round(sim.median, 3)}, "alignment": reference["meta"].get("direction")}
+           "inliers": int(sim.inliers.sum()), "rmsM": round(sim.rms, 3), "medianM": round(sim.median, 3)},
+           "reference": {"poses": reference["meta"].get("poses"), "alignment": reference["meta"].get("direction")}}
     ply = job / "scene.ply"
     if ply.exists():
         from plypipe import topview
