@@ -128,7 +128,7 @@ TRAINED_FILES = ("scene.ply", ".done/train.json")
 TRAINED_TREE, EXPORTED_TREE = "eval", "eval/lite"
 # Its own options must be ones the export stage reads and training does not (tests/test_evalrun.py checks both stages'
 # source): an option that changes training would be recorded against a model trained without it
-EXPORT_ONLY_OPTIONS = ("--dense-occupancy", "--no-dense-occupancy", "--dense-layout", "--no-dense-layout", "--mesh", "--lite-finetune", "--lite-max", "--min-opacity", "--no-crop")
+EXPORT_ONLY_OPTIONS = ("--dense-occupancy", "--no-dense-occupancy", "--dense-layout", "--no-dense-layout", "--mesh", "--mesh-keep-raw", "--lite-finetune", "--lite-max", "--min-opacity", "--no-crop")
 
 INPUT = "saved-solve"  # the CLI wants an input path; train and export never read it
 NAME = re.compile(r"^[a-z0-9][a-z0-9_.-]{0,39}$")
