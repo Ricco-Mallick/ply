@@ -149,12 +149,23 @@ def run_variant(job: dict) -> dict:
     watcher.start()
     ran, error = [], None
 
+    def laser() -> dict | None:
+        """Scores against the scenario's laser reference (MuSHRoom): the cameras' scale at once, the splats once export is done."""
+        if not job.get("reference"):
+            return None
+        try:
+            from plypipe import mushroom
+            return mushroom.score_job(JOB, mushroom.load_reference(VOL / job["reference"]), splats=(JOB / ".done" / "export.json").exists())
+        except Exception as e:  # a scoring failure must not cost the run its saved model; the metrics say why
+            print(f"[eval] laser scoring failed: {type(e).__name__}: {e}", flush=True)
+            return {"error": f"{type(e).__name__}: {e}"}
+
     def metrics(report: dict) -> dict:
         sizes = {n: (JOB / n).stat().st_size for n in ("scene.ply", "scene.spz", "scene_lite.spz") if (JOB / n).exists()}
         record = evalrun.invocation_record(started, time.time() - started, gpu, ran, [s for s in ("train", "export") if s not in todo], error,
                                            job.get("cpu", evalrun.CPU), job.get("memoryGib", evalrun.MEMORY_GIB))
         return evalrun.assemble(job, report, gpu=gpu, seconds={**seconds, "wall": round(time.time() - started, 1)}, sizes=sizes,
-                                invocation=record, previous=previous)
+                                invocation=record, previous=previous, geometry=laser())
 
     def save() -> dict:
         """Metrics so far (cost included, for a relaunch to add to), then the job onto the Volume, then commit."""
