@@ -54,7 +54,23 @@ kbd { font: 700 10px/1 var(--font-mono); padding: 3px 6px; border-radius: 5px; b
 .pal-n em { font: 400 11px/1 var(--font-mono); font-style: normal; color: var(--dim); text-transform: uppercase; letter-spacing: .05em; }
 .pal-go { font: 400 10px/1 var(--font-mono); color: var(--accent); opacity: 0; transition: opacity .15s; }
 .pal-i.on .pal-go { opacity: 1; }
-.pal-empty { padding: 18px 12px; margin: 0; color: var(--muted); }
+.pal-empty { padding: 12px; margin: 0; color: var(--muted); }
+.pal-empty p { margin: 4px 0; }
+.pal-cats { display: flex; gap: 6px; padding: 8px 10px 4px; overflow-x: auto; scrollbar-width: none; }
+.pal-cats::-webkit-scrollbar { display: none; }
+.pal-cats button { flex: 0 0 auto; border: 1px solid var(--line-2); background: rgba(255, 255, 255, .04); color: var(--muted);
+  border-radius: 999px; padding: 5px 10px; font: 500 10.5px/1 var(--font-mono); letter-spacing: .05em; text-transform: uppercase; }
+.pal-cats button.on { background: rgba(255, 107, 0, .9); border-color: transparent; color: #0B1220; }
+.pal-row { display: flex; align-items: center; gap: 2px; border-radius: 12px; }
+.pal-row .pal-i { flex: 1; min-width: 0; }
+.pal-edit { flex: 0 0 auto; width: 30px; height: 30px; margin-right: 8px; border: 1px solid var(--line-2); border-radius: 9px;
+  background: rgba(255, 255, 255, .05); color: var(--muted); font-size: 13px; opacity: 0; transition: opacity .15s; }
+.pal-row:hover .pal-edit, .pal-edit:focus-visible { opacity: 1; }
+@media (hover: none) { .pal-edit { opacity: 1; } }
+.pal-else { font-size: 12.5px; }
+.pal-else button, .pal-tag { border: 0; background: none; color: var(--accent); font: inherit; padding: 0; text-decoration: underline; }
+.pal-tag { margin-top: 10px; border: 1px solid var(--line-2); background: rgba(255, 107, 0, .12); text-decoration: none;
+  border-radius: 999px; padding: 7px 12px; font: 500 12px/1 var(--font-body); }
 .pal-f { display: flex; gap: 18px; padding: 10px 12px 4px; border-top: 1px solid var(--line); margin-top: 6px; font-size: 9.5px; color: var(--dim); }
 @keyframes fade { from { opacity: 0; } } @keyframes pop { from { opacity: 0; transform: translateY(8px) scale(.98); } }
 
