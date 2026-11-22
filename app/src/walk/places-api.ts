@@ -25,8 +25,11 @@ export function placesTarget(sceneBase: URL | string | null | undefined, apiBase
   try { base = new URL(String(sceneBase), typeof location === 'undefined' ? undefined : location.href); } catch { return null; }
   const m = base.pathname.match(/\/scenes\/([\w-]+)(?:\/.*)?$/);
   if (!m) return null;
-  if (typeof location !== 'undefined' && base.origin === location.origin) return null;   // a page-served scene: a file
   const sceneId = m[1], configured = apiBase.trim().replace(/\/$/, ''), root = configured || base.origin;
+  // A page-served scene has no API of its own and is treated as a file (local draft plus export), unless an API is
+  // configured: then its id still resolves there, and tagging the bundled demo persists instead of staying on one
+  // device, which is what a judge tagging a pin in the demo needs.
+  if (!configured && typeof location !== 'undefined' && base.origin === location.origin) return null;
   return { url: `${root}${configured ? '/v1' : base.pathname.slice(0, m.index ?? 0)}/scenes/${sceneId}/places`, sceneId };
 }
 
