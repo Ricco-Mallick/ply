@@ -8,6 +8,10 @@ import { GLTFExporter } from 'three/examples/jsm/exporters/GLTFExporter.js';
 import { PLYLoader } from 'three/examples/jsm/loaders/PLYLoader.js';
 import { buildObjects, buildRoom, drawable } from './build';
 import { sameOriginModuleUrl } from './module-url';
+import { buildWalkHref } from '../walk/deeplink';
+import { loadPlaces } from '../walk/places-api';
+import { buildIndex, search } from '../lab/index';
+import type { Place } from '../lab/places';
 import { factorFrom, fmtScale, LIMITS, measure as tapDistance, rescaleScene } from './rescale';
 import type { Obj, SceneDocument, Shell } from './types';
 
@@ -194,6 +198,7 @@ const inControl = (e: KeyboardEvent) => e.target instanceof HTMLElement && /^(IN
 addEventListener('keydown', (e) => {
   if (inField(e)) return;   // the measure field keeps its own Enter and Escape, and typing must not walk the camera
   if (measure.on && e.code.startsWith('Arrow')) { e.preventDefault(); moveCursor(e); return; }   // the keyboard's tap point
+  if (e.code === 'Slash' && !placeSearch.hidden) { e.preventDefault(); placeQ.focus(); placeQ.select(); return; }   // "/" finds a place
   keys.add(e.code);
   if (e.code === 'KeyX') toggleWire();
   if (e.code === 'KeyM') setMeasure(!measure.on);
@@ -638,6 +643,84 @@ function toggleWire() {
   scene.traverse((o) => { if (o instanceof THREE.Mesh) (o.material as THREE.MeshStandardMaterial).wireframe = wire; });
 }
 
+// ---------------------------------------------------------------- places: search, and the hand-off to the walkthrough
+/* The twin's places, from the API (or places.json next to the scene) and through the same ranked index the walkthrough's
+   palette uses. Choosing one opens walk.html with the destination preselected, so the route starts from the spawn. No
+   places at all: the panel stays hidden, exactly as the walkthrough hides its layer. */
+const placeSearch = el<HTMLElement>('#place-search');
+const placeQ = el<HTMLInputElement>('#place-q');
+const placeList = el<HTMLDivElement>('#place-list');
+const placeCount = el<HTMLElement>('#place-count');
+const placeGo = el<HTMLButtonElement>('#place-go');
+let places: Place[] = [];
+let placeIndex = buildIndex([]);
+let byId = new Map<string, Place>();
+let results: Place[] = [];
+let chosen: string | null = null;
+
+/** Open the walkthrough at this place: walk.html?scene=<encoded>&place=<id>. */
+function navigateTo(id: string) {
+  if (!places.some((p) => p.id === id)) return;
+  document.body.classList.add('posing');   // hide the panels while the page changes
+  location.href = buildWalkHref(sceneBase, id, `${BASE}walk.html`);
+}
+
+function paintPlaces() {
+  const q = placeQ.value;
+  results = search(placeIndex, q, { limit: 24 }).map((h) => byId.get(h.id)).filter((p): p is Place => !!p);
+  if (chosen && !results.some((p) => p.id === chosen)) chosen = results[0]?.id ?? null;
+  placeList.replaceChildren();
+  for (const p of results) {
+    const row = document.createElement('button');
+    row.type = 'button';
+    row.className = `ps-i ${p.id === chosen ? 'on' : ''}`;
+    row.setAttribute('role', 'option');
+    row.setAttribute('aria-selected', String(p.id === chosen));
+    const cat = cell('span', p.cat); cat.className = 'ps-c';
+    const name = cell('span', p.name); name.className = 'ps-nm';
+    row.append(cat, name);
+    if (p.ai) { const ai = cell('span', `${p.ai.cls} · ${Math.round(p.ai.conf * 100)}%`); ai.className = 'ps-ai'; row.append(ai); }
+    row.addEventListener('click', () => { chosen = p.id; paintPlaces(); });
+    row.addEventListener('dblclick', () => navigateTo(p.id));
+    placeList.append(row);
+  }
+  if (!results.length) {
+    const none = cell('p', q.trim() ? `Nothing here matches “${q.trim()}”.` : 'No places in this scene.');
+    none.className = 'ps-empty';
+    placeList.append(none);
+  }
+  placeCount.textContent = q.trim() ? `${results.length} of ${places.length}` : `${places.length} place${places.length === 1 ? '' : 's'}`;
+  placeGo.disabled = !chosen;
+  placeGo.title = chosen ? `Walk to ${byId.get(chosen)?.name ?? chosen}` : 'Choose a place first';
+  [...placeList.querySelectorAll<HTMLElement>('.ps-i')].find((r) => r.getAttribute('aria-selected') === 'true')?.scrollIntoView({ block: 'nearest' });
+}
+
+placeQ.addEventListener('input', () => { chosen = null; paintPlaces(); });
+placeQ.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape') { e.preventDefault(); placeQ.value = ''; chosen = null; paintPlaces(); placeQ.blur(); return; }
+  if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+    e.preventDefault();
+    if (!results.length) return;
+    const at = results.findIndex((p) => p.id === chosen);
+    const next = e.key === 'ArrowDown' ? Math.min(results.length - 1, at + 1) : Math.max(0, at < 0 ? 0 : at - 1);
+    chosen = results[next].id; paintPlaces(); return;
+  }
+  if (e.key === 'Enter') { e.preventDefault(); const id = chosen ?? results[0]?.id; if (id) navigateTo(id); }
+});
+placeGo.addEventListener('click', () => { if (chosen) navigateTo(chosen); });
+
+/** Read this scene's places and, when there are some, open the search. */
+async function openPlaceSearch() {
+  const read = await loadPlaces(sceneBase).catch(() => null);
+  places = read?.places ?? [];
+  if (!places.length) return;   // no places here: the panel stays hidden
+  placeIndex = buildIndex(places);
+  byId = new Map(places.map((p) => [p.id, p] as [string, Place]));
+  placeSearch.hidden = false;
+  chosen = places[0].id;
+  paintPlaces();
+}
+
 // ---------------------------------------------------------------- loop
 function loop() {
   const dt = 1 / 60;
@@ -700,3 +783,4 @@ addEventListener('resize', resize);
 resize();
 loop();
 loadLidar().then((done) => { if (!done) load().catch((e) => show(`could not load: ${e}`)); });
+void openPlaceSearch();

@@ -24,6 +24,26 @@
     #hint { position: fixed; left: 50%; bottom: 18px; transform: translateX(-50%); color: var(--muted); font-size: 12.5px; background: var(--glass);
       border: 1px solid var(--line); border-radius: 999px; padding: 7px 14px; backdrop-filter: blur(12px); pointer-events: none; }
     body.locked #hint:not(.measure) { display: none; }
+    /* places: search the twin's tags and hand the destination to the walkthrough */
+    .place-search { position: fixed; z-index: 6; top: 70px; left: 50%; transform: translateX(-50%); width: min(380px, calc(100vw - 32px));
+      background: var(--glass); border: 1px solid var(--line); border-radius: 16px; backdrop-filter: blur(16px); overflow: hidden; }
+    .ps-in { display: flex; align-items: center; gap: 10px; padding: 10px 12px; border-bottom: 1px solid #1b2540; color: var(--muted); }
+    .ps-in input { flex: 1; min-width: 0; border: 0; background: none; outline: none; color: var(--ink); font: 500 15px/1.2 Manrope, system-ui, sans-serif; }
+    .ps-in input::placeholder { color: #6d7a94; }
+    .ps-in kbd { font: 700 10px/1 "Space Mono", monospace; padding: 3px 6px; border-radius: 5px; border: 1px solid var(--line); color: var(--muted); }
+    .ps-list { max-height: min(46vh, 360px); overflow: auto; padding: 6px; }
+    .ps-i { width: 100%; display: flex; align-items: center; gap: 10px; border: 0; background: none; color: var(--ink); text-align: left;
+      padding: 8px 10px; border-radius: 10px; font: inherit; font-size: 13px; cursor: pointer; }
+    .ps-i:hover, .ps-i.on { background: #16213a; }
+    .ps-i .ps-c { flex: 0 0 auto; font: 700 9.5px/1 "Space Mono", monospace; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); background: #1b2540; border-radius: 6px; padding: 4px 6px; }
+    .ps-i .ps-nm { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .ps-i .ps-ai { flex: 0 0 auto; font: 400 10px/1 "Space Mono", monospace; color: var(--muted); }
+    .ps-empty { margin: 0; padding: 14px 12px; color: var(--muted); font-size: 12.5px; }
+    .ps-foot { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 10px 12px; border-top: 1px solid #1b2540; }
+    .ps-n { font: 400 10.5px/1 "Space Mono", monospace; color: var(--muted); }
+    .ps-foot .primary { margin: 0; border: 0; background: var(--accent); color: #0b1020; border-radius: 9px; padding: 9px 14px; font: 600 12px/1 Manrope, system-ui, sans-serif; cursor: pointer; }
+    .ps-foot .primary:disabled { opacity: .35; cursor: default; }
+    body.measuring .place-search, body.posing .place-search { display: none; }
     /* outliner */
     #outliner { position: fixed; top: 74px; right: 16px; width: 268px; max-height: calc(100% - 100px); overflow: auto;
       background: var(--glass); border: 1px solid var(--line); border-radius: 16px; backdrop-filter: blur(16px); padding: 12px; }
@@ -90,6 +110,16 @@
     </div>
   </div>
 
+  <section class="place-search" id="place-search" hidden aria-label="Places in this scene">
+    <div class="ps-in">
+      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
+      <input id="place-q" type="search" placeholder="Find a place: desk, door, wc…" autocomplete="off" spellcheck="false" aria-label="Search this scene's places" aria-controls="place-list" />
+      <kbd>/</kbd>
+    </div>
+    <div class="ps-list" id="place-list" role="listbox" aria-label="Places"></div>
+    <div class="ps-foot"><span class="ps-n" id="place-count"></span><button id="place-go" class="primary" type="button" disabled>Navigate →</button></div>
+  </section>
+
   <aside id="outliner">
     <h2>Objects <span id="outliner-count">0</span></h2>
     <div id="outliner-list"></div>
@@ -131,7 +161,7 @@
 
   <div id="status">loading…</div>
   <div id="scale" hidden></div>
-  <div id="hint">Walk: <b>W A S D</b> · look: click to capture the mouse · <b>X</b> wireframe · <b>M</b> measure · click an object to select</div>
+  <div id="hint">Walk: <b>W A S D</b> · look: click to capture the mouse · <b>X</b> wireframe · <b>M</b> measure · <b>/</b> find a place · click an object to select</div>
 
   <script type="module" src="./src/model/main.ts"></script>
 </body>
