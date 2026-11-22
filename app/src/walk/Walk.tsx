@@ -28,6 +28,7 @@ export function Walk() {
   const [manifest, setManifest] = useState<SceneManifest | null>(null);
   const [entered, setEntered] = useState(() => new URLSearchParams(location.search).has('ui'));  // ?ui=1: skip the gate (screenshots, demo kiosks)
   const [searchOpen, setSearchOpen] = useState(false);
+  const [tagMode, setTagMode] = useState(false);  // the next tap on the splat places a POI
   const [help, setHelp] = useState(false);  // the controls card is opt-in: ? or the ? button
   // display gain, because the splat's own colour has no tone curve: a capture that clipped will glare
   const [exposure, setExposure] = useState(() => { const v = +(localStorage.getItem('ply-exposure') ?? 1); return v >= .5 && v <= 1.6 ? v : 1; });
@@ -37,6 +38,15 @@ export function Walk() {
     if (e.key === ']') setExposure(v => Math.min(1.6, +(v + .05).toFixed(2)));
     if (e.key === '\\') setExposure(1);
   }; addEventListener('keydown', k); return () => removeEventListener('keydown', k); }, []);
+  // T starts tagging from anywhere in the walk (but not while a name or code is being typed)
+  useEffect(() => {
+    const k = (e: KeyboardEvent) => {
+      const t = e.target as HTMLElement | null;
+      if (t && /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName)) return;
+      if (entered && e.code === 'KeyT' && !e.ctrlKey && !e.metaKey && !e.altKey) { setSearchOpen(false); setTagMode(v => !v); }
+    };
+    addEventListener('keydown', k); return () => removeEventListener('keydown', k);
+  }, [entered]);
   const [loadErr, setLoadErr] = useState<string | null>(null);
   const [base, setBase] = useState<URL | null>(null); const [mapX, setMapX] = useState<MapExtras>({});
   const [arData, setArData] = useState<{ places: Place[]; nav: Navigator | null }>({ places: [], nav: null });
@@ -65,7 +75,7 @@ export function Walk() {
 
   return (
     <>
-      <canvas ref={canvas} className="stage" aria-label={manifest ? `3D walkthrough of ${manifest.name}` : '3D walkthrough'} onClick={() => { if (entered && !s?.locked) engine?.lock(); }} />
+      <canvas ref={canvas} className="stage" aria-label={manifest ? `3D walkthrough of ${manifest.name}` : '3D walkthrough'} onClick={() => { if (entered && !s?.locked && !tagMode) engine?.lock(); }} />
 
       <header className={`top ${entered ? '' : 'pre'}`}>
         <Glass as="a" href={BASE} className="brand pill" opts={{ shader: false, press: true }}><span className="mark" aria-hidden="true" />PLY<span className="scene-name">{manifest?.name ?? 'Loading'}</span></Glass>
@@ -74,6 +84,8 @@ export function Walk() {
           <span>Search places</span><kbd>⌘K</kbd>
         </Glass>
         <div className="top-right">
+          {entered && <Glass as="button" className={`tour-btn pill tag-btn ${tagMode ? 'on' : ''}`} opts={{ shader: false, press: true }}
+            aria-pressed={tagMode} aria-label="Tag a place" title="Add a place to this twin: pick the spot on the splat (T)" onClick={() => { document.exitPointerLock?.(); setSearchOpen(false); setTagMode(v => !v); }}>＋<span className="tag-btn-l"> Tag a place</span></Glass>}
           <Glass className="seg pill" opts={{ shader: false }} role="radiogroup" aria-label="Movement mode">
             {(['fly', 'walk'] as Mode[]).map(m => <button key={m} role="radio" aria-checked={s?.mode === m} className={s?.mode === m ? 'on' : ''} onClick={() => engine?.setMode(m)}>{m === 'fly' ? 'Free' : 'Walk'}</button>)}
           </Glass>
@@ -108,7 +120,7 @@ export function Walk() {
         ) : (
           <ul>
             <li><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> move</li><li><kbd>Shift</kbd> run</li><li><kbd>F</kbd> free / walk</li>
-            {s?.mode === 'fly' && <li><kbd>Space</kbd>/<kbd>C</kbd> up / down</li>}<li><kbd>Scroll</kbd> speed {s ? s.speed.toFixed(1) : '1.0'}×</li><li><kbd>[</kbd><kbd>]</kbd> exposure</li><li><kbd>Esc</kbd> free the mouse</li>
+            {s?.mode === 'fly' && <li><kbd>Space</kbd>/<kbd>C</kbd> up / down</li>}<li><kbd>Scroll</kbd> speed {s ? s.speed.toFixed(1) : '1.0'}×</li><li><kbd>T</kbd> tag a place</li><li><kbd>[</kbd><kbd>]</kbd> exposure</li><li><kbd>Esc</kbd> free the mouse</li>
           </ul>
         )}
       </Glass>
@@ -129,7 +141,7 @@ export function Walk() {
       )}
       {TOUCH && entered && engine && <Joystick engine={engine} />}
       {engine && <MeasureLayer engine={engine} shell={shell} on={measured} showObjects={measured} />}
-      {engine && <PlacesLayer engine={engine} base={base} entered={entered} onMap={setMapX} onData={setArData} searchOpen={searchOpen} onSearch={setSearchOpen} />}
+      {engine && <PlacesLayer engine={engine} base={base} entered={entered} onMap={setMapX} onData={setArData} searchOpen={searchOpen} onSearch={setSearchOpen} tagMode={tagMode} onTagMode={setTagMode} />}
       {engine && entered && <Minimap engine={engine} manifest={manifest} extras={mapX} />}
 
       <div className={`gate ${entered ? 'gone' : ''}`}>
