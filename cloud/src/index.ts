@@ -12,7 +12,10 @@
  *  Anyone
  *    GET  /v1/jobs/:id                                           -> status, stage, progress, result
  *    GET  /v1/health                                             -> GPU workers online, queue length
+ *    GET  /v1/scenes/:jobId/places                               -> the walkthrough's pins (never edge-cached)
  *    GET  /v1/scenes/:jobId/:file                                -> results (Range supported) for the viewer
+ *  Team key (X-Ply-Key: APP_KEY) or the GPU worker, owner roles only
+ *    PUT  /v1/scenes/:jobId/places   {places}                    -> {ok, updatedAt, count}  add/move pins; cloud/PLACES-API.md
  *  GPU worker (Authorization: Bearer WORKER_TOKEN)
  *    POST /v1/worker/claim       {worker, prefix?}               -> next job or 204       stale running jobs (no heartbeat 20 min) are re-queued;
  *                                                                  prefix limits it to captures whose id starts with it (rehearsals)
@@ -21,9 +24,10 @@
  *    (and the upload routes above, which accept any key under scenes/<jobId>/ for results)
  */
 
-import { completeMultipart, createMultipart, presign, signedFetch, type S3Conf } from './s3';
-import { cdnRedirect, isBulk } from './cdn';
-import { kickModal } from './modal';
+import { completeMultipart, createMultipart, presign, signedFetch, type S3Conf } from './s3.ts';
+import { cdnRedirect, isBulk } from './cdn.ts';
+import { kickModal } from './modal.ts';
+import { MAX_BODY_BYTES, document as placesDocument, emptyDoc, normalize as normalizePlaces, validatePlaces } from './places.ts';
 
 interface Env { DB: any; APP_KEY: string; WORKER_TOKEN: string; ALLOWED_ORIGINS: string;
   S3_ENDPOINT: string; S3_REGION: string; S3_BUCKET: string; S3_KEY_ID: string; S3_SECRET: string;
@@ -43,8 +47,12 @@ const SIGN_TTL = 6 * 3600;
 const STALE_MS = 20 * 60 * 1000;
 const MAX_ATTEMPTS = 2;
 const json = (data: unknown, status = 200, h: Record<string, string> = {}) => new Response(JSON.stringify(data), { status, headers: { 'content-type': 'application/json', ...h } });
+/** Anything a person can change between two views: no browser, proxy or edge copy may answer the next read. */
+const NO_STORE = { 'cache-control': 'no-store' };
 const safeName = (s: string) => s.replace(/[^\w.\-]+/g, '_').slice(0, 120) || 'file';
 const id = () => crypto.randomUUID();
+/** The Workers runtime has caches.default; the DOM type in lib does not, and cloud/ has no workers-types dependency. */
+const edge = () => (caches as unknown as { default: Cache }).default;
 
 function cors(req: Request, env: Env) {
   const o = req.headers.get('origin') ?? '', ok = env.ALLOWED_ORIGINS.split(',').includes(o) || /^https?:\/\/(localhost|127\.0\.0\.1|10\.\d+\.\d+\.\d+|192\.168\.\d+\.\d+|172\.(1[6-9]|2\d|3[01])\.\d+\.\d+)(:\d+)?$/.test(o);
@@ -57,7 +65,7 @@ function cors(req: Request, env: Env) {
 
 type Role = 'app' | 'worker' | null;
 
-import { inviteBudget, resultsVisible } from './limits';
+import { inviteBudget, resultsVisible } from './limits.ts';
 
 
 /* Invite only. There is no signup: an invite is a signed code, label.expiry.mac, minted with the
@@ -136,6 +144,41 @@ async function route(req: Request, env: Env, ctx: Ctx): Promise<Response> {
     return json({ ok: true, workersOnline: w.results.filter((x: any) => !x.note).length, workersStarting: w.results.filter((x: any) => x.note).length, workers: w.results.map((x: any) => ({ name: x.name, busy: !!x.busy_job, starting: x.note || null, seenSecondsAgo: Math.round((now - x.last_seen) / 1000) })), queued: q.n }, 200, { 'cache-control': 'no-store' });
   }
 
+  // ---- places: the walkthrough's pins (round 2, interactive spatial POI tagging) ----
+  // This must come before the generic /v1/scenes/:id/:file route below: "places" matches it, and that route would
+  // answer with a cached, publish-gated 404 instead of the empty document.
+  const placesPath = p.match(/^\/v1\/scenes\/([\w-]+)\/places$/);
+  if (placesPath) {
+    const scene = placesPath[1], key = `scenes/${scene}/places.json`;
+    if (req.method === 'GET' || req.method === 'HEAD') {
+      // Read straight from storage, never through the shared edge cache: a pin added a second ago must show now.
+      const text = await objectText(env, key);
+      if (text === null) return json(emptyDoc(), 200, NO_STORE);            // no pins yet is a valid scene
+      const doc = normalizePlaces(text);
+      if (!doc) return json({ error: 'places.json is not readable' }, 502, NO_STORE);
+      return json(doc, 200, NO_STORE);
+    }
+    if (req.method === 'PUT') {
+      // Owner roles only: the team key that runs the account, or the GPU worker that publishes. An invite is a
+      // guest identity (it may spend GPU time on a job) and cannot rewrite a scene's pins.
+      if (!r) return json({ error: 'missing or wrong key' }, 401, NO_STORE);
+      if (r === 'app' && (await identity(req, env)).owner !== 'team') return json({ error: 'only the team key can edit places' }, 403, NO_STORE);
+      const declared = Number(req.headers.get('content-length') ?? 0);
+      if (declared > MAX_BODY_BYTES) return json({ error: `body is larger than ${MAX_BODY_BYTES / 1024} KB` }, 413, NO_STORE);
+      const raw = await req.text();
+      if (raw.length > MAX_BODY_BYTES) return json({ error: `body is larger than ${MAX_BODY_BYTES / 1024} KB` }, 413, NO_STORE);
+      let body: unknown;
+      try { body = JSON.parse(raw); } catch { return json({ ok: false, error: 'body is not valid JSON', index: null, field: 'body' }, 400, NO_STORE); }
+      const checked = validatePlaces(body);
+      if (!checked.ok) return json(checked, 400, NO_STORE);
+      const doc = placesDocument(checked.places);
+      const res = await signedFetch(s3(env), 'PUT', key, {}, JSON.stringify(doc), { 'content-type': 'application/json' });
+      if (!res.ok) return json({ error: `storage refused the file (${res.status})` }, 502, NO_STORE);
+      return json({ ok: true, updatedAt: doc.updatedAt, count: doc.places.length }, 200, NO_STORE);
+    }
+    return json({ error: 'method not allowed' }, 405, { ...NO_STORE, allow: 'GET,HEAD,PUT,OPTIONS' });
+  }
+
   // ---- public reads ----
   let m = p.match(/^\/v1\/jobs\/([\w-]+)$/);
   if (m && req.method === 'GET') {
@@ -149,8 +192,8 @@ async function route(req: Request, env: Env, ctx: Ctx): Promise<Response> {
     // results are public only once a human has looked at them; a job still running is the operator's business
     const row = await env.DB.prepare('SELECT status FROM jobs WHERE id = ?').bind(m[1]).first() as any;
     if (!resultsVisible(row?.status, m[2], r !== 'worker')) return json({ error: 'this twin is not published yet' }, 403);
-    // live-index.json and scene.json are small and change when a job is fixed, so never cache them
-    const nocache = m[2] === 'live-index.json' || m[2] === 'scene.json';
+    // live-index.json, scene.json and places.json are small and change while a job is fixed or a pin is moved
+    const nocache = m[2] === 'live-index.json' || m[2] === 'scene.json' || m[2] === 'places.json';
     return serve(env, `scenes/${m[1]}/${m[2]}`, req, nocache ? 'no-store' : 'public, max-age=3600', ctx);
   }
 
@@ -293,10 +336,10 @@ async function route(req: Request, env: Env, ctx: Ctx): Promise<Response> {
 }
 
 /** Results for the viewer: fetched from the bucket with a signed URL and streamed through, Range passed along. */
-async function serve(env: Env, key: string, req: Request, cache: string, ctx?: ExecutionContext) {
+async function serve(env: Env, key: string, req: Request, cache: string, ctx?: Ctx) {
   // splats, meshes and LOD chunks: the browser fetches them from Hugging Face's CDN (src/cdn.ts), not through here
   if (env.HF_REPO && env.HF_TOKEN && key.startsWith('scenes/') && isBulk(key)) {
-    const r = await cdnRedirect(env.HF_REPO, env.HF_TOKEN, key, req.url, caches.default, ctx ? p => ctx.waitUntil(p) : undefined);
+    const r = await cdnRedirect(env.HF_REPO, env.HF_TOKEN, key, req.url, edge(), ctx ? p => ctx.waitUntil(p) : undefined);
     if (r) return r;
   }
   // Whole-file GETs are cached at Cloudflare's edge. The bucket's free tier counts every download (1 GB/day),
@@ -305,7 +348,7 @@ async function serve(env: Env, key: string, req: Request, cache: string, ctx?: E
   const cacheable = !!ctx && !range && req.method === 'GET' && cache !== 'no-store';
   const cacheKey = cacheable ? new Request(new URL(req.url).toString(), { method: 'GET' }) : null;
   if (cacheKey) {
-    const hit = await caches.default.match(cacheKey);
+    const hit = await edge().match(cacheKey);
     if (hit) { const h = new Headers(hit.headers); h.set('x-ply-cache', 'hit'); return new Response(hit.body, { status: hit.status, headers: h }); }
   }
   let up: Response | null = null;
@@ -324,6 +367,20 @@ async function serve(env: Env, key: string, req: Request, cache: string, ctx?: E
   const h = new Headers({ 'cache-control': cache, 'accept-ranges': 'bytes', 'x-ply-cache': 'miss' });
   for (const k of ['content-type', 'content-length', 'content-range', 'etag', 'last-modified']) { const v = up.headers.get(k); if (v) h.set(k, v); }
   const resp = new Response(up.body, { status: up.status, headers: h });
-  if (cacheKey && up.ok) ctx!.waitUntil(caches.default.put(cacheKey, resp.clone()));
+  if (cacheKey && up.ok) ctx!.waitUntil(edge().put(cacheKey, resp.clone()));
   return resp;
+}
+
+/** Text of one object, read around the edge cache entirely: the bucket first, then Hugging Face.
+    The bucket is where an interactive edit lands (PUT /v1/scenes/:id/places); HF is where the GPU worker publishes
+    when PLY_HF_REPO is set, so both are consulted. A scene id is a job id, so a published scene never gets a second
+    places.json from a re-run: whichever copy exists for that id is the current one. */
+async function objectText(env: Env, key: string): Promise<string | null> {
+  const r = await fetch(await presign(s3(env), 'GET', key, {}, 600), { method: 'GET' });
+  if (r.ok) return await r.text();
+  if (env.HF_REPO && env.HF_TOKEN && key.startsWith('scenes/')) {
+    const h = await fetch(`https://huggingface.co/datasets/${env.HF_REPO}/resolve/main/${key}`, { headers: { authorization: `Bearer ${env.HF_TOKEN}` } });
+    if (h.ok) return await h.text();
+  }
+  return null;
 }
