@@ -136,6 +136,17 @@ test('writing without a key is 401, with a wrong key is 401, with an invite is 4
   assert.equal(bucket.has(`scenes/${id}/places.json`), false, 'a refused write must not reach storage');
 });
 
+test('the team invite code can write, because the app tags with it', async () => {
+  // The app has no secret in the browser: it holds the team invite code the capture flow already uses. Only an
+  // invite whose label is not "team" (a judges code, a friend code) is refused, so this path must keep working.
+  const id = scene('team-invite');
+  const res = await write(id, { places: [place()] }, { 'x-ply-key': await invite('team') });
+  assert.equal(res.status, 200, 'the team invite should write places');
+  assert.equal((await res.json() as any).count, 1);
+  const judges = await write(scene('judges-invite'), { places: [place()] }, { 'x-ply-key': await invite('judges') });
+  assert.equal(judges.status, 403, 'a judges invite may look, not tag');
+});
+
 test('the team key and the worker token can write', async () => {
   for (const [label, headers] of [
     ['team', { 'x-ply-key': env.APP_KEY }],
