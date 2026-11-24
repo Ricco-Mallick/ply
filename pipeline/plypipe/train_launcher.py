@@ -166,6 +166,8 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--opacity-reg", type=float, default=OPACITY_REG, help="MCMC opacity regulariser")
     ap.add_argument("--pose-opt", action="store_true")
     ap.add_argument("--depth-loss", action="store_true")
+    ap.add_argument("--lidar-depth", help="lidar.json of an iPhone LiDAR capture: its measured depth maps feed the depth loss "
+                                          "(dense, confident pixels) instead of the sparse track points; implies --depth-loss")
     ap.add_argument("--bilateral-grid", action="store_true")
     ap.add_argument("--exposure-affine", action="store_true", help="the bilateral grid at 1x1x1: one affine colour transform per photo")
     ap.add_argument("--random-bkgd", action="store_true")
@@ -175,6 +177,8 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--dry-run", action="store_true",
                     help="everything except the GPU work: import the trainer, build the config, load the scene with gsplat's parser")
     a = ap.parse_args(argv)
+    if a.lidar_depth:
+        a.depth_loss = True
     if a.dry_run:  # CPU rehearsal: CUDA-only extensions may be missing; stand in for them so the import itself is tested
         import importlib.util, types
         # only fused_ssim is imported at module level (fused_bilagrid only when the bilateral grid is on)
@@ -207,6 +211,10 @@ def main(argv: list[str] | None = None) -> int:
         if not hasattr(st, "depth_l1_loss"):  # a gsplat pin that computes the loss elsewhere must not train unpatched
             raise SystemExit("--depth-loss: simple_trainer has no depth_l1_loss to replace (check the gsplat pin)")
         st.depth_l1_loss = depth_l1_loss
+    if a.lidar_depth:
+        from plypipe import lidar_depth
+        stats = lidar_depth.install(st, os.path.abspath(a.lidar_depth))
+        summary["lidarDepth"] = {"maps": stats["maps"], "samplesPerView": lidar_depth.SAMPLES, "rangeM": [lidar_depth.NEAR, lidar_depth.FAR]}
     if start:
         if not hasattr(st, "create_splats_with_optimizers"):  # nothing to wrap: the run would start from the SfM points
             raise SystemExit("--from-ply: simple_trainer has no create_splats_with_optimizers to start from a model (check the gsplat pin)")

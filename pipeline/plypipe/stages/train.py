@@ -185,6 +185,11 @@ def run_stage(ctx: Ctx) -> dict:
     for flag in ("pose_opt", "depth_loss", "bilateral_grid", "exposure_affine", "random_bkgd"):
         if ctx.opt(flag):
             cmd.append("--" + flag.replace("_", "-"))
+    # an iPhone LiDAR capture trains against its measured depth (Echo-3-style: clean walls, no fog); --no-lidar-depth off
+    lidar = ctx.out / "lidar.json"
+    if lidar.is_file() and ctx.opt("lidar_depth", True) is not False:
+        cmd += ["--lidar-depth", str(lidar)]
+        ctx.log.emit("train", "progress", "depth loss on the LiDAR maps of the kept frames")
     run(cmd, ctx, "train", env=launcher_env(), progress_every=50)
     if ctx.opt("train_dry_run"):
         return {"dryRun": True}
