@@ -1,5 +1,5 @@
 // Copyright (c) 2026 Ricco Marcelino. All rights reserved. Proprietary and confidential — see LICENSE.
-import { useEffect, useRef, useState, useSyncExternalStore } from 'react';
+import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import { WalkEngine, type Mode } from './engine';
 import { loadManifest, type SceneManifest } from './scene';
 import { Glass } from '../shared/Glass';
@@ -7,6 +7,7 @@ import { Tour, autoTour, SHOT_NAMES } from './tour';
 import { PlacesLayer, type PlacesApi } from './Places';
 import { ClickToMove, CropPanel, ShareMenu } from './ViewTools';
 import { CompareView, LocationPanel, downloadPack } from './TwinTools';
+import { findRooms, type Room } from './rooms';
 import { parseDeepLink } from './deeplink';
 import { ArLauncher } from './ArUi';
 import { sceneStatus } from '../shared/scene-status';
@@ -84,6 +85,14 @@ export function Walk() {
   useEffect(() => { if (engine?.state.moved) { const t = setTimeout(() => setHelp(false), 3500); return () => clearTimeout(t); } }, [engine?.state.moved]);
   useEffect(() => { const k = (e: KeyboardEvent) => { if (e.code === 'KeyH' || e.key === '?') setHelp(h => !h); }; addEventListener('keydown', k); return () => removeEventListener('keydown', k); }, []);
 
+  // rooms of the floor in view, from its walking grid (rooms.ts): outlines on the map, the room you are in
+  const rooms = useMemo(() => { try { return engine?.grid ? findRooms(engine.grid) : null; } catch { return null; } }, [engine?.grid]);
+  const roomHere = (() => {
+    const g = engine?.grid, r = rooms; if (!g || !r || !engine) return null;
+    const m = g.meta, i = Math.floor((engine.state.pos.x - m.origin[0]) / m.cell), j = Math.floor((engine.state.pos.z - m.origin[1]) / m.cell);
+    const id = i >= 0 && j >= 0 && i < m.width && j < m.height ? r.label[j * m.width + i] : -1;
+    return id >= 0 ? r.rooms[id] : null;
+  })();
   const s = engine?.state; const err = loadErr ?? s?.error ?? null; const ready = !!s?.loaded;
   const enter = () => { if (!ready || !engine) return; setEntered(true); engine.lock(); };
 
@@ -163,7 +172,8 @@ export function Walk() {
       {toast && <div className="toast mono" role="status">{toast}</div>}
       {engine && entered && locOpen && <LocationPanel api={placesApi} onClose={() => setLocOpen(false)} />}
       {engine && entered && cmpOpen && manifest?.heldOut?.length && <CompareView engine={engine} list={manifest.heldOut} onClose={() => setCmpOpen(false)} />}
-      {engine && entered && <Minimap engine={engine} manifest={manifest} extras={mapX} />}
+      {engine && entered && <Minimap engine={engine} manifest={manifest} extras={{ ...mapX, rooms: rooms?.rooms }} />}
+      {engine && entered && roomHere && (rooms?.rooms.length ?? 0) > 1 && <div className="room-chip mono" role="status">{roomHere.name} · {roomHere.areaM2} m²</div>}
 
       <div className={`gate ${entered ? 'gone' : ''}`}>
         <div className="gate-inner">
@@ -222,7 +232,7 @@ function Joystick({ engine }: { engine: WalkEngine }) {
 /** North-up map with the visitor's position and view cone: the pipeline's picture of the twin from above when the scene
     has one, else the occupancy grid. Hidden when the scene has neither. Click to enlarge. */
 /** Map extras the design lab draws: a route polyline (floor x, z) and place dots. */
-export interface MapExtras { path?: [number, number][] | null; pins?: { x: number; z: number; dest?: boolean }[] }
+export interface MapExtras { path?: [number, number][] | null; pins?: { x: number; z: number; dest?: boolean }[]; rooms?: Room[] }
 /** A picture of the floor plane: row = +z, column = +x, `cell` metres per pixel from `origin`. */
 interface MapImage { img: CanvasImageSource; origin: [number, number]; cell: number; width: number; height: number; photo: boolean }
 export function Minimap({ engine, manifest, extras }: { engine: WalkEngine; manifest: SceneManifest | null; extras?: MapExtras }) {
@@ -251,6 +261,13 @@ export function Minimap({ engine, manifest, extras }: { engine: WalkEngine; mani
       x.imageSmoothingEnabled = map.photo; x.imageSmoothingQuality = 'high'; x.globalAlpha = map.photo ? 1 : .9; x.drawImage(map.img, ox, oy, width * sc, height * sc); x.globalAlpha = 1;
       const p = engine.state.pos, px = ox + (p.x - origin[0]) / cell * sc, py = oy + (p.z - origin[1]) / cell * sc, yaw = engine.state.yaw;
       const toPx = (wx: number, wz: number) => [ox + (wx - origin[0]) / cell * sc, oy + (wz - origin[1]) / cell * sc] as const;
+      // rooms: straight-walled outlines and their names
+      x.lineWidth = 1.2; x.setLineDash([]); x.font = '600 9px ui-monospace, Menlo, monospace'; x.textAlign = 'center'; x.textBaseline = 'middle';
+      for (const r of ex.current?.rooms ?? []) {
+        if (r.outline.length < 3) continue;
+        x.strokeStyle = 'rgba(255,107,0,.85)'; x.beginPath(); r.outline.forEach(([wx, wz], i) => { const [qx, qy] = toPx(wx, wz); if (i) x.lineTo(qx, qy); else x.moveTo(qx, qy); }); x.closePath(); x.stroke();
+        if (S >= 168 && (ex.current?.rooms?.length ?? 0) > 1) { const [cx, cy] = toPx(r.centroid[0], r.centroid[1]); x.fillStyle = 'rgba(8,11,18,.78)'; const t = r.name.replace('Room ', 'R'); const tw = x.measureText(t).width + 8; x.fillRect(cx - tw / 2, cy - 7, tw, 14); x.fillStyle = '#fff'; x.fillText(t, cx, cy + .5); }
+      }
       for (const q of ex.current?.pins ?? []) { const [qx, qy] = toPx(q.x, q.z); x.fillStyle = q.dest ? '#FF6B00' : '#0B1220'; x.strokeStyle = q.dest ? '#fff' : 'rgba(11,18,32,.6)'; x.lineWidth = 1; x.beginPath(); x.arc(qx, qy, q.dest ? 4.5 : 2.6, 0, 7); x.fill(); x.stroke(); }
       const route = ex.current?.path; if (route && route.length > 1) {
         x.strokeStyle = '#FF6B00'; x.lineWidth = 2.6; x.lineCap = x.lineJoin = 'round'; x.setLineDash([5, 4]); x.lineDashOffset = -performance.now() / 60;
