@@ -4,7 +4,9 @@ import { WalkEngine, type Mode } from './engine';
 import { loadManifest, type SceneManifest } from './scene';
 import { Glass } from '../shared/Glass';
 import { Tour, autoTour, SHOT_NAMES } from './tour';
-import { PlacesLayer } from './Places';
+import { PlacesLayer, type PlacesApi } from './Places';
+import { ClickToMove, CropPanel, ShareMenu } from './ViewTools';
+import { parseDeepLink } from './deeplink';
 import { ArLauncher } from './ArUi';
 import { sceneStatus } from '../shared/scene-status';
 import type { QualityMode } from './perf';
@@ -15,6 +17,10 @@ import { MeasureLayer, useShell } from './Measure';
 import type { Navigator, Place } from '../lab/places';
 
 const TOUCH = matchMedia('(pointer: coarse)').matches;
+const LINK = parseDeepLink(location.search);
+/** ?embed=1: inside someone else's page (an iframe). The chrome shrinks to the essentials and links out to the full viewer. */
+const EMBED = LINK.embed;
+if (EMBED) document.documentElement.classList.add('embed');
 const BASE = import.meta.env.BASE_URL;
 
 function useEngine(engine: WalkEngine | null) {
@@ -30,6 +36,9 @@ export function Walk() {
   const [searchOpen, setSearchOpen] = useState(false);
   const [tagMode, setTagMode] = useState(false);  // the next tap on the splat places a POI
   const [help, setHelp] = useState(false);  // the controls card is opt-in: ? or the ? button
+  const [cropOpen, setCropOpen] = useState(false); const [placesApi, setPlacesApi] = useState<PlacesApi | null>(null);
+  const [toast, setToast] = useState<string | null>(null);
+  useEffect(() => { if (!toast) return; const t = setTimeout(() => setToast(null), 2600); return () => clearTimeout(t); }, [toast]);
   // display gain, because the splat's own colour has no tone curve: a capture that clipped will glare
   const [exposure, setExposure] = useState(() => { const v = +(localStorage.getItem('ply-exposure') ?? 1); return v >= .5 && v <= 1.6 ? v : 1; });
   useEffect(() => { const el = canvas.current; if (el) el.style.filter = exposure === 1 ? '' : `brightness(${exposure})`; try { localStorage.setItem('ply-exposure', String(exposure)); } catch { /* private mode */ } }, [exposure]);
@@ -66,6 +75,9 @@ export function Walk() {
     loadManifest().then(({ manifest, base }) => { setManifest(manifest); setBase(base); document.title = `${manifest.name} · Ply`; return e.load(manifest, base); }).catch(err => setLoadErr(err.message));
     return () => e.dispose();
   }, []);
+  // a shared view (?at=): stand where the sender stood, once the twin is in
+  const posed = useRef(false);
+  useEffect(() => { if (engine?.state.loaded && LINK.at && !posed.current) { posed.current = true; engine.setPose(LINK.at); } }, [engine?.state.loaded]);
   // the controls hint steps aside once someone is moving, and comes back on ? or H
   useEffect(() => { if (engine?.state.moved) { const t = setTimeout(() => setHelp(false), 3500); return () => clearTimeout(t); } }, [engine?.state.moved]);
   useEffect(() => { const k = (e: KeyboardEvent) => { if (e.code === 'KeyH' || e.key === '?') setHelp(h => !h); }; addEventListener('keydown', k); return () => removeEventListener('keydown', k); }, []);
@@ -75,7 +87,7 @@ export function Walk() {
 
   return (
     <>
-      <canvas ref={canvas} className="stage" aria-label={manifest ? `3D walkthrough of ${manifest.name}` : '3D walkthrough'} onClick={() => { if (entered && !s?.locked && !tagMode) engine?.lock(); }} />
+      <canvas ref={canvas} className="stage" aria-label={manifest ? `3D walkthrough of ${manifest.name}` : '3D walkthrough'} />
 
       <header className={`top ${entered ? '' : 'pre'}`}>
         <Glass as="a" href={BASE} className="brand pill" opts={{ shader: false, press: true }}><span className="mark" aria-hidden="true" />PLY<span className="scene-name">{manifest?.name ?? 'Loading'}</span></Glass>
@@ -93,7 +105,10 @@ export function Walk() {
           {tour && entered && <div className="views-wrap"><Glass as="button" className="tour-btn pill" opts={{ shader: false, press: true }} aria-expanded={views} onClick={() => setViews(v => !v)}>Views</Glass>
             {views && <Glass className="views-menu" opts={{ radius: 14, shader: false }}>{tour.keys.map((_, i) => <button key={i} onClick={() => { setViews(false); document.exitPointerLock?.(); tour.goTo(i); }}><span className="mono">{String(i + 1).padStart(2, '0')}</span>{SHOT_NAMES[i] ?? `View ${i + 1}`}</button>)}</Glass>}</div>}
           {entered && shell?.walls?.length && <Glass as="button" className={`tour-btn pill opt ${measured ? 'on' : ''}`} opts={{ shader: false, press: true }} aria-pressed={measured} title="Measured shell: walls and object boxes from the solve" onClick={() => setMeasured(v => !v)}>Measured</Glass>}
-          {entered && <Glass as="a" className="tour-btn pill opt" opts={{ shader: false, press: true }} href={`${BASE}library.html`} title="Every capture your team has run">Library</Glass>}
+          {entered && engine && <ShareMenu engine={engine} name={manifest?.name ?? 'Twin'} onToast={setToast} />}
+          {entered && engine && !EMBED && <Glass as="button" className={`tour-btn pill opt desk ${cropOpen ? 'on' : ''}`} opts={{ shader: false, press: true }} aria-pressed={cropOpen} title="Crop the twin: hide the fuzz outside the room" onClick={() => { document.exitPointerLock?.(); setTagMode(false); setCropOpen(v => !v); }}>Crop</Glass>}
+          {entered && EMBED && <Glass as="a" className="tour-btn pill" opts={{ shader: false, press: true }} href={(() => { const u = new URL(location.href); u.searchParams.delete('embed'); return u.href; })()} target="_blank" rel="noopener" title="Open the full walkthrough">Open in Ply ↗</Glass>}
+          {entered && !EMBED && <Glass as="a" className="tour-btn pill opt" opts={{ shader: false, press: true }} href={`${BASE}library.html`} title="Every capture your team has run">Library</Glass>}
             {entered && manifest && base && <Glass as="a" className="tour-btn pill desk" opts={{ shader: false, press: true }} title="Open this twin in the editor (SuperSplat)"
             target="_blank" rel="noopener"
             href={(() => {
@@ -133,15 +148,13 @@ export function Walk() {
           </div>
         ) : null;
       })()}
-      {entered && !new URLSearchParams(location.search).get('scene') && (
-        <div className="demo-note mono" role="note">
-          <b>Demo scene</b> · a public sample model, here to show the viewer. Not a Ply reconstruction.
-          Our own twins are in the <a href={`${BASE}library.html`}>library</a> and the technical abstract.
-        </div>
-      )}
       {TOUCH && entered && engine && <Joystick engine={engine} />}
       {engine && <MeasureLayer engine={engine} shell={shell} on={measured} showObjects={measured} />}
-      {engine && <PlacesLayer engine={engine} base={base} entered={entered} onMap={setMapX} onData={setArData} searchOpen={searchOpen} onSearch={setSearchOpen} tagMode={tagMode} onTagMode={setTagMode} />}
+      {engine && <PlacesLayer engine={engine} base={base} entered={entered} onMap={setMapX} onData={setArData} searchOpen={searchOpen} onSearch={setSearchOpen} tagMode={tagMode} onTagMode={setTagMode}
+        snap={() => snapPhoto(engine)} onApi={setPlacesApi} />}
+      {engine && entered && <ClickToMove engine={engine} enabled={!tagMode && !cropOpen && !tour?.playing} />}
+      {engine && entered && cropOpen && <CropPanel engine={engine} api={placesApi} onClose={() => setCropOpen(false)} />}
+      {toast && <div className="toast mono" role="status">{toast}</div>}
       {engine && entered && <Minimap engine={engine} manifest={manifest} extras={mapX} />}
 
       <div className={`gate ${entered ? 'gone' : ''}`}>
@@ -159,6 +172,12 @@ export function Walk() {
       </div>
     </>
   );
+}
+
+/** A photo of the view for a place's card: small enough for the API's 60 kB cap at any screen size. */
+function snapPhoto(engine: WalkEngine): string | null {
+  for (const [w, q] of [[560, .72], [440, .62], [320, .55]] as const) { const d = engine.snapshot(w, 'image/jpeg', q); if (d.length < 58_000) return d; }
+  return null;
 }
 
 /** Thumb stick for phones: writes a -1..1 vector into the engine. */

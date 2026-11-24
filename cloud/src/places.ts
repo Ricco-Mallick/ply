@@ -19,8 +19,13 @@ export interface Place {
   pinned?: boolean; [k: string]: unknown;
 }
 
-/** The document the API reads and writes. `updatedAt` is null for files written before this endpoint existed. */
-export interface PlacesDoc { schema: 1; updatedAt: string | null; places: Place[] }
+/** How the twin is shown, set by the team in the walkthrough: `crop` hides every splat outside a box (floaters, the
+    street through a window). Metres, scene frame. */
+export interface SceneView { crop?: { min: [number, number, number]; max: [number, number, number] } }
+
+/** The document the API reads and writes. `updatedAt` is null for files written before this endpoint existed; `view`
+    is there only once someone has set one. */
+export interface PlacesDoc { schema: 1; updatedAt: string | null; places: Place[]; view?: SceneView }
 
 export const MAX_PLACES = 500;
 export const MAX_NAME = 80;
@@ -31,6 +36,14 @@ export const ID_RE = /^[a-z0-9][a-z0-9-]{0,40}$/;
 export const WORLD_LIMIT = 5000;
 /** A full 500-place set is well under 100 KB; the cap keeps a hand-written body from being buffered without limit. */
 export const MAX_BODY_BYTES = 512 * 1024;
+
+/** A place's info card: a note, a link and a small photo of the spot (a JPEG data URL the viewer makes from the
+    view, so no upload service is involved). The caps keep 500 places under the body limit in the worst case only
+    with few photos; MAX_BODY_BYTES is the real ceiling. */
+export const MAX_NOTE = 600;
+export const MAX_LINK = 400;
+export const MAX_PHOTO = 60_000;
+const PHOTO_RE = /^data:image\/(jpeg|webp);base64,[A-Za-z0-9+/]+={0,2}$/;
 
 export interface PlaceError { ok: false; error: string; index: number | null; field: string }
 export type Validated = { ok: true; places: Place[] } | PlaceError;
@@ -54,7 +67,7 @@ export function validatePlaces(body: unknown): Validated {
   for (let i = 0; i < list.length; i++) {
     const raw = list[i];
     if (!isObj(raw)) return bad(i, 'place', 'must be an object');
-    const { id, name, cat, p, ai, pinned, ...rest } = raw;
+    const { id, name, cat, p, ai, pinned, info, ...rest } = raw;
 
     if (typeof id !== 'string' || !ID_RE.test(id)) {
       return bad(i, 'id', `id must match ^[a-z0-9][a-z0-9-]{0,40}$ (got ${JSON.stringify(id)})`);
@@ -89,9 +102,50 @@ export function validatePlaces(body: unknown): Validated {
 
     if (pinned !== undefined && typeof pinned !== 'boolean') return bad(i, 'pinned', 'pinned must be true or false');
 
-    out.push({ ...rest, id, name: trimmed, cat: cat as Category, p: p as [number, number, number], ...(cleanAi ? { ai: cleanAi } : {}), ...(pinned !== undefined ? { pinned } : {}) });
+    let cleanInfo: Record<string, string> | undefined;
+    if (info !== undefined) {
+      if (!isObj(info)) return bad(i, 'info', 'info must be an object when present');
+      const { note, link, photo, ...extra } = info;
+      if (Object.keys(extra).length) return bad(i, 'info', `info has only note, link and photo (got ${Object.keys(extra).join(', ')})`);
+      cleanInfo = {};
+      if (note !== undefined) {
+        if (typeof note !== 'string' || note.length > MAX_NOTE) return bad(i, 'info.note', `info.note must be text up to ${MAX_NOTE} characters`);
+        if (note.trim()) cleanInfo.note = note.trim();
+      }
+      if (link !== undefined) {
+        let ok = typeof link === 'string' && link.length <= MAX_LINK;
+        if (ok) { try { const u = new URL(link as string); ok = u.protocol === 'https:' || u.protocol === 'http:'; } catch { ok = false; } }
+        if (!ok) return bad(i, 'info.link', `info.link must be an http(s) address up to ${MAX_LINK} characters`);
+        cleanInfo.link = link as string;
+      }
+      if (photo !== undefined) {
+        if (typeof photo !== 'string' || photo.length > MAX_PHOTO || !PHOTO_RE.test(photo)) return bad(i, 'info.photo', `info.photo must be a JPEG or WebP data URL up to ${MAX_PHOTO / 1000} kB`);
+        cleanInfo.photo = photo;
+      }
+      if (!Object.keys(cleanInfo).length) cleanInfo = undefined;
+    }
+
+    out.push({ ...rest, id, name: trimmed, cat: cat as Category, p: p as [number, number, number], ...(cleanAi ? { ai: cleanAi } : {}), ...(pinned !== undefined ? { pinned } : {}), ...(cleanInfo ? { info: cleanInfo } : {}) });
   }
   return { ok: true, places: out };
+}
+
+/** `view` from a write body: undefined when the body has none (keep the stored one), null to clear it, or the first
+    problem. A crop is a box with min below max on every axis, inside the world limit. */
+export function validateView(body: unknown): { ok: true; view: SceneView | null | undefined } | PlaceError {
+  if (!isObj(body) || !('view' in body)) return { ok: true, view: undefined };
+  const v = body.view;
+  if (v === null) return { ok: true, view: null };
+  if (!isObj(v)) return bad(null, 'view', 'view must be an object or null');
+  const { crop, ...extra } = v;
+  if (Object.keys(extra).length) return bad(null, 'view', `view has only crop (got ${Object.keys(extra).join(', ')})`);
+  if (crop === undefined || crop === null) return { ok: true, view: {} };
+  if (!isObj(crop)) return bad(null, 'view.crop', 'view.crop must be {min, max}');
+  const pt = (q: unknown) => Array.isArray(q) && q.length === 3 && q.every(x => finite(x) && Math.abs(x) < WORLD_LIMIT);
+  if (!pt(crop.min) || !pt(crop.max)) return bad(null, 'view.crop', 'view.crop.min and max must be [x, y, z] in metres');
+  const min = crop.min as number[], max = crop.max as number[];
+  if (!min.every((m, k) => m < max[k])) return bad(null, 'view.crop', 'view.crop.min must be below max on every axis');
+  return { ok: true, view: { crop: { min: min as [number, number, number], max: max as [number, number, number] } } };
 }
 
 /** The empty answer for a scene with no places.json yet (never a 404: no pins is a valid state). */
@@ -103,10 +157,12 @@ export function normalize(text: string): PlacesDoc | null {
   let j: unknown;
   try { j = JSON.parse(text); } catch { return null; }
   if (!isObj(j) || !Array.isArray(j.places)) return null;
-  return { schema: 1, updatedAt: typeof j.updatedAt === 'string' && j.updatedAt ? j.updatedAt : null, places: j.places as Place[] };
+  const v = validateView({ view: j.view });
+  const view = v.ok && v.view ? v.view : undefined;
+  return { schema: 1, updatedAt: typeof j.updatedAt === 'string' && j.updatedAt ? j.updatedAt : null, places: j.places as Place[], ...(view ? { view } : {}) };
 }
 
 /** The write body: schema, a fresh timestamp and the validated list. */
-export function document(places: Place[], updatedAt = new Date().toISOString()): PlacesDoc {
-  return { schema: 1, updatedAt, places };
+export function document(places: Place[], updatedAt = new Date().toISOString(), view?: SceneView | null): PlacesDoc {
+  return { schema: 1, updatedAt, places, ...(view && view.crop ? { view } : {}) };
 }

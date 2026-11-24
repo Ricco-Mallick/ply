@@ -15,7 +15,7 @@
  *    GET  /v1/scenes/:jobId/places                               -> the walkthrough's pins (never edge-cached)
  *    GET  /v1/scenes/:jobId/:file                                -> results (Range supported) for the viewer
  *  Team key (X-Ply-Key: APP_KEY) or the GPU worker, owner roles only
- *    PUT  /v1/scenes/:jobId/places   {places}                    -> {ok, updatedAt, count}  add/move pins; cloud/PLACES-API.md
+ *    PUT  /v1/scenes/:jobId/places   {places, view?}             -> {ok, updatedAt, count}  add/move pins, crop; cloud/PLACES-API.md
  *  GPU worker (Authorization: Bearer WORKER_TOKEN)
  *    POST /v1/worker/claim       {worker, prefix?}               -> next job or 204       stale running jobs (no heartbeat 20 min) are re-queued;
  *                                                                  prefix limits it to captures whose id starts with it (rehearsals)
@@ -27,7 +27,7 @@
 import { completeMultipart, createMultipart, presign, signedFetch, type S3Conf } from './s3.ts';
 import { cdnRedirect, isBulk } from './cdn.ts';
 import { kickModal } from './modal.ts';
-import { MAX_BODY_BYTES, document as placesDocument, emptyDoc, normalize as normalizePlaces, validatePlaces } from './places.ts';
+import { MAX_BODY_BYTES, document as placesDocument, emptyDoc, normalize as normalizePlaces, validatePlaces, validateView } from './places.ts';
 
 interface Env { DB: any; APP_KEY: string; WORKER_TOKEN: string; ALLOWED_ORIGINS: string;
   S3_ENDPOINT: string; S3_REGION: string; S3_BUCKET: string; S3_KEY_ID: string; S3_SECRET: string;
@@ -171,7 +171,12 @@ async function route(req: Request, env: Env, ctx: Ctx): Promise<Response> {
       try { body = JSON.parse(raw); } catch { return json({ ok: false, error: 'body is not valid JSON', index: null, field: 'body' }, 400, NO_STORE); }
       const checked = validatePlaces(body);
       if (!checked.ok) return json(checked, 400, NO_STORE);
-      const doc = placesDocument(checked.places);
+      // a body without `view` (an older viewer, a pin edit) keeps the crop already stored; null clears it
+      const view = validateView(body);
+      if (!view.ok) return json(view, 400, NO_STORE);
+      let keep = view.view;
+      if (keep === undefined) { const prev = await objectText(env, key); keep = prev ? normalizePlaces(prev)?.view : undefined; }
+      const doc = placesDocument(checked.places, undefined, keep);
       const res = await signedFetch(s3(env), 'PUT', key, {}, JSON.stringify(doc), { 'content-type': 'application/json' });
       if (!res.ok) return json({ error: `storage refused the file (${res.status})` }, 502, NO_STORE);
       return json({ ok: true, updatedAt: doc.updatedAt, count: doc.places.length }, 200, NO_STORE);

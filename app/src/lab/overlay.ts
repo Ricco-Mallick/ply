@@ -93,6 +93,8 @@ export class Overlay {
   private tag(cls: string, ...kids: (Node | string)[]) { const d = document.createElement('div'); d.className = `lab-tag ${cls}`; d.append(...kids); this.labels.append(d); return d; }
 
   // ---------- pins ----------
+  /** Set before setPlaces: a click on a pin's label calls it with the place id. */
+  onPin: ((id: string) => void) | null = null;
   setPlaces(places: Place[], style: PinStyle, show: boolean) {
     this.places = places; this.pinStyle = style; this.showPins = show;
     for (const el of this.pinEls.values()) el.remove(); this.pinEls.clear(); this.beacons.clear();
@@ -102,6 +104,9 @@ export class Overlay {
         : style === 'beacon' ? this.tag(`pin pin-${style}`, node('span', 'pin-beacon-l', node('b', '', p.name), node('em')))
         : this.tag(`pin pin-${style}`, node('span', 'pin-dot'), node('span', 'pin-dot-l', p.name, node('em')));
       el.dataset.id = p.id; this.pinEls.set(p.id, el);
+      // a pin opens its place's card (the walkthrough sets onPin); a place with a note, link or photo says so
+      if (p.info) el.classList.add('has-info');
+      if (this.onPin) { el.classList.add('pin-open'); el.addEventListener('click', ev => { ev.stopPropagation(); this.onPin?.(p.id); }); }
       if (style === 'beacon') {
         const h = 2.2, geo = new THREE.CylinderGeometry(.035, .035, h, 12, 1, true);
         const mat = new THREE.ShaderMaterial({ transparent: true, depthWrite: false, depthTest: false, blending: THREE.AdditiveBlending, side: THREE.DoubleSide,

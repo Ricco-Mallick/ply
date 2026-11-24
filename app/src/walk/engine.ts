@@ -3,7 +3,7 @@
    and collision through a Collider (collider.ts: the pipeline's occupancy grid today). The React HUD reads `state`
    and calls the methods. */
 import * as THREE from 'three';
-import { SparkRenderer, SplatMesh } from '@sparkjsdev/spark';
+import { SparkRenderer, SplatEdit, SplatEditRgbaBlendMode, SplatEditSdf, SplatEditSdfType, SplatMesh } from '@sparkjsdev/spark';
 import { OccupancyGrid, type SceneManifest } from './scene';
 import { GridCollider, type Collider, type Point } from './collider';
 import { RADIUS, REACH, SPEED, WHEEL, WHEEL_MIN, WHEEL_WALK, ease, pace, recover, walkFrame, type Walker } from './walker';
@@ -84,7 +84,7 @@ export class WalkEngine {
   emit() { this.listeners.forEach(f => f()); }
 
   async load(m: SceneManifest, base: URL) {
-    this.floorY = m.floorY ?? 0; this.eye = m.eyeHeight ?? 1.55;
+    this.floorY = m.floorY ?? 0; this.eye = m.eyeHeight ?? 1.55; this.manifestBounds = m.bounds ?? null;
     const p = m.start?.position ?? [0, 0, 0]; this.state.pos.set(p[0], this.floorY, p[2]); this.state.yaw = m.start?.yaw ?? 0;
     if (m.occupancy) { try { this.grid = (await OccupancyGrid.load(base, m.occupancy)).grid; } catch { this.grid = null; } }
     // a prebuilt LOD tree streams: the small header arrives first, then only the chunks this camera needs. That is
@@ -143,6 +143,79 @@ export class WalkEngine {
   }
   lock() { if (matchMedia('(pointer: fine)').matches) this.canvas.requestPointerLock?.(); }
 
+  /** Where the camera stands and looks, for a share link. */
+  pose() { const p = this.state.pos; return { x: p.x, y: p.y, z: p.z, yaw: this.state.yaw, pitch: this.pitch, mode: this.state.mode }; }
+  /** Put the camera at a shared pose; a walk pose inside a wall moves to the nearest spot the walker fits. */
+  setPose(v: { x: number; y: number; z: number; yaw: number; pitch: number; mode: Mode }) {
+    const s = this.state; s.mode = v.mode; s.pos.set(v.x, v.mode === 'walk' ? this.floorY : v.y, v.z); s.yaw = v.yaw; this.pitch = v.pitch;
+    this.vel.set(0, 0, 0); if (v.mode === 'walk') this.unstick(); this.emit();
+  }
+
+  /** The floor point under a screen position (CSS px), or with `surface` the splat surface it hits first. */
+  pick(x: number, y: number, surface: boolean) {
+    const rc = new THREE.Raycaster(), ndc = new THREE.Vector2(x / innerWidth * 2 - 1, 1 - y / innerHeight * 2);
+    rc.setFromCamera(ndc, this.camera);
+    if (surface && this.splat) { const hit = rc.intersectObject(this.splat, false)[0]; if (hit) return { point: hit.point, surface: true }; }
+    const t = (this.floorY - rc.ray.origin.y) / rc.ray.direction.y;
+    return t > 0 && t < 60 ? { point: rc.ray.at(t, new THREE.Vector3()), surface: false } : null;
+  }
+
+  /** Glide to a floor point (click to move): eased, about a second for a room's length, keeping the heading. Returns
+      false when the walker has nowhere to stand near it. */
+  glideTo(x: number, z: number) {
+    const c = this.collider;
+    if (c && !c.free(x, z, RADIUS)) { const q = c.nearestFree(x, z, RADIUS, REACH); if (!q) return false; x = q.x; z = q.z; }
+    const s = this.state, x0 = s.pos.x, z0 = s.pos.z, d = Math.hypot(x - x0, z - z0); if (d < .05) return true;
+    const dur = Math.min(1.4, .45 + d * .09); let t = 0;
+    if (this.glide) this.frameHooks.delete(this.glide);
+    const hook = (dt: number) => {
+      t = Math.min(1, t + dt / dur); const k = t < .5 ? 4 * t * t * t : 1 - (-2 * t + 2) ** 3 / 2;
+      s.pos.x = x0 + (x - x0) * k; s.pos.z = z0 + (z - z0) * k; this.vel.set(0, 0, 0);
+      if (t >= 1) { this.frameHooks.delete(hook); this.glide = null; }
+    };
+    this.glide = hook; this.frameHooks.add(hook); this.touched(); return true;
+  }
+  private glide: ((dt: number) => void) | null = null;
+
+  /** The frame as a picture: rendered now and read back in the same task, so no preserved buffer is needed. */
+  snapshot(maxW = 1600, type = 'image/png', quality = .9): string {
+    this.renderer.render(this.scene, this.camera);
+    const src = this.canvas, k = Math.min(1, maxW / src.width), c = document.createElement('canvas');
+    c.width = Math.round(src.width * k); c.height = Math.round(src.height * k);
+    const x = c.getContext('2d')!; x.filter = this.canvas.style.filter || 'none'; x.drawImage(src, 0, 0, c.width, c.height);
+    return c.toDataURL(type, quality);
+  }
+
+  /** Hide every splat outside a box (scene metres): the team's crop of floaters and the street through a window. */
+  crop: { min: [number, number, number]; max: [number, number, number] } | null = null;
+  private cropEdit: SplatEdit | null = null; private cropSdf: SplatEditSdf | null = null;
+  setCrop(box: { min: [number, number, number]; max: [number, number, number] } | null) {
+    this.crop = box; const sp = this.splat; if (!sp) return;
+    if (!box) { if (this.cropEdit) { sp.remove(this.cropEdit); this.cropEdit = this.cropSdf = null; } this.emit(); return; }
+    if (!this.cropEdit) {
+      this.cropEdit = new SplatEdit({ rgbaBlendMode: SplatEditRgbaBlendMode.MULTIPLY, softEdge: .03 });
+      this.cropSdf = new SplatEditSdf({ type: SplatEditSdfType.BOX, invert: true, opacity: 0, color: new THREE.Color(1, 1, 1) });
+      this.cropEdit.addSdf(this.cropSdf); sp.add(this.cropEdit);
+    }
+    // the edit lives under the splat; undo the splat's own transform so the box is in scene metres
+    sp.updateMatrixWorld(true); const inv = sp.matrixWorld.clone().invert();
+    this.cropEdit.matrixAutoUpdate = false; this.cropEdit.matrix.copy(inv); this.cropEdit.matrixWorldNeedsUpdate = true;
+    const [a, b] = [box.min, box.max];
+    this.cropSdf!.position.set((a[0] + b[0]) / 2, (a[1] + b[1]) / 2, (a[2] + b[2]) / 2);
+    this.cropSdf!.scale.set((b[0] - a[0]) / 2, (b[1] - a[1]) / 2, (b[2] - a[2]) / 2);
+    this.emit();
+  }
+  /** The splat's extent in scene metres (manifest bounds when given), for the crop's sliders. */
+  extent(): { min: [number, number, number]; max: [number, number, number] } | null {
+    const m = this.manifestBounds; if (m) return m;
+    const sp = this.splat; if (!sp) return null; sp.updateMatrixWorld(true);
+    const b = new THREE.Box3(), v = new THREE.Vector3(); let n = 0;
+    const src: { forEachSplat: SplatMesh['forEachSplat'] } = (sp as any).splats?.lodSplats?.numSplats ? (sp as any).splats.lodSplats : sp;
+    src.forEachSplat((i, c) => { if (i % 7 === 0) { v.copy(c).applyMatrix4(sp.matrixWorld); b.expandByPoint(v); n++; } });
+    return n ? { min: b.min.toArray() as [number, number, number], max: b.max.toArray() as [number, number, number] } : null;
+  }
+  manifestBounds: { min: [number, number, number]; max: [number, number, number] } | null = null;
+
   bind() {
     const kd = (e: KeyboardEvent) => {
       if ((e.target as HTMLElement)?.closest?.('input,textarea')) return;
@@ -176,7 +249,7 @@ export class WalkEngine {
     const fw = FW.set(-Math.sin(s.yaw), 0, -Math.cos(s.yaw)), rt = RT.set(Math.cos(s.yaw), 0, -Math.sin(s.yaw));
     if (s.mode === 'fly') fw.set(-Math.sin(s.yaw) * Math.cos(this.pitch), Math.sin(this.pitch), -Math.cos(s.yaw) * Math.cos(this.pitch));
     const want = fw.multiplyScalar(f).add(rt.multiplyScalar(r)); if (want.lengthSq() > 1) want.normalize(); want.multiplyScalar(base); want.y += up * base;
-    if (f || r || up) this.touched();
+    if (f || r || up) { this.touched(); if (this.glide) { this.frameHooks.delete(this.glide); this.glide = null; } }  // keys take over from a click-to-move
     const p = s.pos, c = s.mode === 'walk' ? this.collider : null;
     if (c) {
       const b = this.body; b.x = p.x; b.z = p.z; b.vx = this.vel.x; b.vz = this.vel.z;
