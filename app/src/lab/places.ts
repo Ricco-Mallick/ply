@@ -11,7 +11,10 @@ export interface Place {
   /** AI detection: class, confidence, half-size of the box around it */
   ai?: { cls: string; conf: number; half: [number, number, number] };
   pinned?: boolean;
+  /** the place's info card: a note, an http(s) link, a small photo of the spot (JPEG data URL) */
+  info?: PlaceInfo;
 }
+export interface PlaceInfo { note?: string; link?: string; photo?: string }
 
 /** The first real capture (job 0ffc07fb): floor at y = 0. */
 export const ROOM_PLACES: Place[] = [

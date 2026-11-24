@@ -77,6 +77,8 @@ Statuses: `400` validation, `401` missing or wrong key, `403` invite, `405` meth
 | `p` | exactly three finite numbers, `abs(x) < 5000` and `abs(z) < 5000` |
 | `ai` | optional object: `cls` string 1 to 80 characters, `conf` finite number, `half` three finite numbers |
 | `pinned` | optional boolean |
+| `info` | optional object with only `note` (text up to 600 characters), `link` (an `http:` or `https:` address up to 400 characters) and `photo` (a `data:image/jpeg` or `data:image/webp` base64 URL up to 60 kB): the place's info card |
+| `view` | optional, on the body (not a place): `{crop: {min: [x, y, z], max: [x, y, z]}}` in metres with min below max on every axis, or `null` to clear it. A body without `view` keeps the stored one, so a pin edit never drops the crop |
 
 The API does not have per-scene bounds on this route, so the `p` check is the world bound above; the viewer clamps to
 the scene's own bounds when it draws.

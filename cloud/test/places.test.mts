@@ -270,3 +270,42 @@ test('a successful write round-trips: schema, fresh ISO updatedAt, count and pla
   assert.deepEqual(got.json, { schema: 1, updatedAt: body.updatedAt, places: sent });
   assert.equal(cacheCalls, 0, 'the read after the write never consults the edge cache');
 });
+
+test('info: a note, an http(s) link and a small JPEG photo round-trip; anything else is 400', async () => {
+  const id = scene('info');
+  const photo = 'data:image/jpeg;base64,' + 'A'.repeat(400);
+  const ok = await write(id, { places: [place({ info: { note: '  Fire extinguisher behind the door  ', link: 'https://example.org/map', photo } })] });
+  assert.equal(ok.status, 200);
+  const got = await read(id);
+  assert.deepEqual(got.json.places[0].info, { note: 'Fire extinguisher behind the door', link: 'https://example.org/map', photo });
+  for (const [info, field] of [
+    [{ link: 'javascript:alert(1)' }, 'info.link'],
+    [{ note: 'x'.repeat(601) }, 'info.note'],
+    [{ photo: 'data:image/svg+xml;base64,PHN2Zz4=' }, 'info.photo'],
+    [{ photo: 'data:image/jpeg;base64,' + 'A'.repeat(70_000) }, 'info.photo'],
+    [{ html: '<b>x</b>' }, 'info'],
+    ['text', 'info'],
+  ] as const) {
+    const res = await write(scene('info-bad'), { places: [place({ info })] });
+    assert.equal(res.status, 400, JSON.stringify(info).slice(0, 60));
+    assert.equal((await res.json() as any).field, field);
+  }
+});
+
+test('view.crop is stored with the places, kept by a write without view, cleared by null', async () => {
+  const id = scene('crop');
+  const crop = { min: [-3, -0.2, -4], max: [3, 3, 4] };
+  assert.equal((await write(id, { places: [place()], view: { crop } })).status, 200);
+  assert.deepEqual((await read(id)).json.view, { crop });
+  assert.equal((await write(id, { places: [place({ name: 'Front door' })] })).status, 200);   // a pin edit from an older viewer
+  const kept = (await read(id)).json;
+  assert.equal(kept.places[0].name, 'Front door');
+  assert.deepEqual(kept.view, { crop });
+  assert.equal((await write(id, { places: [place()], view: null })).status, 200);
+  assert.equal('view' in (await read(id)).json, false);
+  for (const view of [{ crop: { min: [0, 0, 0], max: [0, 1, 1] } }, { crop: { min: [0, 0], max: [1, 1, 1] } }, { spin: 1 }, 'x']) {
+    const res = await write(scene('crop-bad'), { places: [], view });
+    assert.equal(res.status, 400, JSON.stringify(view));
+    assert.match((await res.json() as any).field, /^view/);
+  }
+});

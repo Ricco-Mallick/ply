@@ -10,8 +10,8 @@ import { Glass } from '../shared/Glass';
 import type { WalkEngine } from './engine';
 import type { MapExtras } from './Walk';
 import { Navigator, pathLength, steps, type Place } from '../lab/places';
-import { parsePlacesPayload, placesFile, validatePlaces, type PlaceIssue } from '../lab/place-edit';
-import { loadPlaces, placesTarget, rememberCode, savePlaces, savedCode, type SaveResult } from './places-api';
+import { isPhoto, parsePlacesPayload, placesFile, safeLink, validatePlaces, type PlaceIssue } from '../lab/place-edit';
+import { loadPlaces, placesTarget, rememberCode, savePlaces, savedCode, type SaveResult, type SceneView } from './places-api';
 import { parseDeepLink } from './deeplink';
 import { RADIUS } from './walker';
 import { Overlay } from '../lab/overlay';
@@ -57,10 +57,15 @@ const failureText = (res: SaveResult) => res.kind === 'offline'
       ? `The server refused it${res.index !== undefined ? ` at place ${res.index + 1}${res.field ? ` (${res.field})` : ''}` : ''}: ${res.detail}. Kept on this device.`
       : res.kind === 'failed' ? `Saving failed${res.status ? ` (${res.status})` : ''}: ${res.detail}. Kept on this device.` : 'Kept on this device.';
 
-export function PlacesLayer({ engine, base, entered, onMap, onData, searchOpen, onSearch, tagMode, onTagMode }: {
+/** What the walkthrough can ask of the places layer beyond pins: the team's saved view (crop) and saving a new one
+    through the same save path (team code prompt, local fallback) the pins use. */
+export interface PlacesApi { view: SceneView | undefined; saveView: (v: SceneView | null) => void }
+
+export function PlacesLayer({ engine, base, entered, onMap, onData, searchOpen, onSearch, tagMode, onTagMode, snap, onApi }: {
   engine: WalkEngine; base: URL | null; entered: boolean; onMap: (m: MapExtras) => void;
   onData?: (d: { places: Place[]; nav: Navigator | null }) => void; searchOpen: boolean; onSearch: (v: boolean) => void;
   tagMode: boolean; onTagMode: (v: boolean) => void;
+  snap?: () => string | null; onApi?: (api: PlacesApi) => void;
 }) {
   const [places, setPlaces] = useState<Place[] | null>(null);
   const [ov, setOv] = useState<Overlay | null>(null); const [nav, setNav] = useState<Navigator | null>(null);
@@ -73,6 +78,8 @@ export function PlacesLayer({ engine, base, entered, onMap, onData, searchOpen, 
   const [code, setCode] = useState(savedCode);
   const [localDraft, setLocalDraft] = useState(false);
   const draftKey = useRef(''), served = useRef<Place[]>([]);
+  const [view, setView] = useState<SceneView | undefined>(undefined); const pendingView = useRef<SceneView | null | undefined>(undefined);
+  const [card, setCard] = useState<string | null>(null);   // the place whose info card is open
 
   // places come from the API, then from places.json next to the scene; a draft left by a failed save wins until it is
   // saved or discarded, and the note says where the list came from
@@ -81,7 +88,7 @@ export function PlacesLayer({ engine, base, entered, onMap, onData, searchOpen, 
     let live = true; draftKey.current = draftKeyFor(base);
     loadPlaces(base).then(read => {
       if (!live) return;
-      served.current = read?.places ?? [];
+      served.current = read?.places ?? []; setView(read?.view);
       const kept = readDraft(draftKey.current);
       if (kept.length) {
         setPlaces(kept); setLocalDraft(true);
@@ -96,10 +103,16 @@ export function PlacesLayer({ engine, base, entered, onMap, onData, searchOpen, 
   useEffect(() => {
     if (made.current || !engine.state.loaded || places === null) return;
     const n = engine.grid ? new Navigator(engine.grid, RADIUS) : null, o = new Overlay(engine, n); o.allPlaces = places;
+    o.onPin = id => { onTagMode(false); setCard(id); };
     made.current = true; setNav(n); setOv(o);
     return () => { o.dispose(); made.current = false; };
   }, [engine.state.loaded, places === null]);
   useEffect(() => { if (ov) ov.allPlaces = places ?? []; }, [ov, places]);
+  // the saved crop applies once the splat is in; the walkthrough's crop panel saves through push() like a pin does
+  useEffect(() => { if (engine.state.loaded) engine.setCrop(view?.crop ?? null); }, [engine.state.loaded, view]);
+  const pushRef = useRef<(v: SceneView | null) => void>(() => {});
+  pushRef.current = v => { void push(places ?? [], savedCode(), v); };
+  useEffect(() => { onApi?.({ view, saveView: v => pushRef.current(v) }); }, [view, onApi]);
   useEffect(() => { if (places) onData?.({ places, nav }); }, [places, nav, onData]);
   // 200 labelled places means 200 floating labels over the room. Stack neighbours of the same kind into one pin
   // ("Bench ×6"); the palette and the routing still see every individual place.
@@ -176,6 +189,7 @@ export function PlacesLayer({ engine, base, entered, onMap, onData, searchOpen, 
     else setNote({ tone: 'bad', text: `This link asks for a place called “${wanted}”, which is not in this scene. It may have been renamed or deleted.` });
   }, [wanted, places]);
 
+  useEffect(() => { if (!card) return; const k = (e: KeyboardEvent) => { if (e.key === 'Escape') setCard(null); }; addEventListener('keydown', k); return () => removeEventListener('keydown', k); }, [card]);
   // Ctrl/Cmd+K opens search, Esc closes it (the pointer lock is released so the palette can be used)
   useEffect(() => {
     const k = (e: KeyboardEvent) => { if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'k') { e.preventDefault(); document.exitPointerLock?.(); setOpen(!searchOpen); } if (e.key === 'Escape') setOpen(false); };
@@ -214,17 +228,22 @@ export function PlacesLayer({ engine, base, entered, onMap, onData, searchOpen, 
     if (draftKey.current) writeDraft(draftKey.current, next);
     setLocalDraft(true); setNote({ tone: 'local', text });
   };
-  const push = async (next: Place[], codeUsed: string) => {
+  const push = async (next: Place[], codeUsed: string, v?: SceneView | null) => {
     const target = placesTarget(base);
-    if (!target) { keepLocal(next, 'This scene is served as a file, so the tag stays on this device. Export places.json to move it onto the server.'); return; }
-    setSaving(true); const res = await savePlaces(target, next, codeUsed); setSaving(false);
+    if (!target) {
+      if (v !== undefined) { setNote({ tone: 'local', text: 'This scene is served as a file, so the crop holds for this visit only.' }); return; }
+      keepLocal(next, 'This scene is served as a file, so the tag stays on this device. Export places.json to move it onto the server.'); return;
+    }
+    setSaving(true); const res = await savePlaces(target, next, codeUsed, fetch, v); setSaving(false);
     if (res.kind === 'saved') {
       if (draftKey.current) clearDraft(draftKey.current);
-      setLocalDraft(false); setPending(null); setAuth(null); setGuide(false); setTagErr(null);
+      setLocalDraft(false); setPending(null); setAuth(null); setGuide(false); setTagErr(null); pendingView.current = undefined;
+      if (v !== undefined) { setView(v ?? undefined); setNote({ tone: 'ok', text: v?.crop ? 'Crop saved: everyone who opens this twin sees it.' : 'Crop removed for everyone.' }); return; }
       setNote({ tone: 'ok', text: `Saved · ${res.count} place${res.count === 1 ? '' : 's'} on the server${res.updatedAt ? ` · ${new Date(res.updatedAt).toLocaleTimeString()}` : ''}.` });
       return;
     }
-    if (res.kind === 'auth') { setPending(next); setAuth({ detail: res.detail }); setNote({ tone: 'bad', text: 'The server wants a team code before it will save places.' }); return; }
+    if (v !== undefined && res.kind !== 'auth') { setNote({ tone: 'bad', text: `Crop not saved: ${res.kind === 'forbidden' ? 'that code can look but not edit' : res.detail}.` }); return; }
+    if (res.kind === 'auth') { setPending(next); pendingView.current = v; setAuth({ detail: res.detail }); setNote({ tone: 'bad', text: 'The server wants a team code before it will save.' }); return; }
     if (res.kind === 'forbidden') { keepLocal(next, failureText(res)); setPending(next); setAuth({ detail: res.detail, forbidden: true }); return; }
     keepLocal(next, failureText(res));
   };
@@ -247,7 +266,7 @@ export function PlacesLayer({ engine, base, entered, onMap, onData, searchOpen, 
   };
   const retrySave = () => {
     if (!pending) return;
-    rememberCode(code); setAuth(null); void push(pending, code);
+    rememberCode(code); setAuth(null); void push(pending, code, pendingView.current);
   };
   const dismissAuth = () => { const next = pending; setAuth(null); setPending(null); if (next) keepLocal(next, 'Not saved: a team code is needed. The change is kept on this device; export places.json to keep it for good.'); };
   // Esc closes the tag dialog (its input usually has focus, but the scene can have it) or the code prompt
@@ -270,6 +289,7 @@ export function PlacesLayer({ engine, base, entered, onMap, onData, searchOpen, 
 
   if (places === null || !entered) return null;
   const dist = (p: Place) => Math.hypot(p.p[0] - me.x, p.p[2] - me.z);
+  const cardPlace = card ? list.find(p => p.id === card) ?? null : null;
   const L = path ? pathLength(path) : 0, turns = path && destPlace ? steps(path, destPlace.name) : [];
   return (
     <>
@@ -277,7 +297,20 @@ export function PlacesLayer({ engine, base, entered, onMap, onData, searchOpen, 
       {open && <Palette places={list} pinned={shown} dist={dist} onPick={id => { setDest(id); setGuide(false); setOpen(false); }} onClose={() => setOpen(false)}
         onEdit={id => { const p = list.find(x => x.id === id); if (p) openEditor(p); }} onTag={() => { setOpen(false); onTagMode(true); }} />}
       {draft && <TagPlace initial={draft.place} at={draft.at} taken={list.map(p => p.id)} busy={saving} error={tagErr}
-        onSave={savePlace} onDelete={deletePlace} onCancel={() => { setDraft(null); setTagErr(null); }} />}
+        onSave={savePlace} onDelete={deletePlace} onCancel={() => { setDraft(null); setTagErr(null); }} snap={snap} />}
+      {cardPlace && !draft && <Glass className="route-card rc-palette info-card" opts={{ radius: 20, shader: false }} role="dialog" aria-labelledby="info-title"
+        style={{ position: 'fixed', left: 18, bottom: 18, top: 'auto', right: 'auto' }}>
+        <div className="rc-h"><span className="wide eyebrow">{cardPlace.cat} · {dist(cardPlace).toFixed(1)} m away</span><button className="rc-x" onClick={() => setCard(null)} aria-label="Close">×</button></div>
+        <h2 id="info-title">{cardPlace.name}</h2>
+        {isPhoto(cardPlace.info?.photo) && <img className="info-photo" src={cardPlace.info!.photo} alt={`The view at ${cardPlace.name}`} />}
+        {cardPlace.info?.note ? <p className="info-note">{cardPlace.info.note}</p> : !cardPlace.info?.photo && <p className="info-note dim">No notes yet. Edit the place to add a note, a link or a photo.</p>}
+        {safeLink(cardPlace.info?.link) && <a className="info-link" href={safeLink(cardPlace.info!.link)!} target="_blank" rel="noopener noreferrer">{new URL(safeLink(cardPlace.info!.link)!).hostname} ↗</a>}
+        {cardPlace.ai && <p className="mono rc-m">AI found a {cardPlace.ai.cls} · {Math.round(cardPlace.ai.conf * 100)}%</p>}
+        <div className="rc-a">
+          <button className="btn" onClick={() => { setDest(cardPlace.id); setGuide(false); setCard(null); }}>Route here</button>
+          <button className="rc-edit" onClick={() => { setCard(null); openEditor(cardPlace); }}>Edit place</button>
+        </div>
+      </Glass>}
       {auth && <Glass className="tag-dlg auth-dlg" opts={{ radius: 20, shader: false }} role="dialog" aria-labelledby="auth-title">
         <form onSubmit={e => { e.preventDefault(); retrySave(); }}>
           <div className="tag-h"><span className="wide eyebrow">Save places</span><button type="button" className="rc-x" onClick={dismissAuth} aria-label="Close">×</button></div>
@@ -301,7 +334,7 @@ export function PlacesLayer({ engine, base, entered, onMap, onData, searchOpen, 
           <button className="pn-x" onClick={() => setNote(null)} aria-label="Dismiss">×</button>
         </div>
       </div>}
-      {destPlace && <Glass className="route-card rc-palette" opts={{ radius: 20, shader: false }} style={{ position: 'fixed', left: 18, bottom: 18, top: 'auto', right: 'auto' }}>
+      {destPlace && !cardPlace && <Glass className="route-card rc-palette" opts={{ radius: 20, shader: false }} style={{ position: 'fixed', left: 18, bottom: 18, top: 'auto', right: 'auto' }}>
         <div className="rc-h"><span className="wide eyebrow">Route</span><button className="rc-x" onClick={() => { setDest(null); setGuide(false); }} aria-label="End route">×</button></div>
         <h2>{destPlace.name}</h2>
         {path ? <p className="mono rc-m"><b>{L.toFixed(1)} m</b> · {Math.max(1, Math.round(L / 1.2))} s walk · {turns.length - 1} turn{turns.length === 2 ? '' : 's'}</p> : <p className="mono rc-m bad">No walkable route from here</p>}

@@ -2,13 +2,31 @@
 /* Places as data: the id/name/category/position rules from the API contract, the slug that names a new tag, the
    tolerant read of a places.json (the labelling pass writes one; a hand-pinned one is a different shape), and the
    file written back out when a save could not reach the server. Pure, so test/place-edit.test.mts covers it. */
-import type { Category, Place } from './places';
+import type { Category, Place, PlaceInfo } from './places';
 
 /** The four categories the walkthrough's tag dialog offers, in the order it offers them. */
 export const CATEGORIES: readonly Category[] = ['Furniture', 'Storage', 'Exits', 'Things'];
 /** The API takes 500 places, names of 1..80 characters and ids of 1..41 matching ^[a-z0-9][a-z0-9-]{0,40}$. */
 export const MAX_PLACES = 500;
 export const NAME_MAX = 80;
+/** The API's caps on a place's info card (cloud/src/places.ts). */
+export const NOTE_MAX = 600, LINK_MAX = 400, PHOTO_MAX = 60_000;
+const PHOTO_RE = /^data:image\/(jpeg|webp);base64,[A-Za-z0-9+/]+={0,2}$/;
+/** A link a card may open: http(s) only, so a hand-edited places.json cannot carry javascript: into an href. */
+export function safeLink(v: unknown): string | null {
+  if (typeof v !== 'string' || !v || v.length > LINK_MAX) return null;
+  try { const u = new URL(v); return u.protocol === 'https:' || u.protocol === 'http:' ? u.href : null; } catch { return null; }
+}
+export const isPhoto = (v: unknown): v is string => typeof v === 'string' && v.length <= PHOTO_MAX && PHOTO_RE.test(v);
+/** The card fields that pass the API's rules, or undefined when nothing is left. */
+export function cleanInfo(v: unknown): PlaceInfo | undefined {
+  if (!v || typeof v !== 'object') return undefined;
+  const q = v as Record<string, unknown>, out: PlaceInfo = {};
+  if (typeof q.note === 'string' && q.note.trim()) out.note = q.note.trim().slice(0, NOTE_MAX);
+  const link = safeLink(q.link); if (link) out.link = link;
+  if (isPhoto(q.photo)) out.photo = q.photo;
+  return Object.keys(out).length ? out : undefined;
+}
 export const PLACE_ID = /^[a-z0-9][a-z0-9-]{0,40}$/;
 
 export const isPlaceId = (v: unknown): v is string => typeof v === 'string' && PLACE_ID.test(v);
@@ -17,7 +35,7 @@ export const isCategory = (v: unknown): v is Category => CATEGORIES.includes(v a
 export interface PlaceIssue {
   /** -1 when the problem is the list itself, not one entry */
   index: number;
-  field: 'places' | 'id' | 'name' | 'cat' | 'p';
+  field: 'places' | 'id' | 'name' | 'cat' | 'p' | 'info' | 'info.note' | 'info.link' | 'info.photo';
   message: string;
 }
 export interface PlaceCheck { ok: boolean; issues: PlaceIssue[] }
@@ -48,14 +66,16 @@ export function slugId(name: string, taken: Iterable<string> = []): string {
 
 /** Build the place the dialog saves: a cleaned name, a canonical category, a valid position, and an id that is the
     given one or a fresh slug unique against `taken`. */
-export function normalisePlace(input: { name: string; cat: Category; p: readonly number[]; id?: string; ai?: Place['ai']; pinned?: boolean }, taken: Iterable<string> = []): Place {
+export function normalisePlace(input: { name: string; cat: Category; p: readonly number[]; id?: string; ai?: Place['ai']; pinned?: boolean; info?: PlaceInfo }, taken: Iterable<string> = []): Place {
   const ai = input.ai && typeof input.ai === 'object' && typeof input.ai.cls === 'string'
     ? { cls: input.ai.cls, conf: Number.isFinite(input.ai.conf) ? input.ai.conf : 0, half: asPoint(input.ai.half) ?? [0.1, 0.1, 0.1] }
     : undefined;
+  const info = cleanInfo(input.info);
   return {
     id: input.id && isPlaceId(input.id) ? input.id : slugId(input.name, taken),
     name: cleanName(input.name), cat: input.cat, p: asPoint(input.p) ?? [0, 0, 0],
     ...(ai ? { ai } : {}), ...(input.pinned ? { pinned: true } : {}),
+    ...(info ? { info } : {}),
   };
 }
 
@@ -76,6 +96,15 @@ export function validatePlaces(input: unknown): PlaceCheck {
     else if (p.name.trim().length > NAME_MAX) issues.push({ index, field: 'name', message: `names stop at ${NAME_MAX} characters` });
     if (!isCategory(p.cat)) issues.push({ index, field: 'cat', message: `the category is one of ${CATEGORIES.join(', ')}` });
     if (!asPoint(p.p)) issues.push({ index, field: 'p', message: 'the position is three numbers [x, y, z]' });
+    if (p.info !== undefined) {
+      const i = p.info as Record<string, unknown> | null;
+      if (!i || typeof i !== 'object') issues.push({ index, field: 'info', message: 'the card is an object' });
+      else {
+        if (i.note !== undefined && (typeof i.note !== 'string' || i.note.length > NOTE_MAX)) issues.push({ index, field: 'info.note', message: `notes stop at ${NOTE_MAX} characters` });
+        if (i.link !== undefined && !safeLink(i.link)) issues.push({ index, field: 'info.link', message: 'the link must start with https:// or http://' });
+        if (i.photo !== undefined && !isPhoto(i.photo)) issues.push({ index, field: 'info.photo', message: `the photo must be a JPEG under ${PHOTO_MAX / 1000} kB` });
+      }
+    }
   });
   return { ok: issues.length === 0, issues };
 }

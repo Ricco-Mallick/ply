@@ -39,7 +39,17 @@ async function getJson(url: string, doFetch: typeof fetch, init?: RequestInit): 
   return { ok: res.ok, status: res.status, body };
 }
 
-export interface PlacesRead { places: Place[]; source: 'api' | 'file' }
+/** How the team set the twin to be shown (stored next to the places): a crop box in scene metres. */
+export interface SceneView { crop?: { min: [number, number, number]; max: [number, number, number] } }
+export interface PlacesRead { places: Place[]; source: 'api' | 'file'; view?: SceneView }
+
+/** The view block of a places document, if it is a sane one. */
+export function parseView(json: unknown): SceneView | undefined {
+  const v = (json as { view?: { crop?: { min?: unknown; max?: unknown } } } | null)?.view, c = v?.crop;
+  const pt = (q: unknown): q is [number, number, number] => Array.isArray(q) && q.length === 3 && q.every(x => typeof x === 'number' && Number.isFinite(x));
+  if (!c || !pt(c.min) || !pt(c.max) || !c.min.every((m, k) => m < (c.max as number[])[k])) return undefined;
+  return { crop: { min: c.min, max: c.max } };
+}
 
 /** A scene's places: the API first (it never 404s, so an empty answer is a real empty list), and only when that is
     unreachable or answers badly, places.json next to the scene. A page-served scene has no API, so it reads the file.
@@ -51,12 +61,14 @@ export async function loadPlaces(base: URL | string | null, doFetch: typeof fetc
   if (target) {
     try {
       const r = await getJson(target.url, doFetch, { cache: 'no-store' });
-      if (r.ok) return { places: parsePlacesPayload(r.body), source: 'api' };
+      if (r.ok) return { places: parsePlacesPayload(r.body), source: 'api', view: parseView(r.body) };
     } catch { /* no API from here: the file next to the scene is the fallback */ }
   }
   try {
     const r = await doFetch(new URL('places.json', url).href, { cache: 'no-store' });
-    return r.ok ? { places: parsePlacesPayload(await r.json().catch(() => null)), source: 'file' } : null;
+    if (!r.ok) return null;
+    const j = await r.json().catch(() => null);
+    return { places: parsePlacesPayload(j), source: 'file', view: parseView(j) };
   } catch { return null; }
 }
 
@@ -71,13 +83,14 @@ export type SaveResult =
 /** PUT the whole list. 400 names the offending index and field; 401 is a missing or wrong code (ask for it); 403 is a
     code that may look but not tag (a judges invite): the work stays local and can still be exported. A request that
     never leaves the browser is 'offline'. */
-export async function savePlaces(target: PlacesTarget, places: readonly Place[], code: string, doFetch: typeof fetch = fetch): Promise<SaveResult> {
+export async function savePlaces(target: PlacesTarget, places: readonly Place[], code: string, doFetch: typeof fetch = fetch, view?: SceneView | null): Promise<SaveResult> {
   let res: Response;
   try {
     res = await doFetch(target.url, {
       method: 'PUT',
       headers: { 'content-type': 'application/json', 'x-ply-key': code.trim() },
-      body: JSON.stringify({ places }),
+      // no view: the server keeps the crop it has; null clears it
+      body: JSON.stringify(view === undefined ? { places } : { places, view }),
     });
   } catch (err) {
     return { kind: 'offline', detail: err instanceof Error ? err.message : 'the request did not leave the browser' };

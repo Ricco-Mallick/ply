@@ -9,7 +9,35 @@
 export const PLACE_ID = /^[a-z0-9][a-z0-9-]{0,40}$/;
 export const isPlaceId = (v: unknown): v is string => typeof v === 'string' && PLACE_ID.test(v);
 
-export interface DeepLink { scene: string | null; place: string | null }
+/** A shared view: where the camera stood (metres, scene frame), where it looked (radians) and how it moved. */
+export interface ViewPose { x: number; y: number; z: number; yaw: number; pitch: number; mode: 'walk' | 'fly' }
+export interface DeepLink { scene: string | null; place: string | null; at: ViewPose | null; embed: boolean }
+
+/** `at=x,y,z,yaw,pitch[,w|f]`: five finite numbers in sane ranges, or nothing. A link cannot put the camera 5 km away
+    or pass anything but numbers into the engine. */
+export function parseAt(v: string | null | undefined): ViewPose | null {
+  const parts = String(v ?? '').split(',');
+  if (parts.length < 5 || parts.length > 6) return null;
+  const n = parts.slice(0, 5).map(Number);
+  if (!n.every(Number.isFinite) || n.slice(0, 3).some(c => Math.abs(c) > 5000) || Math.abs(n[3]) > 100 || Math.abs(n[4]) > 1.6) return null;
+  const m = parts[5] ?? 'w';
+  if (m !== 'w' && m !== 'f') return null;
+  return { x: n[0], y: n[1], z: n[2], yaw: n[3], pitch: n[4], mode: m === 'f' ? 'fly' : 'walk' };
+}
+export function formatAt(p: ViewPose): string {
+  const r = (v: number, k = 2) => String(+v.toFixed(k));
+  return [r(p.x), r(p.y), r(p.z), r(p.yaw, 3), r(p.pitch, 3), p.mode === 'fly' ? 'f' : 'w'].join(',');
+}
+
+/** The current page's link with the view in it (and nothing else of the page's state changed). */
+export function shareHref(href: string, pose: ViewPose, extra: Record<string, string | null> = {}): string {
+  const u = new URL(href);
+  u.searchParams.set('at', formatAt(pose));
+  u.searchParams.delete('place');
+  for (const [k, v] of Object.entries(extra)) { if (v === null) u.searchParams.delete(k); else u.searchParams.set(k, v); }
+  u.hash = '';
+  return u.href;
+}
 
 /** The query of a search string, a "#fragment" or a whole URL. */
 function params(search: string): URLSearchParams {
@@ -23,7 +51,8 @@ function params(search: string): URLSearchParams {
 export function parseDeepLink(search: string): DeepLink {
   const q = params(search);
   const scene = (q.get('scene') ?? '').trim(), place = (q.get('place') ?? '').trim();
-  return { scene: scene || null, place: isPlaceId(place) ? place : null };
+  const embed = q.get('embed');
+  return { scene: scene || null, place: isPlaceId(place) ? place : null, at: parseAt(q.get('at')), embed: embed === '1' || embed === 'true' };
 }
 
 /** The link the model page's "Navigate" opens. `walkHref` is where walk.html lives ("walk.html", or "/ply/walk.html"
