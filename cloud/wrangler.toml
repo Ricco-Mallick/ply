@@ -16,7 +16,7 @@ S3_BUCKET = "ply-data-bb426385"
 ALLOWED_ORIGINS = "https://ricco.codes,http://localhost:5199,https://localhost:5199"
 HF_REPO = "Ricco-Marcelino/ply-data"
 # the GPU worker's wake-up endpoint (printed by `modal deploy pipeline/modal/ply_modal.py`): change it with the account
-MODAL_TRIGGER_URL = "https://riccomarcelino--ply-trigger.us-east.modal.run"
+MODAL_TRIGGER_URL = "https://opservermakesalt--ply-trigger.us-east.modal.run"
 
 # secrets (wrangler secret put): APP_KEY (capture app uploads/jobs), WORKER_TOKEN (GPU worker), S3_KEY_ID, S3_SECRET
 
