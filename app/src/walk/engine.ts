@@ -6,6 +6,7 @@ import * as THREE from 'three';
 import { SparkRenderer, SplatEdit, SplatEditRgbaBlendMode, SplatEditSdf, SplatEditSdfType, SplatMesh } from '@sparkjsdev/spark';
 import { OccupancyGrid, type SceneManifest } from './scene';
 import { GridCollider, type Collider, type Point } from './collider';
+import { LevelCollider, levelAt, stairAt, type LevelInfo, type Stair } from './levels';
 import { RADIUS, REACH, SPEED, WHEEL, WHEEL_MIN, WHEEL_WALK, ease, pace, recover, walkFrame, type Walker } from './walker';
 import { glassFrame, setGlassSource } from '../shared/glass';
 import { PROFILES, deviceProfile, loadMode, saveLearned, saveMode, type PerfProfile, type QualityMode } from './perf';
@@ -102,6 +103,19 @@ export class WalkEngine {
     try { await this.splat.initialized; this.state.loaded = true; this.state.progress = 1; } catch (e) { console.error('[ply] splat failed to load', url, e); this.state.error = (e as Error)?.message || String(e) || 'The scene failed to load'; this.emit(); return; }
     if (!this.grid || m.floorY === undefined) this.deriveFromSplat(m);
     this.collider = this.grid && new GridCollider(this.grid);
+    // several floors: each its own grid and collider (stairs walkable from both ends); the one at the manifest's floor first
+    if (m.levels?.length && m.levels.length > 1) {
+      this.stairs = m.stairs ?? [];
+      this.levels = [];
+      for (const L of m.levels) {
+        let grid: OccupancyGrid | null = null;
+        try { grid = (await OccupancyGrid.load(base, L.occupancy)).grid; } catch { grid = null; }
+        const col = grid ? new LevelCollider(new GridCollider(grid), this.stairs, L.index) : null;
+        this.levels.push({ index: L.index, name: L.name, floorY: L.floorY, spawn: L.spawn, grid, collider: col });
+      }
+      const here = this.levels.findIndex(L => Math.abs(L.floorY - this.floorY) < 1e-3);
+      this.setLevel(here >= 0 ? here : 0, false);
+    }
     // no start in the manifest: begin in the middle of the walkable floor
     if (!m.start && this.collider) this.openSpawn();
     // a start inside a wall moves to the nearest place the walker fits, when one is near
@@ -216,6 +230,28 @@ export class WalkEngine {
   }
   manifestBounds: { min: [number, number, number]; max: [number, number, number] } | null = null;
 
+  /** Several floors (manifest levels): the one in view, and the walker's feet height (the floor, or the step under it). */
+  levels: (LevelInfo & { grid: OccupancyGrid | null; collider: Collider | null })[] = [];
+  stairs: Stair[] = []; level = 0; groundY = 0;
+  /** Make floor i the one the walker, the map and the routes use. `place` puts the walker at that floor's start. */
+  setLevel(i: number, place = true) {
+    const L = this.levels[i]; if (!L) return;
+    this.level = i; this.floorY = L.floorY; this.groundY = L.floorY; this.grid = L.grid; this.collider = L.collider;
+    if (place && L.spawn) { this.state.pos.set(L.spawn[0], L.floorY, L.spawn[2]); this.vel.set(0, 0, 0); if (this.state.mode === 'walk') this.unstick(); }
+    else if (this.state.mode === 'walk') this.state.pos.y = L.floorY;
+    this.emit();
+  }
+  /** Feet height at the walker's spot: on a staircase the step's height, else the floor's; crossing onto another floor
+      at the top or bottom of the stairs makes it the current one. */
+  private ground(x: number, z: number) {
+    if (this.levels.length < 2) return this.floorY;
+    const st = stairAt(this.stairs, x, z);
+    if (!st) return this.floorY;
+    const near = levelAt(this.levels, st.y + 0.05);
+    if (near !== this.level && Math.abs(st.y - this.levels[near].floorY) < 0.3) this.setLevel(near, false);
+    return st.y;
+  }
+
   bind() {
     const kd = (e: KeyboardEvent) => {
       if ((e.target as HTMLElement)?.closest?.('input,textarea')) return;
@@ -255,11 +291,14 @@ export class WalkEngine {
       const b = this.body; b.x = p.x; b.z = p.z; b.vx = this.vel.x; b.vz = this.vel.z;
       walkFrame(c, b, want.x, want.z, dt, this.spawn); p.x = b.x; p.z = b.z; this.vel.set(b.vx, 0, b.vz);
     } else { this.vel.lerp(want, ease(dt, want.lengthSq() > 0)); p.x += this.vel.x * dt; p.z += this.vel.z * dt; }
-    if (s.mode === 'fly') p.y += this.vel.y * dt; else p.y = this.floorY;
+    if (s.mode === 'fly') {
+      p.y += this.vel.y * dt;
+      if (this.levels.length > 1) { const i = levelAt(this.levels, p.y + .05); if (i !== this.level) { this.level = i; this.floorY = this.levels[i].floorY; this.grid = this.levels[i].grid; this.collider = this.levels[i].collider; this.emit(); } }
+    } else { this.groundY = this.ground(p.x, p.z); p.y = this.floorY; }
     // one bob every metre and a half: the cadence the walk had at its old 1.4 m/s
     const spd = Math.hypot(this.vel.x, this.vel.z); this.bob += spd * dt * 4.1;
     const bobY = s.mode === 'walk' && !RM ? Math.sin(this.bob) * .018 * Math.min(1, spd / SPEED) : 0;
-    this.camera.position.set(p.x, (s.mode === 'walk' ? this.floorY + this.eye : p.y + this.eye) + bobY, p.z);
+    this.camera.position.set(p.x, (s.mode === 'walk' ? (this.levels.length > 1 ? this.groundY : this.floorY) + this.eye : p.y + this.eye) + bobY, p.z);
     this.camera.rotation.set(this.pitch, s.yaw, 0);
   }
 

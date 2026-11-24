@@ -242,3 +242,7 @@ html.embed .map canvas { width: 120px !important; height: 120px !important; }
 /* the More menu shows its tools on every screen size, as full-width rows */
 .more-menu { right: 0; left: auto; min-width: 200px; display: flex; flex-direction: column; gap: 6px; padding: 8px; }
 .more-menu .tour-btn, .more-menu .tour-btn.opt, .more-menu .desk { display: inline-flex !important; width: 100%; justify-content: flex-start; }
+/* several floors: up and down on the map */
+.map-floors { position: absolute; left: 8px; bottom: 8px; display: flex; flex-direction: column; gap: 4px; }
+.map-floors button { width: 26px; height: 26px; border-radius: 8px; border: 1px solid var(--line-2); background: rgba(8, 11, 18, .8); color: var(--fg); font: 600 11px/1 var(--font-body); }
+.map-floors button:disabled { opacity: .35; }

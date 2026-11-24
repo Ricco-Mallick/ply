@@ -66,7 +66,7 @@ from pathlib import Path
 import cv2
 import numpy as np
 
-from plypipe import colmap_txt, geometry, walkcheck
+from plypipe import colmap_txt, geometry, levels as levels_mod, walkcheck
 from plypipe.util import Ctx, update_scene
 
 FREE, BLOCKED, UNKNOWN = 255, 0, 127
@@ -465,10 +465,61 @@ def _write(ctx: Ctx, grid: np.ndarray, meta: dict) -> None:
     update_scene(ctx, {"occupancy": {"image": "occupancy.png", "meta": "occupancy.json"}})
 
 
+def level_grid(model: colmap_txt.Model, floor_y: float, cams: np.ndarray, cell: float = 0.1,
+               max_reproj_px: float = 2.0, height: float = 2.6) -> tuple[np.ndarray, dict]:
+    """One storey's walking grid: the points between just under its floor and its ceiling, shifted so that floor is
+    y = 0, the frames taken on it (and on the stairs) as the walked path, and the sight lines low over its floor."""
+    good = (model.track_len >= 3) & (model.error < max_reproj_px)
+    if good.sum() < 200:
+        good = np.ones(model.num_points, bool)
+    y = model.xyz[:, 1] - floor_y
+    keep = good & (y > -0.3) & (y < height)
+    pts = model.xyz[keep] - [0.0, floor_y, 0.0]
+    c, q = observations(model, keep & (y > -0.1) & (y < 0.6))
+    rays = (c - [0.0, floor_y, 0.0], q - [0.0, floor_y, 0.0])
+    return build_grid(pts, np.asarray(cams) - [0.0, floor_y, 0.0], cell=cell, rays=rays)
+
+
+def _levels(ctx: Ctx, model: colmap_txt.Model, centers: np.ndarray) -> dict | None:
+    """Floors and stairs (plypipe.levels) when the walk went up or down a storey; None for one floor."""
+    if ctx.opt("levels") is False:
+        return None
+    good = (model.track_len >= 3) & (model.error < 2.0)
+    lv = levels_mod.find(centers, model.xyz[good] if good.sum() >= 200 else model.xyz)
+    return lv if len(lv["levels"]) > 1 else None
+
+
 def run_stage(ctx: Ctx) -> dict:
     grid, meta, _, _ = _sparse_grid(ctx)
-    _write(ctx, grid, meta)
-    return {"width": meta["width"], "height": meta["height"], **meta["stats"], "walk": meta["walk"]}
+    model = colmap_txt.read_model(ctx.data_dir / "sparse" / "0")
+    centers, _, _ = model.cameras()
+    lv = _levels(ctx, model, centers)
+    if not lv:
+        _write(ctx, grid, meta)
+        return {"width": meta["width"], "height": meta["height"], **meta["stats"], "walk": meta["walk"]}
+    # several storeys: one grid each, from that storey's points and the frames taken on it and on the stairs
+    lab = np.array(lv["frameLevel"])
+    cell = float(ctx.opt("cell", 0.1))
+    out_levels, summary = [], []
+    for L in lv["levels"]:
+        i, fy = L["index"], L["floorY"]
+        mine = centers[(lab == i) | (lab == -1)]
+        g, m = level_grid(model, fy, mine, cell=cell)
+        m["floorY"] = fy
+        m["walk"] = walkcheck.check(g, m, (float(mine[0][0]), float(mine[0][2])), centers[lab == i][:, [0, 2]])
+        name = "occupancy.png" if abs(fy) < 1e-6 else f"occupancy_L{i}.png"
+        m["image"] = name
+        cv2.imwrite(str(ctx.out / name), g)
+        (ctx.out / name.replace(".png", ".json")).write_text(json.dumps(m, indent=2))
+        out_levels.append({"index": i, "name": f"Floor {i + 1}", "floorY": fy, "eyeY": L["eyeY"], "frames": L["frames"],
+                           "occupancy": {"image": name, "meta": name.replace(".png", ".json")},
+                           "spawn": [round(float(mine[0][0]), 3), fy, round(float(mine[0][2]), 3)]})
+        summary.append({"index": i, "floorY": fy, **m["stats"], "walk": m["walk"]})
+    base = next(L for L in out_levels if abs(L["floorY"]) < 1e-6)
+    update_scene(ctx, {"occupancy": base["occupancy"], "levels": out_levels, "stairs": lv["stairs"]})
+    ctx.log.emit("occupancy", "progress", f"{len(out_levels)} floors at y = {', '.join(str(L['floorY']) for L in out_levels)} m, "
+                                          f"{len(lv['stairs'])} staircase(s)")
+    return {"levels": summary, "stairs": len(lv["stairs"])}
 
 
 def from_depth(ctx: Ctx, ply: Path, holdout: int = 30, antialiased: bool = True, step: int = 5, scale: float = 0.5, fusion=None) -> dict:
@@ -484,6 +535,9 @@ def from_depth(ctx: Ctx, ply: Path, holdout: int = 30, antialiased: bool = True,
     is built or written. Raises if the pass itself fails: the caller decides what that costs."""
     from plypipe import dense
 
+    scene_p = ctx.out / "scene.json"
+    if scene_p.exists() and len(json.loads(scene_p.read_text()).get("levels") or []) > 1:
+        return {"used": "sparse", "why": "several floors: each keeps its own grid from the occupancy stage"}
     cams = dense.training_views(ctx.data_dir, holdout, step, scale)
     rendered = dense.render_views(ply, cams, antialiased, **({"colour": True} if fusion is not None else {})) if cams else None
     if rendered is None:

@@ -17,6 +17,7 @@ import { RADIUS } from './walker';
 import { Overlay } from '../lab/overlay';
 import { Palette } from '../lab/search';
 import { TagPlace } from './TagPlace';
+import { levelAt, routeAcross } from './levels';
 
 const MERGE_M = 2.5; // pins of the same kind closer than this share one badge
 const MAX_STACK = 6; // ...up to six per badge, so a long row still shows where the benches are
@@ -137,11 +138,27 @@ export function PlacesLayer({ engine, base, entered, onMap, onData, searchOpen, 
 
   const me = engine.state.pos;
   const destPlace = places?.find(p => p.id === dest) ?? null;
-  const path = useMemo(() => {
-    if (!nav || !destPlace) return null;
-    return nav.route([me.x, me.z], [destPlace.p[0], destPlace.p[2]]);
-    // recompute when the destination changes, a place is edited, or the visitor has moved far enough to matter
-  }, [nav, destPlace, Math.round(me.x * 2), Math.round(me.z * 2)]);
+  // several floors: one navigator per floor; a place belongs to the floor under it
+  const navs = useMemo(() => engine.levels.length > 1 ? engine.levels.map(L => L.grid ? new Navigator(L.grid, RADIUS) : null) : null, [engine.state.loaded, engine.levels.length]);
+  const full = useMemo(() => {
+    if (!destPlace) return null;
+    if (navs) {
+      const to = levelAt(engine.levels, destPlace.p[1]);
+      return routeAcross(l => navs[l] ? (a, b) => navs[l]!.route(a, b) : null, engine.stairs, { level: engine.level, at: [me.x, me.z] }, { level: to, at: [destPlace.p[0], destPlace.p[2]] });
+    }
+    if (!nav) return null;
+    return nav.route([me.x, me.z], [destPlace.p[0], destPlace.p[2]])?.map(([x, z]) => ({ x, z, level: 0 })) ?? null;
+    // recompute when the destination changes, a place is edited, the visitor changes floor or has moved far enough to matter
+  }, [nav, navs, destPlace, engine.level, Math.round(me.x * 2), Math.round(me.z * 2)]);
+  // what is drawn: the part of the route on the floor in view; what "Take me there" walks: all of it
+  const path = useMemo<[number, number][] | null>(() => {
+    if (!full) return null;
+    const lv = navs ? engine.level : 0, here: [number, number][] = [];
+    for (const q of full) { if (q.level === lv) here.push([q.x, q.z]); else if (here.length) break; }
+    return here.length > 1 ? here : full.length > 1 ? null : null;
+  }, [full]);
+  const walkPath = useMemo<[number, number][] | null>(() => full && full.length > 1 ? full.map(q => [q.x, q.z] as [number, number]) : null, [full]);
+  const otherFloor = !!(navs && destPlace && levelAt(engine.levels, destPlace.p[1]) !== engine.level);
   useEffect(() => { ov?.setRoute(path, 'ribbon', dest); }, [ov, path, dest]);
   useEffect(() => { onMap({ path, pins: shown.map(p => ({ x: p.p[0], z: p.p[2], dest: p.id === dest })) }); }, [path, shown, dest, onMap]);
   useEffect(() => { if (dest && places && !places.some(p => p.id === dest)) { setDest(null); setGuide(false); } }, [places, dest]);
@@ -160,7 +177,7 @@ export function PlacesLayer({ engine, base, entered, onMap, onData, searchOpen, 
 
   // "Take me there": walk the route at 1.25 m/s, turning along it
   useEffect(() => {
-    if (!guide || !path) return; const fixed = path.slice(), L = pathLength(fixed); let d = 0;
+    if (!guide || !walkPath) return; const fixed = walkPath.slice(), L = pathLength(fixed); let d = 0;
     const at = (s: number): [number, number] => { let acc = 0; for (let i = 1; i < fixed.length; i++) { const seg = Math.hypot(fixed[i][0] - fixed[i - 1][0], fixed[i][1] - fixed[i - 1][1]); if (acc + seg >= s) { const k = (s - acc) / seg; return [fixed[i - 1][0] + (fixed[i][0] - fixed[i - 1][0]) * k, fixed[i - 1][1] + (fixed[i][1] - fixed[i - 1][1]) * k]; } acc += seg; } return fixed[fixed.length - 1]; };
     engine.state.pos.y = engine.floorY;  // follow at eye height in either mode; do not switch the visitor into walk
     const hook = (dt: number) => {
@@ -290,7 +307,7 @@ export function PlacesLayer({ engine, base, entered, onMap, onData, searchOpen, 
   if (places === null || !entered) return null;
   const dist = (p: Place) => Math.hypot(p.p[0] - me.x, p.p[2] - me.z);
   const cardPlace = card ? list.find(p => p.id === card) ?? null : null;
-  const L = path ? pathLength(path) : 0, turns = path && destPlace ? steps(path, destPlace.name) : [];
+  const L = walkPath ? pathLength(walkPath) : 0, turns = walkPath && destPlace ? steps(walkPath, destPlace.name) : [];
   return (
     <>
       {tagMode && <div className="tag-hint mono" role="status">{ov ? <>Click a spot on the floor or an object to put a place there · <b>Esc</b> cancels</> : 'Loading the room before a tag can be placed…'}</div>}
@@ -337,10 +354,10 @@ export function PlacesLayer({ engine, base, entered, onMap, onData, searchOpen, 
       {destPlace && !cardPlace && <Glass className="route-card rc-palette" opts={{ radius: 20, shader: false }} style={{ position: 'fixed', left: 18, bottom: 18, top: 'auto', right: 'auto' }}>
         <div className="rc-h"><span className="wide eyebrow">Route</span><button className="rc-x" onClick={() => { setDest(null); setGuide(false); }} aria-label="End route">×</button></div>
         <h2>{destPlace.name}</h2>
-        {path ? <p className="mono rc-m"><b>{L.toFixed(1)} m</b> · {Math.max(1, Math.round(L / 1.2))} s walk · {turns.length - 1} turn{turns.length === 2 ? '' : 's'}</p> : <p className="mono rc-m bad">No walkable route from here</p>}
-        {path && <ol className="rc-steps">{turns.map((t, i) => <li key={i}>{t.text}</li>)}</ol>}
+        {walkPath ? <p className="mono rc-m"><b>{L.toFixed(1)} m</b> · {Math.max(1, Math.round(L / 1.2))} s walk · {turns.length - 1} turn{turns.length === 2 ? '' : 's'}{otherFloor ? ` · by the stairs to ${engine.levels[levelAt(engine.levels, destPlace.p[1])]?.name}` : ''}</p> : <p className="mono rc-m bad">No walkable route from here</p>}
+        {walkPath && <ol className="rc-steps">{turns.map((t, i) => <li key={i}>{t.text}</li>)}</ol>}
         <div className="rc-a">
-          {path && <button className="btn" onClick={() => setGuide(g => !g)}>{guide ? 'Pause' : 'Take me there'}</button>}
+          {walkPath && <button className="btn" onClick={() => setGuide(g => !g)}>{guide ? 'Pause' : 'Take me there'}</button>}
           <button className="rc-edit" onClick={() => openEditor(destPlace)}>Edit place</button>
         </div>
       </Glass>}

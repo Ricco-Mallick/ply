@@ -237,9 +237,10 @@ export function Minimap({ engine, manifest, extras }: { engine: WalkEngine; mani
     }
     // the grid shows at once; the top view replaces it when it has loaded, and a twin without one keeps the grid
     const t = manifest?.topview;
-    if (t) { const im = new Image(); im.onload = () => { if (live) setMap({ img: im, origin: t.origin, cell: t.mpp, width: t.width, height: t.height, photo: true }); }; im.src = t.image; }
+    // the picture from above shows the floor the aligner levelled; another floor shows its own grid
+    if (t && (engine.levels.length < 2 || Math.abs(engine.floorY - (manifest?.floorY ?? 0)) < 1e-3)) { const im = new Image(); im.onload = () => { if (live) setMap({ img: im, origin: t.origin, cell: t.mpp, width: t.width, height: t.height, photo: true }); }; im.src = t.image; }
     return () => { live = false; };
-  }, [engine.grid, manifest]);
+  }, [engine.grid, manifest, engine.level]);
   const S = big ? Math.max(168, Math.min(420, innerWidth - 60, innerHeight - 190)) : 168;
   useEffect(() => {
     if (!map) return; let raf = 0;
@@ -260,7 +261,11 @@ export function Minimap({ engine, manifest, extras }: { engine: WalkEngine; mani
     draw(); return () => cancelAnimationFrame(raf);
   }, [map, engine, S]);
   if (!map) return null;
-  return <Glass className="map" opts={{ radius: 14, shader: false }} style={{ position: 'fixed', right: 18, bottom: 18, left: 'auto', top: 'auto' }}><button type="button" className="map-b" aria-expanded={big} aria-label={`Map of the floor with your position. ${big ? 'Shrink' : 'Enlarge'} it`} onClick={() => setBig(b => !b)}><canvas ref={cv} style={{ width: S, height: S }} /></button><span className="wide map-l">Floor 01</span></Glass>;
+  return <Glass className="map" opts={{ radius: 14, shader: false }} style={{ position: 'fixed', right: 18, bottom: 18, left: 'auto', top: 'auto' }}><button type="button" className="map-b" aria-expanded={big} aria-label={`Map of the floor with your position. ${big ? 'Shrink' : 'Enlarge'} it`} onClick={() => setBig(b => !b)}><canvas ref={cv} style={{ width: S, height: S }} /></button><span className="wide map-l">{engine.levels[engine.level]?.name ?? 'Floor 01'}</span>
+    {engine.levels.length > 1 && <span className="map-floors">
+      <button type="button" disabled={engine.level >= engine.levels.length - 1} aria-label="Go up a floor" onClick={() => engine.setLevel(engine.level + 1)}>▲</button>
+      <button type="button" disabled={engine.level <= 0} aria-label="Go down a floor" onClick={() => engine.setLevel(engine.level - 1)}>▼</button>
+    </span>}</Glass>;
 }
 
 const Q_LABEL: Record<QualityMode, string> = { auto: 'Auto', high: 'High', mid: 'Medium', low: 'Low' };
