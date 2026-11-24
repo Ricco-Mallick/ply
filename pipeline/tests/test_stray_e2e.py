@@ -71,7 +71,7 @@ def test_unzip_refuses_paths_outside(tmp_path):
 
 
 @needs_ffmpeg
-@pytest.mark.parametrize("per_frame_k", [True, False])
+@pytest.mark.parametrize("per_frame_k", [True, pytest.param(False, marks=pytest.mark.slow)])  # old exports: camera_matrix.csv only
 def test_iphone_lidar_zip_gives_scale_level_floor_and_depth(tmp_path, per_frame_k):
     fcs = faces()
     centers, rots = camera_loop(48, inward=True)

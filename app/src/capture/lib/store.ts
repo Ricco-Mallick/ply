@@ -5,10 +5,12 @@
 import type { Quality } from './analyzer';
 import type { SensorSample } from './sensors';
 
-export interface Clip { id: string; name: string; source: 'camera' | 'upload' | 'ar'; mime: string; size: number; duration: number; width: number; height: number; createdAt: number;
+export interface Clip { id: string; name: string; source: 'camera' | 'upload' | 'ar' | 'lidar'; mime: string; size: number; duration: number; width: number; height: number; createdAt: number;
   quality: Quality[]; sensors: SensorSample[]; path: { x: number; z: number; t: number }[]; lock?: Record<string, unknown>; loopClosed?: boolean;
   /** AR scans: a tar of keyframes + poses instead of a video; the coverage cloud is stored next to it as `${id}.cloud` */
   ar?: { keyframes: number; coverage: { green: number; orange: number; red: number; voxels: number }; camera: string | null; walked: number };
+  /** iPhone LiDAR scans: a Stray Scanner zip (video, ARKit poses, depth) checked on the phone before upload */
+  lidar?: { scan: string; frames: number; seconds: number; walkedM: number; depthMaps: number };
   /** stretches (seconds) replaced by a later clip: the pipeline skips their frames */
   exclude?: [number, number][]; }
 export interface Capture { id: string; name: string; createdAt: number; clips: Clip[];

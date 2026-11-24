@@ -3,6 +3,7 @@
    Uploaded videos skip the camera and go through the same analysis and review. */
 import { useEffect, useState } from 'react';
 import { analyseFile } from './lib/session';
+import { inspectLidarZip } from './lib/stray-zip';
 import { deleteCapture, loadCapture, newId, saveCapture, storeUpload, type Capture, type Clip } from './lib/store';
 import { Live } from './ui/Live';
 import type { Span } from './ui/CoverageCheck';
@@ -62,6 +63,22 @@ export function App() {
     setProg(null); if (!clips.length) { go('start'); return; }
     update({ ...c, clips: [...c.clips, ...clips] }); go('review');
   };
+  // iPhone LiDAR: Stray Scanner zips, checked from their own directory before they are kept for upload
+  const onLidar = async (files: File[]) => {
+    const c = ensureCapture(); setErr(null); go('analysing'); const clips: Clip[] = [];
+    for (const [i, f] of files.entries()) {
+      setProg({ name: f.name, p: 0 });
+      try {
+        const info = await inspectLidarZip(f); const id = newId();
+        setProg({ name: f.name, p: .5 }); await storeUpload(id, f);
+        clips.push({ id, name: `lidar-${String(c.clips.length + i + 1).padStart(2, '0')}-${f.name.replace(/[^\w.-]+/g, '_')}`, source: 'lidar',
+                     mime: 'application/zip', size: f.size, duration: info.seconds, width: 0, height: 0, createdAt: Date.now(), quality: [], sensors: [],
+                     path: info.path, lidar: { scan: info.scan, frames: info.frames, seconds: +info.seconds.toFixed(1), walkedM: info.walkedM, depthMaps: info.depthMaps } });
+      } catch (e) { setErr(`${f.name}: ${(e as Error).message}`); }
+    }
+    setProg(null); if (!clips.length) { go('start'); return; }
+    update({ ...c, clips: [...c.clips, ...clips] }); go('review');
+  };
   // coverage check: remember the job and what it covered; replacing a lost stretch marks it skipped and records a new clip
   const sig = (c: Capture) => c.clips.map(k => `${k.id}:${(k.exclude ?? []).length}`);
   const onPreview = (jobId: string) => { if (cap) update({ ...cap, preview: { jobId, clips: sig(cap), at: Date.now() } }); };
@@ -80,13 +97,13 @@ export function App() {
   return (
     <>
       {err && <div className="toast" role="alert" onClick={() => setErr(null)}>{err}</div>}
-      {screen === 'start' && <Start onRecord={record} onScan={scan} onUpload={onUpload} onOpen={open} onJob={id => { setJobId(id); history.pushState({ screen: 'status' }, '', `?job=${id}`); setScreen('status'); }} />}
+      {screen === 'start' && <Start onRecord={record} onScan={scan} onUpload={onUpload} onLidar={onLidar} onOpen={open} onJob={id => { setJobId(id); history.pushState({ screen: 'status' }, '', `?job=${id}`); setScreen('status'); }} />}
       {screen === 'perms' && <Permissions onReady={onGranted} onBack={() => history.back()} />}
       {screen === 'tutorial' && <Tutorial onDone={() => { try { localStorage.setItem(SEEN, '1'); } catch { /* ignore */ } setScreen('live'); history.replaceState({ screen: 'live' }, ''); }} />}
       {screen === 'live' && (granted ? <Live granted={granted} clipNo={(cap?.clips.length ?? 0) + 1} onClip={onClip} onClose={() => go(cap?.clips.length ? 'review' : 'start')} /> : <Relaunch onGo={() => go('perms')} />)}
       {screen === 'ar' && <ArScan scanNo={(cap?.clips.length ?? 0) + 1} onClip={onClip} onClose={() => go(cap?.clips.length ? 'review' : 'start')} />}
       {screen === 'arvideo' && <ArScan key="video" mode="video" scanNo={(cap?.clips.length ?? 0) + 1} onClip={onClip} onClose={() => go(cap?.clips.length ? 'review' : 'start')} />}
-      {screen === 'review' && cap && <Review capture={cap} onMore={() => go(cap.clips.at(-1)?.ar ? (cap.clips.at(-1)!.name.startsWith('video') ? 'arvideo' : 'ar') : 'perms')} onRetake={retake} onContinue={() => go('submit')} onHome={() => { setCap(null); go('start'); }} onPreview={onPreview} onReplace={onReplace} />}
+      {screen === 'review' && cap && <Review capture={cap} onMore={() => go(cap.clips.at(-1)?.lidar ? 'start' : cap.clips.at(-1)?.ar ? (cap.clips.at(-1)!.name.startsWith('video') ? 'arvideo' : 'ar') : 'perms')} onRetake={retake} onContinue={() => go('submit')} onHome={() => { setCap(null); go('start'); }} onPreview={onPreview} onReplace={onReplace} />}
       {screen === 'submit' && cap && <Submit capture={cap} onRename={n => update({ ...cap, name: n })} onBack={() => history.back()} onQueued={id => { rememberJob({ id, name: cap.name, createdAt: Date.now() }); setJobId(id); history.replaceState({ screen: 'status' }, '', `?job=${id}`); setScreen('status'); }} />}
       {screen === 'status' && jobId && <Status jobId={jobId} onHome={() => { history.replaceState({ screen: 'start' }, '', location.pathname); setScreen('start'); }} />}
       {screen === 'analysing' && (
