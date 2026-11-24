@@ -74,7 +74,7 @@ image = (
     # the worker runs the pipeline as a subprocess of the image's python, which can't see Modal's injected client:
     # the CPU-solve hand-off (plypipe.handoff) needs it there to spawn `solve` and commit the Volume
     .run_commands(f"python -m uv pip install --system modal=={modal.__version__}")
-    .env({"PLY_IMAGE_REV": "16"})  # bump to force the code layer to rebuild when Modal reuses a cached image
+    .env({"PLY_IMAGE_REV": "18"})  # bump to force the code layer to rebuild when Modal reuses a cached image
     .add_local_dir(PIPE / "plypipe", "/root/pipeline/plypipe")
 )
 app = modal.App("ply", image=image)
