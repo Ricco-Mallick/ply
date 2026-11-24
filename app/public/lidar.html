@@ -2,29 +2,56 @@
 <html lang="en">
 <head>
 <meta charset="utf-8" />
-<meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>Ply · point cloud viewer</title>
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<title>Ply · LiDAR twin</title>
 <style>
-  :root { --fg: #e8ecf3; --muted: #9aa7b8; --accent: #ff6b00; --panel: rgba(12, 17, 26, .82); }
-  html, body { margin: 0; height: 100%; background: #0b0e14; overflow: hidden; color: var(--fg); font: 13px/1.45 -apple-system, "Helvetica Neue", Arial, sans-serif; }
-  canvas { display: block; }
-  .bar { position: fixed; z-index: 5; left: 16px; right: 16px; top: 14px; display: flex; gap: 10px; align-items: center; pointer-events: none; }
+  :root { --fg: #e8ecf3; --muted: #9aa7b8; --accent: #ff6b00; --panel: rgba(12, 17, 26, .82); --line: rgba(255, 255, 255, .14); }
+  html, body { margin: 0; height: 100%; background: #0b0e14; overflow: hidden; color: var(--fg); font: 13px/1.45 -apple-system, "Helvetica Neue", Arial, sans-serif; overscroll-behavior: none; }
+  canvas#view { display: block; touch-action: none; }
+  .bar { position: fixed; z-index: 5; left: 16px; right: 16px; display: flex; flex-wrap: wrap; gap: 8px; align-items: center; pointer-events: none; }
   .bar > * { pointer-events: auto; }
-  .pill { display: inline-flex; align-items: center; gap: 8px; height: 36px; padding: 0 14px; border-radius: 999px; border: 1px solid rgba(255, 255, 255, .14); background: var(--panel); backdrop-filter: blur(10px); color: var(--fg); font: 500 12px/1 inherit; }
+  .top { top: 14px; } .sub { top: 58px; }
+  .pill { display: inline-flex; align-items: center; gap: 8px; height: 34px; padding: 0 13px; border-radius: 999px; border: 1px solid var(--line); background: var(--panel); backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px); color: var(--fg); font: 500 12px/1 -apple-system, "Helvetica Neue", Arial, sans-serif; text-decoration: none; white-space: nowrap; }
   .pill b { font-weight: 700; letter-spacing: .3em; font-size: 11px; }
-  button.pill { cursor: pointer; }
-  button.pill:hover { border-color: rgba(255, 255, 255, .3); }
+  button.pill, a.pill { cursor: pointer; }
+  button.pill:hover, a.pill:hover { border-color: rgba(255, 255, 255, .32); }
+  button.pill.on { border-color: var(--accent); color: #fff; box-shadow: inset 0 0 0 1px var(--accent); }
   .pill.dev { color: #a9c6ff; border-color: rgba(150, 190, 255, .45); }
+  .seg { display: inline-flex; border-radius: 999px; border: 1px solid var(--line); background: var(--panel); backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px); overflow: hidden; height: 34px; }
+  .seg button { border: 0; background: none; color: var(--muted); font: 600 12px/1 inherit; padding: 0 13px; cursor: pointer; }
+  .seg button.on { background: var(--accent); color: #111; }
   .grow { flex: 1; }
-  .stat { font: 11px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace; color: var(--muted); background: var(--panel); border: 1px solid rgba(255, 255, 255, .1); border-radius: 10px; padding: 8px 10px; max-width: 62ch; }
-  .stat.hidden { display: none; }
-  .controls { position: fixed; z-index: 5; right: 16px; bottom: 14px; display: flex; gap: 10px; align-items: center; }
-  .controls input[type=range] { width: 110px; accent-color: var(--accent); }
+  .stat { font: 11px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace; color: var(--muted); background: var(--panel); border: 1px solid rgba(255, 255, 255, .1); border-radius: 10px; padding: 7px 10px; max-width: 70ch; }
+  .views-wrap { position: relative; }
+  .menu { position: absolute; top: 40px; left: 0; min-width: 190px; padding: 6px; border-radius: 14px; border: 1px solid var(--line); background: var(--panel); backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px); display: none; }
+  .menu.on { display: block; }
+  .menu button { display: flex; gap: 10px; width: 100%; text-align: left; border: 0; background: none; color: var(--fg); padding: 8px 10px; border-radius: 9px; font: 500 12px/1.2 inherit; cursor: pointer; }
+  .menu button:hover { background: rgba(255, 255, 255, .08); }
+  .mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; color: var(--muted); }
+  .controls { position: fixed; z-index: 5; left: 16px; bottom: 14px; display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+  .controls input[type=range] { width: 100px; accent-color: var(--accent); }
+  .map { position: fixed; z-index: 5; right: 16px; bottom: 14px; padding: 6px; border-radius: 14px; border: 1px solid var(--line); background: var(--panel); backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px); }
+  .map canvas { display: block; width: 170px; height: 170px; cursor: crosshair; border-radius: 9px; }
+  .map.big canvas { width: min(70vw, 70vh); height: min(70vw, 70vh); }
+  .map .l { position: absolute; left: 14px; top: 10px; font: 600 10px/1 inherit; letter-spacing: .18em; color: var(--muted); pointer-events: none; }
+  .map .sz { position: absolute; right: 10px; top: 8px; border: 0; background: none; color: var(--muted); cursor: pointer; font-size: 14px; }
+  .hint { position: fixed; z-index: 6; left: 50%; top: 50%; transform: translate(-50%, -50%); padding: 18px 22px; border-radius: 16px; border: 1px solid var(--line); background: var(--panel); backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px); max-width: 360px; transition: opacity .25s; }
+  .hint.off { opacity: 0; pointer-events: none; }
+  .hint h3 { margin: 0 0 8px; font-size: 15px; }
+  .hint ul { margin: 0 0 12px; padding-left: 0; list-style: none; color: var(--muted); }
+  .hint li { margin: 3px 0; }
+  kbd { display: inline-block; min-width: 14px; padding: 1px 5px; border-radius: 5px; border: 1px solid rgba(255,255,255,.22); color: var(--fg); font: 600 11px/1.4 ui-monospace, Menlo, monospace; text-align: center; }
+  .go { height: 36px; padding: 0 18px; border-radius: 999px; border: 0; background: var(--accent); color: #111; font: 700 13px/1 inherit; cursor: pointer; }
+  .cross { position: fixed; left: 50%; top: 50%; width: 6px; height: 6px; margin: -3px 0 0 -3px; border-radius: 50%; background: rgba(255,255,255,.7); box-shadow: 0 0 0 1px rgba(0,0,0,.5); z-index: 4; pointer-events: none; display: none; }
+  .cross.on { display: block; }
+  .joy { position: fixed; z-index: 4; width: 110px; height: 110px; margin: -55px 0 0 -55px; border-radius: 50%; border: 1px solid rgba(255,255,255,.25); background: rgba(255,255,255,.06); pointer-events: none; display: none; }
+  .joy i { position: absolute; left: 50%; top: 50%; width: 44px; height: 44px; margin: -22px 0 0 -22px; border-radius: 50%; background: rgba(255,255,255,.35); }
   .drop { position: fixed; inset: 0; z-index: 9; display: none; place-items: center; background: rgba(7, 11, 20, .78); border: 2px dashed rgba(255, 255, 255, .3); text-align: center; padding: 24px; }
   .drop.on { display: grid; }
   .err { color: #ffb4a0; }
   .spinner { display: inline-block; width: 12px; height: 12px; border: 2px solid rgba(255,255,255,.25); border-top-color: var(--accent); border-radius: 50%; animation: spin .9s linear infinite; vertical-align: -2px; }
   @keyframes spin { to { transform: rotate(360deg); } }
+  @media (max-width: 640px) { .wide { display: none; } .map canvas { width: 120px; height: 120px; } .controls { right: 160px; } .controls input[type=range] { width: 70px; } }
 </style>
 <script type="importmap">
 { "imports": {
@@ -34,17 +61,40 @@
 </script>
 </head>
 <body>
-<div class="bar">
-  <span class="pill"><b>PLY</b> point cloud</span>
-  <span class="pill" id="name">loading…</span>
-  <span class="pill dev" title="The LiDAR path is working but not a shipping feature yet">Under development</span>
+<div class="bar top">
+  <a class="pill" href="./library.html" title="Every twin"><b>PLY</b></a>
+  <span class="pill wide" id="name">loading…</span>
+  <span class="pill dev wide" title="The LiDAR path works but is not a shipping feature yet">Under development</span>
   <span class="grow"></span>
-  <button class="pill" id="open">Open a .ply</button>
+  <div class="seg" role="group" aria-label="Movement mode">
+    <button data-mode="walk" title="Walk on the floor, walls stop you (F toggles walk / fly)">Walk</button>
+    <button data-mode="fly" title="Fly anywhere, through walls">Fly</button>
+    <button data-mode="orbit" title="Orbit the whole scan from outside (O)">Orbit</button>
+  </div>
+  <div class="views-wrap">
+    <button class="pill" id="viewsBtn" aria-expanded="false">Views</button>
+    <div class="menu" id="views"></div>
+  </div>
+  <button class="pill" id="tourBtn" title="Fly through every view">▶ Tour</button>
+  <button class="pill wide" id="open">Open a .ply</button>
 </div>
-<div class="bar" style="top: 60px"><div class="stat" id="stat">reading the file…</div></div>
+<div class="bar sub"><div class="stat" id="stat">reading the file…</div></div>
 <div class="controls">
-  <span class="pill" style="gap:10px">Point size <input id="size" type="range" min="0.005" max="0.2" step="0.005" value="0.04" /></span>
+  <span class="pill" title="Point size">● <input id="size" type="range" min="0.004" max="0.08" step="0.002" value="0.018" aria-label="Point size" /></span>
+  <button class="pill" id="ceil" title="Hide the ceiling in Orbit so you can see inside">Ceiling off</button>
+  <button class="pill wide" id="expo" title="Display exposure: [ dimmer, ] brighter, \ reset">☀ 100%</button>
+  <button class="pill wide" id="turn" title="Upside down? Turn the scan over">⇅ Turn over</button>
+  <button class="pill" id="help" title="Controls (H)">?</button>
+  <button class="pill" id="fs" aria-label="Fullscreen">⤢</button>
 </div>
+<div class="map" id="map"><span class="l">FLOOR</span><button class="sz" id="mapSize" aria-label="Enlarge the map">⤢</button><canvas id="mapc" width="340" height="340" aria-label="Floor map: click to go there"></canvas></div>
+<div class="hint" id="hint">
+  <h3>Explore the office</h3>
+  <ul id="hintList"></ul>
+  <button class="go" id="enter">Click to explore</button>
+</div>
+<div class="cross" id="cross"></div>
+<div class="joy" id="joy"><i></i></div>
 <div class="drop" id="drop"><div><h2 style="margin:0 0 8px">Drop a .ply here</h2><p style="margin:0;color:#9aa7b8">Read locally, never uploaded. The office scan loads unless you open another file.</p></div></div>
 <input id="file" type="file" accept=".ply,application/octet-stream" hidden />
 
@@ -53,47 +103,250 @@ import * as THREE from 'three';
 import { PLYLoader } from 'three/addons/loaders/PLYLoader.js';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 
-// The E57 itself is not on the site: it is 3.3 GB. What ships is the decimated, coloured PLY
-// this viewer opens by default.
+// The E57 itself is not on the site (3.3 GB). What ships is the decimated, coloured PLY this viewer opens by default.
 const DEFAULT_PLY = 'https://ply-api.ricco-ply.workers.dev/v1/scenes/lidar-office-1/office.ply';
-const nameEl = document.getElementById('name'), statEl = document.getElementById('stat');
-const sizeEl = document.getElementById('size');
-const fileEl = document.getElementById('file'), dropEl = document.getElementById('drop');
+const $ = id => document.getElementById(id);
+const nameEl = $('name'), statEl = $('stat'), sizeEl = $('size'), fileEl = $('file'), dropEl = $('drop');
+const EYE = 1.55, RADIUS = 0.25, JOIN = 0.2, CELL = 0.1, WALK = 1.4, FLY = 2.2;
+const RM = matchMedia('(prefers-reduced-motion: reduce)').matches;
+const FINE = matchMedia('(pointer: fine)').matches;
 
 const renderer = new THREE.WebGLRenderer({ antialias: true });
 renderer.setPixelRatio(Math.min(devicePixelRatio || 1, 2));
 renderer.setSize(innerWidth, innerHeight);
 renderer.setClearColor(0x0b0e14);
-document.body.appendChild(renderer.domElement);
+renderer.localClippingEnabled = true;
+renderer.domElement.id = 'view';
+document.body.prepend(renderer.domElement);
+const canvas = renderer.domElement;
 
 const scene = new THREE.Scene();
-const camera = new THREE.PerspectiveCamera(60, innerWidth / innerHeight, 0.05, 5000);
-const controls = new OrbitControls(camera, renderer.domElement);
-controls.enableDamping = true;
-controls.dampingFactor = 0.08;
+const camera = new THREE.PerspectiveCamera(70, innerWidth / innerHeight, 0.03, 5000);
+camera.rotation.order = 'YXZ';
+const orbit = new OrbitControls(camera, canvas);
+orbit.enableDamping = true; orbit.dampingFactor = 0.08; orbit.enabled = false;
 
-let cloud = null;
-function setPoints(geometry, label) {
-  if (cloud) { scene.remove(cloud); cloud.geometry.dispose(); cloud.material.dispose(); }
+// ---- state --------------------------------------------------------------------------------------------------------
+const S = { mode: 'walk', yaw: 0, pitch: 0, pos: new THREE.Vector3(), vel: new THREE.Vector3(), speed: 1, locked: false, entered: false };
+let cloud = null, room = null, views = [], anim = null, tour = null, cutCeiling = true, exposure = 1;
+const ceilPlane = new THREE.Plane(new THREE.Vector3(0, -1, 0), 0);
+const keys = new Set();
+const joy = { x: 0, y: 0, id: null, ox: 0, oy: 0 };
+let drag = null;
+
+// ---- reading the room out of the cloud ------------------------------------------------------------------------------
+/* Floor = the lowest dense height band; ceiling = the highest. A 10 cm grid over the floor: a cell is free when the
+   floor was scanned there and nothing stands between knee and head height. Clearance (distance to the nearest
+   non-free cell) picks the spawn and the views, and the walk mode slides along it. */
+/** The lowest and the highest dense horizontal planes (floor and ceiling, either way up). */
+function planes(a, n, box) {
+  const BIN = 0.05, y0 = box.min.y, nb = Math.max(1, Math.ceil((box.max.y - y0) / BIN) + 1), hist = new Uint32Array(nb);
+  for (let i = 0; i < n; i++) hist[Math.min(nb - 1, ((a[i * 3 + 1] - y0) / BIN) | 0)]++;
+  let peak = 0; for (let i = 0; i < nb; i++) peak = Math.max(peak, hist[i]);
+  const half = nb >> 1;
+  let lb = 0; for (let i = 0; i < half; i++) if (hist[i] > peak * 0.25) { lb = i; break; }
+  for (let i = lb, e = Math.min(nb, lb + 4); i < e; i++) if (hist[i] > hist[lb]) lb = i;  // the peak of that band
+  let hb = nb - 1; for (let i = nb - 1; i > half; i--) if (hist[i] > peak * 0.25) { hb = i; break; }
+  for (let i = hb, e = Math.max(0, hb - 4); i > e; i--) if (hist[i] > hist[hb]) hb = i;
+  return { low: y0 + (lb + 0.5) * BIN, high: y0 + (hb + 0.5) * BIN };
+}
+
+/* Scans come either way up (an E57 can be z-up or y-down by the time it is a PLY). Furniture stands on the floor, so
+   the plane with more points at desk height next to it is the floor; when that is the top one, turn the cloud over
+   (180 degrees about x, which keeps it unmirrored). ?up=flip / ?up=keep overrides. */
+function orientUp(geometry) {
+  const pos = geometry.attributes.position, a = pos.array, n = pos.count;
   geometry.computeBoundingBox();
-  const b = geometry.boundingBox, c = b.getCenter(new THREE.Vector3()), s = b.getSize(new THREE.Vector3());
+  const { low, high } = planes(a, n, geometry.boundingBox);
+  // A tripod scanner leaves its densest points round its head, about 1.5 m above the floor: find that height first.
+  const b = geometry.boundingBox, V = Math.max(0.25, Math.cbrt((b.max.x - b.min.x) * (b.max.y - b.min.y) * (b.max.z - b.min.z) / 2e6));
+  const NX = Math.ceil((b.max.x - b.min.x) / V) + 1, NY = Math.ceil((b.max.y - b.min.y) / V) + 1, NZ = Math.ceil((b.max.z - b.min.z) / V) + 1;
+  const vox = new Uint32Array(NX * NY * NZ);
+  for (let i = 0; i < n; i++) vox[((a[i * 3] - b.min.x) / V | 0) + NX * (((a[i * 3 + 1] - b.min.y) / V | 0) + NY * ((a[i * 3 + 2] - b.min.z) / V | 0))]++;
+  let vmax = 0, vk = 0; for (let k = 0; k < vox.length; k++) if (vox[k] > vmax) { vmax = vox[k]; vk = k; }
+  const headY = b.min.y + ((((vk / NX) | 0) % NY) + 0.5) * V;
+  const offLow = Math.abs(headY - low - 1.5), offHigh = Math.abs(high - headY - 1.5);
+  // furniture stands on the floor: the plane with more points at desk height next to it (the fallback)
+  let fromLow = 0, fromHigh = 0;
+  for (let i = 0; i < n; i++) { const y = a[i * 3 + 1]; if (y - low > 0.4 && y - low < 1.1) fromLow++; if (high - y > 0.4 && high - y < 1.1) fromHigh++; }
+  const tripod = Math.abs(offLow - offHigh) > 0.4 && Math.min(offLow, offHigh) < 0.6;
+  const force = new URLSearchParams(location.search).get('up');
+  const flip = force === 'flip' ? true : force === 'keep' ? false : tripod ? offHigh < offLow : fromHigh > fromLow * 1.25;
+  if (flip) { for (let i = 0; i < n; i++) { a[i * 3 + 1] = -a[i * 3 + 1]; a[i * 3 + 2] = -a[i * 3 + 2]; } pos.needsUpdate = true; geometry.computeBoundingBox(); }
+  level(geometry);
+  return flip;
+}
+
+/* A scan a degree off level puts one end of the floor 15 cm up, into the band that counts as furniture. Fit the floor
+   plane (least squares on the points near the lowest plane, twice, tightening) and rotate it flat. */
+function level(geometry) {
+  const pos = geometry.attributes.position, a = pos.array, n = pos.count;
+  let { low } = planes(a, n, geometry.boundingBox), tilt = 0;
+  for (const tol of [0.15, 0.05]) {
+    let sxx = 0, sxz = 0, szz = 0, sx = 0, sz = 0, sy = 0, sxy = 0, szy = 0, m = 0;
+    for (let i = 0; i < n; i++) { const y = a[i * 3 + 1]; if (Math.abs(y - low) > tol) continue;
+      const x = a[i * 3], z = a[i * 3 + 2]; sxx += x * x; sxz += x * z; szz += z * z; sx += x; sz += z; sy += y; sxy += x * y; szy += z * y; m++; }
+    if (m < 1000) return;
+    const M = new THREE.Matrix3().set(sxx, sxz, sx, sxz, szz, sz, sx, sz, m).invert().elements;  // column-major
+    const r = [sxy, szy, sy], c = [0, 1, 2].map(i => M[i] * r[0] + M[i + 3] * r[1] + M[i + 6] * r[2]);
+    const nrm = new THREE.Vector3(-c[0], 1, -c[1]).normalize();
+    tilt = Math.acos(Math.min(1, nrm.y)) * 180 / Math.PI;
+    if (tilt < 0.05 || tilt > 10) return;  // already level, or not a floor we trust
+    const q = new THREE.Quaternion().setFromUnitVectors(nrm, new THREE.Vector3(0, 1, 0));
+    geometry.applyQuaternion(q); geometry.computeBoundingBox();
+    low = planes(a, n, geometry.boundingBox).low;
+  }
+  geometry.userData.levelledDeg = tilt;
+}
+
+function analyse(pos, box) {
+  const n = pos.count, a = pos.array;
+  const pl = planes(a, n, box), floorY = pl.low, ceilY = Math.max(floorY + 2.2, pl.high);
+  const ox = box.min.x, oz = box.min.z, W = Math.ceil((box.max.x - ox) / CELL) + 1, H = Math.ceil((box.max.z - oz) / CELL) + 1;
+  const floorN = new Uint16Array(W * H), band = new Uint16Array(W * H);
+  const bLo = floorY + 0.25, bHi = Math.min(floorY + 1.9, ceilY - 0.15);
+  for (let i = 0; i < n; i++) {
+    const y = a[i * 3 + 1]; let k;
+    if (Math.abs(y - floorY) < 0.08) { k = ((a[i * 3] - ox) / CELL | 0) + ((a[i * 3 + 2] - oz) / CELL | 0) * W; if (floorN[k] < 65535) floorN[k]++; }
+    else if (y > bLo && y < bHi) { k = ((a[i * 3] - ox) / CELL | 0) + ((a[i * 3 + 2] - oz) / CELL | 0) * W; if (band[k] < 65535) band[k]++; }
+  }
+  // 0 blocked, 1 free, 2 unscanned. Floor the scanner could not see (behind the tripod, under a desk edge) counts as
+  // free when nothing stands there and scanned floor is within 60 cm; past walls the wall itself blocks it.
+  const grid = new Uint8Array(W * H);
+  for (let k = 0; k < W * H; k++) grid[k] = band[k] >= 2 ? 0 : floorN[k] >= 2 ? 1 : 2;
+  const R = 6, near = new Uint8Array(W * H);
+  for (let z = 0; z < H; z++) for (let x = 0; x < W; x++) { if (grid[x + z * W] !== 1) continue;
+    for (let dz = -R; dz <= R; dz++) for (let dx = -R; dx <= R; dx++) { const nx = x + dx, nz = z + dz; if (nx >= 0 && nz >= 0 && nx < W && nz < H && dx * dx + dz * dz <= R * R) near[nx + nz * W] = 1; } }
+  for (let k = 0; k < W * H; k++) if (grid[k] === 2 && near[k] && band[k] === 0) grid[k] = 1;
+  // specks: a blocked cell with at most one blocked neighbour is a stray return (glass, a cable), not furniture
+  for (let pass = 0; pass < 2; pass++) for (let z = 1; z < H - 1; z++) for (let x = 1; x < W - 1; x++) {
+    const k = x + z * W; if (grid[k] !== 0) continue; let nb = 0, fl = 0;
+    for (let dz = -1; dz <= 1; dz++) for (let dx = -1; dx <= 1; dx++) { if (!dx && !dz) continue; const v = grid[k + dx + dz * W]; if (v === 0) nb++; else if (v === 1) fl++; }
+    if (nb <= 1 && fl >= 5) grid[k] = 1;
+  }
+  // close one-cell holes in the floor (decimation leaves gaps that would trip the walker)
+  const g2 = grid.slice();
+  for (let z = 1; z < H - 1; z++) for (let x = 1; x < W - 1; x++) {
+    const k = x + z * W; if (grid[k] !== 2 || band[k]) continue;
+    let f = 0; for (const d of [1, -1, W, -W]) if (grid[k + d] === 1) f++;
+    if (f >= 3) g2[k] = 1;
+  }
+  // clearance in cells: multi-source BFS from every non-free cell (8-neighbour)
+  const clear = new Float32Array(W * H).fill(1e9), q = new Int32Array(W * H); let qh = 0, qt = 0;
+  for (let k = 0; k < W * H; k++) if (g2[k] !== 1) { clear[k] = 0; q[qt++] = k; }
+  while (qh < qt) {
+    const k = q[qh++], x = k % W, z = (k / W) | 0, c = clear[k];
+    for (let dz = -1; dz <= 1; dz++) for (let dx = -1; dx <= 1; dx++) {
+      if (!dx && !dz) continue; const nx = x + dx, nz = z + dz; if (nx < 0 || nz < 0 || nx >= W || nz >= H) continue;
+      const nk = nx + nz * W, nc = c + (dx && dz ? 1.414 : 1); if (nc < clear[nk]) { clear[nk] = nc; q[qt++] = nk; }
+    }
+  }
+  // the biggest connected free area is the room; small pockets (under desks, outside windows) are ignored
+  const comp = new Int32Array(W * H).fill(-1), sizes = []; let best = -1, bestN = 0, id = 0;
+  for (let s = 0; s < W * H; s++) {
+    if (g2[s] !== 1 || comp[s] >= 0 || clear[s] * CELL < JOIN) continue;
+    let h = 0, t = 0, cnt = 0; q[t++] = s; comp[s] = id;
+    while (h < t) { const k = q[h++]; cnt++; const x = k % W, z = (k / W) | 0;
+      for (const [dx, dz] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) { const nx = x + dx, nz = z + dz; if (nx < 0 || nz < 0 || nx >= W || nz >= H) continue;
+        const nk = nx + nz * W; if (g2[nk] === 1 && comp[nk] < 0 && clear[nk] * CELL >= JOIN) { comp[nk] = id; q[t++] = nk; } } }
+    sizes.push(cnt); if (cnt > bestN) { bestN = cnt; best = id; } id++;
+  }
+  // every room of a square metre or more is somewhere to stand; the biggest one holds the spawn
+  const MIN = Math.round(1 / (CELL * CELL)), inRoom = k => comp[k] >= 0 && sizes[comp[k]] >= MIN;
+  const rooms = sizes.filter(c => c >= MIN).length, areaM2 = sizes.filter(c => c >= MIN).reduce((a, c) => a + c, 0) * CELL * CELL;
+  let cx = 0, cz = 0, cn = 0;
+  for (let k = 0; k < W * H; k++) if (comp[k] === best) { cx += k % W; cz += (k / W) | 0; cn++; }
+  cx /= cn || 1; cz /= cn || 1;
+  // spawn: where the scanner stood (its densest column of points, seen from everywhere it could see), else lots of room
+  // around it near the middle of the biggest room
+  const col = new Uint32Array(W * H);
+  for (let i = 0; i < n; i++) { const h = a[i * 3 + 1] - floorY; if (h > 1.0 && h < 2.0) col[((a[i * 3] - ox) / CELL | 0) + ((a[i * 3 + 2] - oz) / CELL | 0) * W]++; }
+  let hk = -1, hv = 0;  // 50 cm windows: the scanner's head is the brightest spot in density
+  for (let z = 2; z < H - 2; z++) for (let x = 2; x < W - 2; x++) { let v = 0; for (let dz = -2; dz <= 2; dz++) for (let dx = -2; dx <= 2; dx++) v += col[x + dx + (z + dz) * W]; if (v > hv) { hv = v; hk = x + z * W; } }
+  let sk = -1, sv = -1e9;
+  if (hk >= 0) { const hx = hk % W, hz = (hk / W) | 0;
+    for (let k = 0; k < W * H; k++) if (inRoom(k) && clear[k] * CELL >= RADIUS) { const v = -Math.hypot(k % W - hx, ((k / W) | 0) - hz); if (v > sv) { sv = v; sk = k; } }
+    if (sv < -15) sk = -1; }  // no room within 1.5 m of it: not a tripod scan
+  if (sk < 0) for (let k = 0; k < W * H; k++) if (comp[k] === best) { const d = Math.hypot(k % W - cx, ((k / W) | 0) - cz); const v = Math.min(clear[k], 12) - 0.15 * d; if (v > sv) { sv = v; sk = k; } }
+  const at = k => ({ x: ox + (k % W + 0.5) * CELL, z: oz + (((k / W) | 0) + 0.5) * CELL });
+  return { ox, oz, W, H, grid: g2, clear, inRoom, rooms, floorY, ceilY, areaM2, spawn: sk >= 0 ? at(sk) : { x: (box.min.x + box.max.x) / 2, z: (box.min.z + box.max.z) / 2 }, centre: at(Math.round(cx) + Math.round(cz) * W), at, ok: sk >= 0 };
+}
+
+function cellOf(x, z) { const gx = Math.floor((x - room.ox) / CELL), gz = Math.floor((z - room.oz) / CELL); return gx < 0 || gz < 0 || gx >= room.W || gz >= room.H ? -1 : gx + gz * room.W; }
+function free(x, z) { if (!room?.ok) return true; const k = cellOf(x, z); return k >= 0 && room.grid[k] === 1 && room.clear[k] * CELL >= JOIN; }
+
+/* Views: the spawn, then spread-out spots with space around them (farthest-point sampling), each looking across the
+   room's longest open line; then the two outside views. */
+function makeViews(box) {
+  const out = [];
+  // face where there is most to see: scan points 1 to 8 m away at eye level, in a 75 degree cone, sampled
+  const pa = cloud.geometry.attributes.position.array, np = cloud.geometry.attributes.position.count, stride = Math.max(1, (np / 150000) | 0) * 3;
+  const fy0 = room ? room.floorY : 0;
+  const lookFrom = (p) => {
+    const B = 36, hist = new Float32Array(B);
+    for (let i = 0; i < pa.length; i += stride) { const h = pa[i + 1] - fy0; if (h < 0.3 || h > 2.6) continue;
+      const dx = pa[i] - p.x, dz = pa[i + 2] - p.z, d = Math.hypot(dx, dz); if (d < 1 || d > 8) continue;
+      const yaw = Math.atan2(-dx, -dz); hist[((Math.round(yaw / (2 * Math.PI) * B) % B) + B) % B] += Math.min(d, 4); }
+    // times how far you can see across open floor that way, so a wall a metre off does not win
+    let by = 0, bv = -1;
+    for (let i = 0; i < B; i++) {
+      const yaw = i / B * 2 * Math.PI, dx = -Math.sin(yaw), dz = -Math.cos(yaw); let run = 0;
+      while (run < 6 && (free(p.x + dx * run, p.z + dz * run) || cellOf(p.x + dx * run, p.z + dz * run) >= 0 && room.grid[cellOf(p.x + dx * run, p.z + dz * run)] === 1)) run += CELL;
+      let v = 0; for (let j = -3; j <= 3; j++) v += hist[(i + j + B) % B];
+      v *= Math.max(0.3, Math.min(run, 5));
+      if (v > bv) { bv = v; by = yaw; }
+    }
+    return by;
+  };
+  if (room?.ok) {
+    out.push({ name: 'Start', kind: 'walk', x: room.spawn.x, z: room.spawn.z, yaw: lookFrom(room.spawn), pitch: -0.08 });
+    const cand = []; for (let k = 0; k < room.W * room.H; k++) if (room.inRoom(k) && room.clear[k] * CELL >= 0.45) cand.push(k);
+    const picked = [room.spawn];
+    for (let v = 0; v < 7 && cand.length; v++) {
+      let bk = -1, bd = 0;
+      for (let i = 0; i < cand.length; i += Math.max(1, cand.length / 4000 | 0)) { const p = room.at(cand[i]); let d = 1e9; for (const s of picked) d = Math.min(d, Math.hypot(p.x - s.x, p.z - s.z)); if (d > bd) { bd = d; bk = cand[i]; } }
+      if (bk < 0 || bd < 1.2) break;
+      const p = room.at(bk); picked.push(p);
+      out.push({ name: `Inside ${out.length}`, kind: 'walk', x: p.x, z: p.z, yaw: lookFrom(p), pitch: -0.06 });
+    }
+  }
+  const c = box.getCenter(new THREE.Vector3()), s = box.getSize(new THREE.Vector3());
+  const fy = room ? room.floorY : box.min.y;
+  out.push({ name: 'Overview', kind: 'orbit', target: new THREE.Vector3(c.x, fy + 0.8, c.z), from: new THREE.Vector3(c.x + s.x * 0.4, fy + Math.max(s.x, s.z) * 0.62, c.z + s.z * 0.5) });
+  out.push({ name: 'Floor plan', kind: 'orbit', target: new THREE.Vector3(c.x, fy, c.z), from: new THREE.Vector3(c.x, fy + Math.max(s.x, s.z) * 1.05, c.z + 0.001) });
+  return out;
+}
+
+// ---- loading -------------------------------------------------------------------------------------------------------
+let box = null;
+function setPoints(geometry, label, keepUp = false) {
+  if (cloud) { scene.remove(cloud); cloud.geometry.dispose(); cloud.material.dispose(); }
+  const flipped = keepUp ? (geometry.computeBoundingBox(), false) : orientUp(geometry);
+  box = geometry.boundingBox.clone();
+  const s = box.getSize(new THREE.Vector3());
   const hasColor = !!geometry.attributes.color;
   if (!hasColor) {  // a scan without colour still reads: ramp by height
-    const p = geometry.attributes.position, col = new Float32Array(p.count * 3), lo = b.min.y, hi = Math.max(b.max.y, lo + 1e-3);
+    const p = geometry.attributes.position, col = new Float32Array(p.count * 3), lo = box.min.y, hi = Math.max(box.max.y, lo + 1e-3);
     for (let i = 0; i < p.count; i++) { const t = (p.getY(i) - lo) / (hi - lo); col[i * 3] = 0.15 + 0.85 * t; col[i * 3 + 1] = 0.45 + 0.35 * (1 - Math.abs(t - 0.5) * 2); col[i * 3 + 2] = 1.0 - 0.8 * t; }
     geometry.setAttribute('color', new THREE.BufferAttribute(col, 3));
   }
+  room = analyse(geometry.attributes.position, box);
+  ceilPlane.constant = room.ceilY - 0.12;
   const mat = new THREE.PointsMaterial({ size: +sizeEl.value, vertexColors: true, sizeAttenuation: true });
   cloud = new THREE.Points(geometry, mat);
   cloud.frustumCulled = false;
   scene.add(cloud);
-  controls.target.copy(c);
-  camera.position.copy(c).add(new THREE.Vector3(s.x * 0.85, Math.max(s.y * 0.7, s.x * 0.35), s.z * 0.95));
-  camera.near = Math.max(0.05, s.length() / 2000); camera.far = s.length() * 6; camera.updateProjectionMatrix();
-  controls.minDistance = s.length() / 500; controls.maxDistance = s.length() * 4;
-  controls.update();
+  camera.far = s.length() * 6; camera.updateProjectionMatrix();
+  orbit.minDistance = 0.3; orbit.maxDistance = s.length() * 3;
+  views = makeViews(box);
+  buildViewsMenu();
+  drawMapBase();
   nameEl.textContent = label;
-  statEl.textContent = `${geometry.attributes.position.count.toLocaleString()} points · ${hasColor ? 'true colour' : 'height ramp'} · ${s.x.toFixed(1)} × ${s.y.toFixed(1)} × ${s.z.toFixed(1)} m`;
+  statEl.textContent = `${geometry.attributes.position.count.toLocaleString()} points · ${hasColor ? 'true colour' : 'height ramp'} · ${s.x.toFixed(1)} × ${s.y.toFixed(1)} × ${s.z.toFixed(1)} m`
+    + (flipped ? ' · turned right way up' : '') + (geometry.userData.levelledDeg > 0.05 ? ` · levelled ${geometry.userData.levelledDeg.toFixed(1)}°` : '') + (room.ok ? ` · ${room.areaM2.toFixed(0)} m² walkable in ${room.rooms} ${room.rooms === 1 ? 'room' : 'rooms'} · ${(room.ceilY - room.floorY).toFixed(1)} m to the ceiling` : ' · no open floor found, fly mode');
+  if (!room.ok) setMode('fly');
+  jump(views[0], true);
+  updateHint();
 }
 
 function fail(message) {
@@ -109,40 +362,271 @@ async function loadUrl(url) {
     const geo = await new PLYLoader().loadAsync(url, e => {
       if (e && e.total) statEl.innerHTML = `<span class="spinner"></span> ${Math.round((e.loaded / e.total) * 100)}% of ${(e.total / 1048576).toFixed(0)} MB`;
     });
-    setPoints(geo, decodeURIComponent(url.split('/').pop() || 'point cloud'));
-  } catch (e) {
-    fail(`could not load that file (${e && e.message ? e.message : e}).`);
-  }
+    setPoints(geo, url === DEFAULT_PLY ? 'LiDAR office' : decodeURIComponent(url.split('/').pop() || 'point cloud'));
+  } catch (e) { fail(`could not load that file (${e && e.message ? e.message : e}).`); }
 }
 
 async function loadFile(file) {
   nameEl.textContent = file.name;
   statEl.innerHTML = '<span class="spinner"></span> reading the local file…';
-  try {
-    const buf = await file.arrayBuffer();
-    setPoints(new PLYLoader().parse(buf), file.name);
-  } catch (e) { fail(`that file did not parse as a PLY (${e && e.message ? e.message : e}).`); }
+  try { setPoints(new PLYLoader().parse(await file.arrayBuffer()), file.name); }
+  catch (e) { fail(`that file did not parse as a PLY (${e && e.message ? e.message : e}).`); }
 }
 
-// ?ply= wins; without it the office scan is the default instead of a request for "null"
-const param = new URLSearchParams(location.search).get('ply');
-loadUrl(param || DEFAULT_PLY);
+// ---- modes and views -----------------------------------------------------------------------------------------------
+function setMode(m) {
+  if (m === S.mode) return syncUi();
+  const was = S.mode; S.mode = m; anim = null;
+  if (m === 'orbit') {
+    document.exitPointerLock?.();
+    orbit.enabled = true;
+    if (was !== 'orbit') {  // step back out to the overview
+      const v = views.find(v => v.kind === 'orbit'); if (v) jump(v);
+    }
+  } else {
+    orbit.enabled = false;
+    if (was === 'orbit') {
+      // back inside: where the camera is if that is in the room, else the start
+      const p = camera.position, inside = m === 'fly' ? (box && box.containsPoint(p)) : free(p.x, p.z);
+      if (!inside && views[0]) jump(views[0]);
+      else { const e = new THREE.Euler().setFromQuaternion(camera.quaternion, 'YXZ'); S.yaw = e.y; S.pitch = e.x; S.pos.set(p.x, p.y - EYE, p.z); }
+    }
+    if (m === 'walk' && room?.ok) {
+      if (!free(S.pos.x, S.pos.z)) { const s = nearestFree(S.pos.x, S.pos.z); S.pos.x = s.x; S.pos.z = s.z; }
+      S.pos.y = room.floorY;
+    }
+  }
+  S.vel.set(0, 0, 0);
+  syncUi();
+}
 
+function nearestFree(x, z) {
+  let bd = 1e9, b = room.spawn;
+  for (let k = 0; k < room.W * room.H; k++) if (room.inRoom(k)) { const p = room.at(k), d = Math.hypot(p.x - x, p.z - z); if (d < bd) { bd = d; b = p; } }
+  return b;
+}
+
+const easeIO = t => t < .5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2;
+function jump(v, now = false) {
+  if (!v) return;
+  if (v.kind === 'orbit') {
+    if (S.mode !== 'orbit') { S.mode = 'orbit'; orbit.enabled = true; document.exitPointerLock?.(); syncUi(); }
+    const fromP = camera.position.clone(), fromT = orbit.target.clone();
+    if (now || RM) { camera.position.copy(v.from); orbit.target.copy(v.target); orbit.update(); return; }
+    anim = { t: 0, dur: 1.4, f: k => { camera.position.lerpVectors(fromP, v.from, k); orbit.target.lerpVectors(fromT, v.target, k); camera.lookAt(orbit.target); } };
+    return;
+  }
+  if (S.mode === 'orbit') { orbit.enabled = false; S.mode = v.kind === 'walk' && room?.ok ? 'walk' : 'fly'; syncUi(); }
+  const y = room ? room.floorY : 0;
+  const a = { x: camera.position.x, y: camera.position.y, z: camera.position.z, yaw: S.yaw, pitch: S.pitch };
+  const b = { x: v.x, y: y + EYE, z: v.z, yaw: v.yaw, pitch: v.pitch };
+  let dy = ((b.yaw - a.yaw + Math.PI) % (2 * Math.PI) + 2 * Math.PI) % (2 * Math.PI) - Math.PI;
+  const apply = k => { S.pos.set(a.x + (b.x - a.x) * k, a.y + (b.y - a.y) * k - EYE, a.z + (b.z - a.z) * k); S.yaw = a.yaw + dy * k; S.pitch = a.pitch + (b.pitch - a.pitch) * k; S.vel.set(0, 0, 0); };
+  if (now || RM) { apply(1); return; }
+  const dist = Math.hypot(b.x - a.x, b.y - a.y, b.z - a.z);
+  anim = { t: 0, dur: Math.min(2.6, 0.8 + dist * 0.18), f: apply, inside: true };
+}
+
+function buildViewsMenu() {
+  const m = $('views'); m.replaceChildren();
+  views.forEach((v, i) => {
+    const b = document.createElement('button');
+    const n = document.createElement('span'); n.className = 'mono'; n.textContent = String(i + 1).padStart(2, '0');
+    b.append(n, v.name); b.onclick = () => { stopTour(); showViews(false); jump(v); };
+    m.append(b);
+  });
+}
+function showViews(on) { $('views').classList.toggle('on', on); $('viewsBtn').setAttribute('aria-expanded', String(on)); }
+$('viewsBtn').onclick = e => { e.stopPropagation(); showViews(!$('views').classList.contains('on')); };
+addEventListener('click', e => { if (!e.target.closest('.views-wrap')) showViews(false); });
+
+function stopTour() { tour = null; $('tourBtn').textContent = '▶ Tour'; $('tourBtn').classList.remove('on'); }
+$('tourBtn').onclick = () => {
+  if (tour) return stopTour();
+  const inside = views.filter(v => v.kind === 'walk');
+  if (!inside.length) return;
+  document.exitPointerLock?.(); enter();
+  tour = { list: [...inside, views.find(v => v.name === 'Overview')].filter(Boolean), i: 0, hold: 0 };
+  $('tourBtn').textContent = '■ Stop tour'; $('tourBtn').classList.add('on');
+  jump(tour.list[0]);
+};
+
+// ---- input ---------------------------------------------------------------------------------------------------------
+addEventListener('keydown', e => {
+  if (e.target.closest?.('input,textarea')) return;
+  keys.add(e.code);
+  if (e.code === 'KeyF') setMode(S.mode === 'walk' ? 'fly' : 'walk');
+  if (e.code === 'KeyO') setMode(S.mode === 'orbit' ? 'walk' : 'orbit');
+  if (e.code === 'KeyH') { S.entered = !S.entered; updateHint(); }
+  if (e.code === 'KeyR' && views[0]) { stopTour(); jump(views[0]); }
+  if (/^Digit[1-9]$/.test(e.code)) { const v = views[+e.code.slice(5) - 1]; if (v) { stopTour(); jump(v); } }
+  if (e.code === 'BracketLeft') setExposure(exposure - 0.1);
+  if (e.code === 'BracketRight') setExposure(exposure + 0.1);
+  if (e.code === 'Backslash') setExposure(1);
+  if (['Space', 'ArrowUp', 'ArrowDown'].includes(e.code)) e.preventDefault();
+  if (tour && /^(Key[WASDQEC]|Arrow)/.test(e.code)) stopTour();
+});
+addEventListener('keyup', e => keys.delete(e.code));
+addEventListener('blur', () => keys.clear());
+document.addEventListener('pointerlockchange', () => { S.locked = document.pointerLockElement === canvas; $('cross').classList.toggle('on', S.locked); });
+addEventListener('mousemove', e => { if (S.locked && S.mode !== 'orbit') look(e.movementX, e.movementY, 0.0022); });
+function look(dx, dy, s) { S.yaw -= dx * s; S.pitch = Math.max(-1.45, Math.min(1.45, S.pitch - dy * s)); anim = anim?.inside ? null : anim; if (tour) stopTour(); }
+
+canvas.addEventListener('pointerdown', e => {
+  if (S.mode === 'orbit') { stopTour(); return; }
+  if (!S.entered) enter();
+  if (e.pointerType === 'touch' && e.clientX < innerWidth * 0.45) {  // left thumb: joystick
+    joy.id = e.pointerId; joy.ox = e.clientX; joy.oy = e.clientY; joy.x = joy.y = 0;
+    const j = $('joy'); j.style.left = e.clientX + 'px'; j.style.top = e.clientY + 'px'; j.style.display = 'block'; j.firstElementChild.style.transform = '';
+    canvas.setPointerCapture(e.pointerId); return;
+  }
+  if (FINE && e.pointerType === 'mouse' && !S.locked && e.button === 0) { canvas.requestPointerLock?.(); return; }
+  drag = { x: e.clientX, y: e.clientY, id: e.pointerId }; canvas.setPointerCapture(e.pointerId);
+});
+canvas.addEventListener('pointermove', e => {
+  if (e.pointerId === joy.id) {
+    let dx = e.clientX - joy.ox, dy = e.clientY - joy.oy; const l = Math.hypot(dx, dy), m = 45; if (l > m) { dx *= m / l; dy *= m / l; }
+    joy.x = dx / m; joy.y = dy / m; $('joy').firstElementChild.style.transform = `translate(${dx}px,${dy}px)`; if (tour) stopTour(); return;
+  }
+  if (!drag || e.pointerId !== drag.id) return;
+  look(e.clientX - drag.x, e.clientY - drag.y, e.pointerType === 'touch' ? 0.005 : 0.004); drag.x = e.clientX; drag.y = e.clientY;
+});
+const endPtr = e => { if (e.pointerId === joy.id) { joy.id = null; joy.x = joy.y = 0; $('joy').style.display = 'none'; } if (drag && e.pointerId === drag.id) drag = null; };
+canvas.addEventListener('pointerup', endPtr); canvas.addEventListener('pointercancel', endPtr);
+canvas.addEventListener('wheel', e => {
+  if (S.mode === 'orbit') return;
+  e.preventDefault(); S.speed = Math.min(S.mode === 'walk' ? 2.5 : 6, Math.max(0.25, S.speed * (e.deltaY < 0 ? 1.12 : 1 / 1.12)));
+  statSpeed();
+}, { passive: false });
+function statSpeed() { $('help').textContent = `? · ${S.speed.toFixed(1)}×`; clearTimeout(statSpeed.t); statSpeed.t = setTimeout(() => $('help').textContent = '?', 1500); }
+
+// ---- movement ------------------------------------------------------------------------------------------------------
+const FW = new THREE.Vector3(), RT = new THREE.Vector3(), WANT = new THREE.Vector3();
+function step(dt) {
+  if (S.mode === 'orbit') return;
+  const k = keys;
+  const f = (k.has('KeyW') || k.has('ArrowUp') ? 1 : 0) - (k.has('KeyS') || k.has('ArrowDown') ? 1 : 0) - joy.y;
+  const r = (k.has('KeyD') || k.has('ArrowRight') ? 1 : 0) - (k.has('KeyA') || k.has('ArrowLeft') ? 1 : 0) + joy.x;
+  const run = k.has('ShiftLeft') || k.has('ShiftRight');
+  const up = S.mode === 'fly' ? (k.has('Space') || k.has('KeyE') ? 1 : 0) - (k.has('KeyC') || k.has('KeyQ') ? 1 : 0) : 0;
+  const base = (S.mode === 'walk' ? WALK : FLY) * S.speed * (run ? 2 : 1);
+  FW.set(-Math.sin(S.yaw), 0, -Math.cos(S.yaw)); RT.set(Math.cos(S.yaw), 0, -Math.sin(S.yaw));
+  if (S.mode === 'fly') FW.set(-Math.sin(S.yaw) * Math.cos(S.pitch), Math.sin(S.pitch), -Math.cos(S.yaw) * Math.cos(S.pitch));
+  WANT.copy(FW).multiplyScalar(f).add(RT.multiplyScalar(r)); if (WANT.lengthSq() > 1) WANT.normalize(); WANT.multiplyScalar(base); WANT.y += up * base;
+  S.vel.lerp(WANT, 1 - Math.exp(-dt * (WANT.lengthSq() > 0 ? 10 : 7)));
+  const p = S.pos;
+  if (S.mode === 'walk' && room?.ok) {  // slide along walls one axis at a time
+    const nx = p.x + S.vel.x * dt, nz = p.z + S.vel.z * dt;
+    if (free(nx, p.z)) p.x = nx; else S.vel.x = 0;
+    if (free(p.x, nz)) p.z = nz; else S.vel.z = 0;
+    p.y = room.floorY;
+  } else { p.x += S.vel.x * dt; p.y += S.vel.y * dt; p.z += S.vel.z * dt; }
+}
+
+let bob = 0;
+function placeCamera(dt) {
+  if (S.mode === 'orbit') return;
+  const spd = Math.hypot(S.vel.x, S.vel.z); bob += spd * dt * 4.1;
+  const by = S.mode === 'walk' && !RM ? Math.sin(bob) * 0.018 * Math.min(1, spd / WALK) : 0;
+  camera.position.set(S.pos.x, S.pos.y + EYE + by, S.pos.z);
+  camera.rotation.set(S.pitch, S.yaw, 0);
+}
+
+// ---- map -----------------------------------------------------------------------------------------------------------
+const mapc = $('mapc'), mctx = mapc.getContext('2d'); let mapBase = null, mapT = null;
+function drawMapBase() {
+  if (!room) return;
+  const { W, H, grid } = room, c = document.createElement('canvas'); c.width = W; c.height = H;
+  const x = c.getContext('2d'), im = x.createImageData(W, H);
+  for (let k = 0; k < W * H; k++) { const v = grid[k], o = k * 4;
+    if (v === 1 && room.inRoom(k)) { im.data[o] = 232; im.data[o + 1] = 236; im.data[o + 2] = 243; im.data[o + 3] = 230; }
+    else if (v === 1) { im.data[o] = 140; im.data[o + 1] = 150; im.data[o + 2] = 165; im.data[o + 3] = 160; }
+    else if (v === 0) { im.data[o] = 255; im.data[o + 1] = 107; im.data[o + 2] = 0; im.data[o + 3] = 200; }
+    else im.data[o + 3] = 0; }
+  x.putImageData(im, 0, 0); mapBase = c;
+  const sc = Math.min(mapc.width / W, mapc.height / H) * 0.94; mapT = { sc, x0: (mapc.width - W * sc) / 2, y0: (mapc.height - H * sc) / 2 };
+}
+function drawMap() {
+  if (!mapBase) return;
+  const { sc, x0, y0 } = mapT; mctx.clearRect(0, 0, mapc.width, mapc.height);
+  mctx.imageSmoothingEnabled = false; mctx.drawImage(mapBase, x0, y0, room.W * sc, room.H * sc);
+  const toMap = (x, z) => [x0 + (x - room.ox) / CELL * sc, y0 + (z - room.oz) / CELL * sc];
+  for (const [i, v] of views.entries()) if (v.kind === 'walk') { const [u, w] = toMap(v.x, v.z); mctx.fillStyle = 'rgba(11,14,20,.85)'; mctx.beginPath(); mctx.arc(u, w, 9, 0, 7); mctx.fill(); mctx.fillStyle = '#fff'; mctx.font = '600 10px -apple-system,Arial'; mctx.textAlign = 'center'; mctx.textBaseline = 'middle'; mctx.fillText(String(i + 1), u, w + 0.5); }
+  const p = camera.position, [u, w] = toMap(p.x, p.z);
+  const yaw = S.mode === 'orbit' ? new THREE.Euler().setFromQuaternion(camera.quaternion, 'YXZ').y : S.yaw;
+  mctx.save(); mctx.translate(u, w); mctx.rotate(-yaw);
+  mctx.fillStyle = 'rgba(255,107,0,.25)'; mctx.beginPath(); mctx.moveTo(0, 0); mctx.arc(0, 0, 34, -Math.PI / 2 - 0.6, -Math.PI / 2 + 0.6); mctx.closePath(); mctx.fill();
+  mctx.fillStyle = '#ff6b00'; mctx.strokeStyle = '#111'; mctx.lineWidth = 2; mctx.beginPath(); mctx.arc(0, 0, 6, 0, 7); mctx.fill(); mctx.stroke();
+  mctx.restore();
+}
+mapc.addEventListener('click', e => {
+  if (!room?.ok) return;
+  const r = mapc.getBoundingClientRect(), mx = (e.clientX - r.left) / r.width * mapc.width, my = (e.clientY - r.top) / r.height * mapc.height;
+  const x = room.ox + (mx - mapT.x0) / mapT.sc * CELL, z = room.oz + (my - mapT.y0) / mapT.sc * CELL;
+  const t = free(x, z) ? { x, z } : nearestFree(x, z);
+  stopTour(); enter();
+  jump({ kind: 'walk', x: t.x, z: t.z, yaw: S.mode === 'orbit' ? Math.atan2(-(room.centre.x - t.x), -(room.centre.z - t.z)) : S.yaw, pitch: -0.05 });
+});
+$('mapSize').onclick = () => { const big = $('map').classList.toggle('big'); $('mapSize').setAttribute('aria-label', big ? 'Shrink the map' : 'Enlarge the map'); };
+
+// ---- HUD -----------------------------------------------------------------------------------------------------------
+function syncUi() {
+  for (const b of document.querySelectorAll('.seg button')) b.classList.toggle('on', b.dataset.mode === S.mode);
+  $('ceil').style.display = S.mode === 'orbit' ? '' : 'none';
+  $('ceil').classList.toggle('on', cutCeiling);
+  if (cloud) cloud.material.clippingPlanes = S.mode === 'orbit' && cutCeiling ? [ceilPlane] : [];
+  updateHint();
+}
+for (const b of document.querySelectorAll('.seg button')) b.onclick = () => { stopTour(); setMode(b.dataset.mode); };
+$('ceil').onclick = () => { cutCeiling = !cutCeiling; syncUi(); };
+$('turn').onclick = () => {  // rebuild everything on the cloud turned 180 degrees about x
+  if (!cloud) return; const g = cloud.geometry, a = g.attributes.position.array;
+  for (let i = 0; i < a.length; i += 3) { a[i + 1] = -a[i + 1]; a[i + 2] = -a[i + 2]; }
+  g.attributes.position.needsUpdate = true; cloud.geometry = new THREE.BufferGeometry(); setPoints(g, nameEl.textContent, true);
+};
+function setExposure(v) { exposure = Math.max(0.5, Math.min(1.8, +v.toFixed(2))); canvas.style.filter = exposure === 1 ? '' : `brightness(${exposure})`; $('expo').textContent = `☀ ${Math.round(exposure * 100)}%`; }
+$('expo').onclick = () => setExposure(exposure >= 1.75 ? 0.7 : exposure + 0.1);
+$('fs').onclick = () => document.fullscreenElement ? document.exitFullscreen() : document.documentElement.requestFullscreen?.();
+$('help').onclick = () => { S.entered = !S.entered; updateHint(); };
+function enter() { S.entered = true; updateHint(); }
+$('enter').onclick = () => { enter(); if (FINE && S.mode !== 'orbit') canvas.requestPointerLock?.(); };
+function updateHint() {
+  const li = [];
+  if (S.mode === 'orbit') li.push('<kbd>Drag</kbd> turn around the scan', '<kbd>Right drag</kbd> pan', '<kbd>Scroll</kbd> zoom', '<kbd>O</kbd> or a view to step back inside');
+  else if (FINE) li.push('<kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> move, <kbd>Shift</kbd> run', 'Click, then move the mouse to look', S.mode === 'fly' ? '<kbd>Space</kbd>/<kbd>C</kbd> up / down' : 'Walls stop you; <kbd>F</kbd> to fly through them', '<kbd>Scroll</kbd> speed', '<kbd>1</kbd>–<kbd>9</kbd> views, <kbd>R</kbd> back to the start', '<kbd>[</kbd><kbd>]</kbd> exposure, <kbd>Esc</kbd> free the mouse');
+  else li.push('Left thumb: move', 'Drag the right side: look', 'Tap the map to jump there', 'Views for set spots, Orbit for the whole scan');
+  $('hintList').innerHTML = li.map(x => `<li>${x}</li>`).join('');
+  $('enter').textContent = S.mode === 'orbit' ? 'Got it' : FINE ? 'Click to explore' : 'Tap to explore';
+  $('hint').classList.toggle('off', S.entered);
+}
+
+// ---- file opening --------------------------------------------------------------------------------------------------
+const param = new URLSearchParams(location.search).get('ply');  // ?ply= wins; without it the office scan is the default
+loadUrl(param || DEFAULT_PLY);
 sizeEl.addEventListener('input', () => { if (cloud) cloud.material.size = +sizeEl.value; });
-document.getElementById('open').addEventListener('click', () => fileEl.click());
+$('open').addEventListener('click', () => fileEl.click());
 fileEl.addEventListener('change', () => { const f = fileEl.files && fileEl.files[0]; if (f) loadFile(f); fileEl.value = ''; });
 let dragDepth = 0;
 addEventListener('dragenter', e => { e.preventDefault(); dragDepth++; dropEl.classList.add('on'); });
 addEventListener('dragleave', e => { e.preventDefault(); if (--dragDepth <= 0) { dragDepth = 0; dropEl.classList.remove('on'); } });
 addEventListener('dragover', e => e.preventDefault());
-addEventListener('drop', e => {
-  e.preventDefault(); dragDepth = 0; dropEl.classList.remove('on');
-  const f = e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files[0];
-  if (f) loadFile(f);
-});
+addEventListener('drop', e => { e.preventDefault(); dragDepth = 0; dropEl.classList.remove('on'); const f = e.dataTransfer?.files?.[0]; if (f) loadFile(f); });
 
-renderer.setAnimationLoop(() => { controls.update(); renderer.render(scene, camera); });
+// ---- loop ----------------------------------------------------------------------------------------------------------
+let last = performance.now();
+renderer.setAnimationLoop(() => {
+  const now = performance.now(), dt = Math.min(0.05, (now - last) / 1000); last = now;
+  if (anim) { anim.t += dt; const k = easeIO(Math.min(1, anim.t / anim.dur)); anim.f(k); if (anim.t >= anim.dur) { anim = null; if (tour) tour.hold = 0; } }
+  else if (tour) { tour.hold += dt; if (tour.hold > 2.2) { tour.i++; if (tour.i >= tour.list.length) stopTour(); else jump(tour.list[tour.i]); } }
+  if (!anim || anim.inside === undefined) step(dt);
+  placeCamera(dt);
+  if (S.mode === 'orbit' && !anim) orbit.update();
+  renderer.render(scene, camera);
+  drawMap();
+});
 addEventListener('resize', () => { camera.aspect = innerWidth / innerHeight; camera.updateProjectionMatrix(); renderer.setSize(innerWidth, innerHeight); });
+syncUi();
+window.__lidar = { S, get room() { return room; }, get views() { return views; }, jump, setMode };
 </script>
 </body>
 </html>
