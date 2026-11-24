@@ -21,7 +21,7 @@ export interface Place {
 
 /** How the twin is shown, set by the team in the walkthrough: `crop` hides every splat outside a box (floaters, the
     street through a window). Metres, scene frame. */
-export interface SceneView { crop?: { min: [number, number, number]; max: [number, number, number] } }
+export interface SceneView { crop?: { min: [number, number, number]; max: [number, number, number] }; location?: { lat: number; lon: number } }
 
 /** The document the API reads and writes. `updatedAt` is null for files written before this endpoint existed; `view`
     is there only once someone has set one. */
@@ -137,15 +137,24 @@ export function validateView(body: unknown): { ok: true; view: SceneView | null 
   const v = body.view;
   if (v === null) return { ok: true, view: null };
   if (!isObj(v)) return bad(null, 'view', 'view must be an object or null');
-  const { crop, ...extra } = v;
-  if (Object.keys(extra).length) return bad(null, 'view', `view has only crop (got ${Object.keys(extra).join(', ')})`);
-  if (crop === undefined || crop === null) return { ok: true, view: {} };
-  if (!isObj(crop)) return bad(null, 'view.crop', 'view.crop must be {min, max}');
-  const pt = (q: unknown) => Array.isArray(q) && q.length === 3 && q.every(x => finite(x) && Math.abs(x) < WORLD_LIMIT);
-  if (!pt(crop.min) || !pt(crop.max)) return bad(null, 'view.crop', 'view.crop.min and max must be [x, y, z] in metres');
-  const min = crop.min as number[], max = crop.max as number[];
-  if (!min.every((m, k) => m < max[k])) return bad(null, 'view.crop', 'view.crop.min must be below max on every axis');
-  return { ok: true, view: { crop: { min: min as [number, number, number], max: max as [number, number, number] } } };
+  const { crop, location, ...extra } = v;
+  if (Object.keys(extra).length) return bad(null, 'view', `view has only crop and location (got ${Object.keys(extra).join(', ')})`);
+  const out: SceneView = {};
+  if (crop !== undefined && crop !== null) {
+    if (!isObj(crop)) return bad(null, 'view.crop', 'view.crop must be {min, max}');
+    const pt = (q: unknown) => Array.isArray(q) && q.length === 3 && q.every(x => finite(x) && Math.abs(x) < WORLD_LIMIT);
+    if (!pt(crop.min) || !pt(crop.max)) return bad(null, 'view.crop', 'view.crop.min and max must be [x, y, z] in metres');
+    const min = crop.min as number[], max = crop.max as number[];
+    if (!min.every((m, k) => m < max[k])) return bad(null, 'view.crop', 'view.crop.min must be below max on every axis');
+    out.crop = { min: min as [number, number, number], max: max as [number, number, number] };
+  }
+  if (location !== undefined && location !== null) {
+    if (!isObj(location) || !finite(location.lat) || !finite(location.lon) || Math.abs(location.lat) > 90 || Math.abs(location.lon) > 180) {
+      return bad(null, 'view.location', 'view.location must be {lat, lon} in degrees');
+    }
+    out.location = { lat: Math.round(location.lat * 1e6) / 1e6, lon: Math.round(location.lon * 1e6) / 1e6 };
+  }
+  return { ok: true, view: out };
 }
 
 /** The empty answer for a scene with no places.json yet (never a 404: no pins is a valid state). */
@@ -164,5 +173,5 @@ export function normalize(text: string): PlacesDoc | null {
 
 /** The write body: schema, a fresh timestamp and the validated list. */
 export function document(places: Place[], updatedAt = new Date().toISOString(), view?: SceneView | null): PlacesDoc {
-  return { schema: 1, updatedAt, places, ...(view && view.crop ? { view } : {}) };
+  return { schema: 1, updatedAt, places, ...(view && (view.crop || view.location) ? { view } : {}) };
 }

@@ -231,18 +231,18 @@ export function PlacesLayer({ engine, base, entered, onMap, onData, searchOpen, 
   const push = async (next: Place[], codeUsed: string, v?: SceneView | null) => {
     const target = placesTarget(base);
     if (!target) {
-      if (v !== undefined) { setNote({ tone: 'local', text: 'This scene is served as a file, so the crop holds for this visit only.' }); return; }
+      if (v !== undefined) { setNote({ tone: 'local', text: 'This scene is served as a file, so the change holds for this visit only.' }); return; }
       keepLocal(next, 'This scene is served as a file, so the tag stays on this device. Export places.json to move it onto the server.'); return;
     }
     setSaving(true); const res = await savePlaces(target, next, codeUsed, fetch, v); setSaving(false);
     if (res.kind === 'saved') {
       if (draftKey.current) clearDraft(draftKey.current);
       setLocalDraft(false); setPending(null); setAuth(null); setGuide(false); setTagErr(null); pendingView.current = undefined;
-      if (v !== undefined) { setView(v ?? undefined); setNote({ tone: 'ok', text: v?.crop ? 'Crop saved: everyone who opens this twin sees it.' : 'Crop removed for everyone.' }); return; }
+      if (v !== undefined) { setView(v ?? undefined); setNote({ tone: 'ok', text: 'Saved: everyone who opens this twin sees it.' }); return; }
       setNote({ tone: 'ok', text: `Saved · ${res.count} place${res.count === 1 ? '' : 's'} on the server${res.updatedAt ? ` · ${new Date(res.updatedAt).toLocaleTimeString()}` : ''}.` });
       return;
     }
-    if (v !== undefined && res.kind !== 'auth') { setNote({ tone: 'bad', text: `Crop not saved: ${res.kind === 'forbidden' ? 'that code can look but not edit' : res.detail}.` }); return; }
+    if (v !== undefined && res.kind !== 'auth') { setNote({ tone: 'bad', text: `Not saved: ${res.kind === 'forbidden' ? 'that code can look but not edit' : res.detail}.` }); return; }
     if (res.kind === 'auth') { setPending(next); pendingView.current = v; setAuth({ detail: res.detail }); setNote({ tone: 'bad', text: 'The server wants a team code before it will save.' }); return; }
     if (res.kind === 'forbidden') { keepLocal(next, failureText(res)); setPending(next); setAuth({ detail: res.detail, forbidden: true }); return; }
     keepLocal(next, failureText(res));

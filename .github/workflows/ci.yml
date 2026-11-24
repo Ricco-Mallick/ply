@@ -27,6 +27,7 @@ jobs:
           node --experimental-strip-types test/modal.test.mts
           node --experimental-strip-types test/limits.test.mts
           node --experimental-strip-types test/places.test.mts
+          node --experimental-strip-types test/summary.test.mts
   app:
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -50,6 +51,7 @@ jobs:
           node --experimental-strip-types test/walk.test.mts
           node --experimental-strip-types test/walk-lidar.test.mts
           node --experimental-strip-types test/stray-zip.test.mts
+          node --experimental-strip-types test/zip.test.mts
   pipeline:
     runs-on: ubuntu-24.04
     timeout-minutes: 25

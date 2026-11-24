@@ -221,3 +221,24 @@ button { font: inherit; color: inherit; cursor: pointer; }
 .crop-range input::-moz-range-track { background: none; }
 html.embed .search-pill, html.embed .tag-btn, html.embed .desk, html.embed .scene-status, html.embed .demo-note, html.embed .q-btn .q-num { display: none !important; }
 html.embed .map canvas { width: 120px !important; height: 120px !important; }
+/* photo vs twin */
+.cmp { position: fixed; z-index: 20; cursor: ew-resize; touch-action: none; }
+.cmp img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: fill; transition: opacity .2s; user-select: none; }
+.cmp-line { position: absolute; top: 0; bottom: 0; width: 2px; margin-left: -1px; background: #fff; box-shadow: 0 0 0 1px rgba(0, 0, 0, .35); }
+.cmp-line i { position: absolute; left: 50%; top: 50%; width: 34px; height: 34px; margin: -17px 0 0 -17px; border-radius: 50%; background: #fff; box-shadow: 0 4px 16px rgba(0, 0, 0, .4); }
+.cmp-line i::before { content: "‹ ›"; position: absolute; inset: 0; display: grid; place-items: center; color: #0b1220; font: 700 13px/1 var(--font-body); }
+.cmp-tag { position: absolute; top: 12px; padding: 5px 10px; border-radius: 999px; background: rgba(8, 11, 18, .75); color: var(--fg); font-size: 10.5px; letter-spacing: .08em; text-transform: uppercase; pointer-events: none; }
+.cmp-tag.l { left: 12px; } .cmp-tag.r { right: 12px; }
+.cmp-bar { position: fixed; z-index: 21; left: 50%; bottom: 18px; transform: translateX(-50%); width: min(620px, calc(100vw - 24px)); padding: 12px 14px; display: flex; gap: 14px; align-items: center; --lg-tint: rgba(8, 11, 18, .86); }
+.cmp-bar b { font: 600 13px/1.2 var(--font-body); } .cmp-bar p { margin: 3px 0 0; color: var(--muted); font-size: 12px; line-height: 1.4; }
+.cmp-a { display: flex; align-items: center; gap: 4px; margin-left: auto; } .cmp-a .tag-plain { font-size: 20px; padding: 4px 10px; } .cmp-a .btn { height: 38px; margin: 0; padding: 0 16px; font-size: 9.5px; }
+/* where is this */
+.loc-dlg { width: min(420px, calc(100vw - 24px)); }
+.loc-map { position: relative; overflow: hidden; border-radius: 12px; border: 1px solid var(--line-2); background: #dfe3e8; margin: 6px 0 4px; }
+.loc-map img { position: absolute; height: auto; user-select: none; }
+.loc-pin { position: absolute; left: 50%; top: 50%; width: 18px; height: 18px; margin: -18px 0 0 -9px; border-radius: 50% 50% 50% 0; transform: rotate(-45deg); background: var(--accent); border: 2px solid #fff; box-shadow: 0 3px 10px rgba(0, 0, 0, .4); }
+.loc-credit { margin: 0 0 6px; font-size: 10.5px; color: var(--dim); } .loc-credit a { color: var(--muted); }
+.loc-dlg a.btn { display: inline-grid; place-items: center; text-decoration: none; height: 42px; margin: 0; padding: 0 18px; font-size: 9.5px; }
+/* the More menu shows its tools on every screen size, as full-width rows */
+.more-menu { right: 0; left: auto; min-width: 200px; display: flex; flex-direction: column; gap: 6px; padding: 8px; }
+.more-menu .tour-btn, .more-menu .tour-btn.opt, .more-menu .desk { display: inline-flex !important; width: 100%; justify-content: flex-start; }

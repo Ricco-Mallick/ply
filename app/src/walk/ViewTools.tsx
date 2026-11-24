@@ -8,9 +8,17 @@ import { Glass } from '../shared/Glass';
 import type { WalkEngine } from './engine';
 import { shareHref } from './deeplink';
 import type { PlacesApi } from './Places';
+import type { SceneView } from './places-api';
 import { RADIUS } from './walker';
 
 type Box = { min: [number, number, number]; max: [number, number, number] };
+
+/** One field of the saved view changed, the rest kept; null when nothing is left. */
+export function mergeView(v: SceneView | undefined, patch: Partial<SceneView>): SceneView | null {
+  const n: SceneView = { ...(v ?? {}), ...patch };
+  for (const k of Object.keys(n) as (keyof SceneView)[]) if (n[k] === undefined) delete n[k];
+  return n.crop || n.location ? n : null;
+}
 
 function useOutside(open: boolean, close: () => void) {
   const wrap = useRef<HTMLDivElement>(null);
@@ -32,7 +40,7 @@ async function copy(text: string) {
 }
 
 /** Share: the link to this exact spot and direction, the same as an iframe, or the frame as a PNG. */
-export function ShareMenu({ engine, name, onToast }: { engine: WalkEngine; name: string; onToast: (t: string) => void }) {
+export function ShareMenu({ engine, name, onToast, onPack }: { engine: WalkEngine; name: string; onToast: (t: string) => void; onPack?: () => void }) {
   const [open, setOpen] = useState(false); const wrap = useOutside(open, () => setOpen(false));
   const link = () => shareHref(location.href, engine.pose(), { ui: null, embed: null });
   const act = async (what: 'link' | 'embed' | 'image' | 'native') => {
@@ -56,6 +64,7 @@ export function ShareMenu({ engine, name, onToast }: { engine: WalkEngine; name:
         {'share' in navigator && matchMedia('(pointer: coarse)').matches && <button role="menuitem" onClick={() => act('native')}>Send…<small>through the phone's share sheet</small></button>}
         <button role="menuitem" onClick={() => act('embed')}>Copy embed code<small>an iframe for a site or a slide</small></button>
         <button role="menuitem" onClick={() => act('image')}>Save a picture<small>this frame as a PNG</small></button>
+        {onPack && <button role="menuitem" onClick={() => { setOpen(false); onPack(); }}>Download the twin pack<small>splat, floor map, places and summary in one zip</small></button>}
       </Glass>}
     </div>
   );
@@ -98,7 +107,7 @@ export function CropPanel({ engine, api, onClose }: { engine: WalkEngine; api: P
         </div>;
       })}
       <div className="tag-actions">
-        <button className="btn" disabled={!api} onClick={() => { api?.saveView(isFull ? null : { crop: { min: box.min.map(r2) as Box['min'], max: box.max.map(r2) as Box['max'] } }); saved.current = isFull ? null : box; onClose(); }}>{isFull ? 'Save without a crop' : 'Save crop'}</button>
+        <button className="btn" disabled={!api} onClick={() => { api?.saveView(mergeView(api.view, { crop: isFull ? undefined : { min: box.min.map(r2) as Box['min'], max: box.max.map(r2) as Box['max'] } })); saved.current = isFull ? null : box; onClose(); }}>{isFull ? 'Save without a crop' : 'Save crop'}</button>
         <button className="tag-plain" onClick={() => setBox({ min: [...full.min] as Box['min'], max: [...full.max] as Box['max'] })}>Reset</button>
         <button className="tag-plain" onClick={cancel}>Cancel</button>
       </div>
