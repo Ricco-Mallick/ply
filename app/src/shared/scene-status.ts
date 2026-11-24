@@ -37,10 +37,15 @@ const STATUS: Record<string, SceneStatus> = {
     text: 'The LiDAR path: a scanner cloud and a measured shell. Working, but not a shipping feature yet.',
     tone: 'dev',
   },
-  'chapel-high-2': {
+  'chapel-p7-1': {
     label: 'Latest pipeline',
-    text: 'The chapel through the current pipeline at the high preset: 1,236 frames, mismatched poses dropped, the floor levelled from the cameras.',
+    text: 'The chapel through the current pipeline: exposure model, phone fine-tune and the walking grid from depth.',
     tone: 'new',
+  },
+  'chapel-high-2': {
+    label: 'One version behind',
+    text: 'The chapel at the high preset before the exposure model and the phone fine-tune: 1,236 frames, mismatched poses dropped, the floor levelled from the cameras.',
+    tone: 'mid',
   },
   'chapel-test-quick': {
     label: 'Test run · quick',

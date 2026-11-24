@@ -2,6 +2,7 @@
 /* Scene manifest: what the pipeline hands the viewer (pipeline/README.md has the producing side).
    Convention: metres, +Y up, floor at floorY (0 for pipeline output), splat already aligned unless splatQuaternion says otherwise. */
 import { deviceProfile } from './perf';
+import { DEFAULT_SCENE } from '../shared/default-scene';
 
 export interface Occupancy { image: string; origin: [number, number]; cell: number; width: number; height: number; }
 /** The twin from straight above with the ceiling cut away (pipeline topview.py). Laid out like the occupancy image:
@@ -76,10 +77,10 @@ export class OccupancyGrid {
   }
 }
 
-/** ?scene=<folder URL or scene.json URL>; defaults to the bundled demo. */
+/** ?scene=<folder URL or scene.json URL>; defaults to DEFAULT_SCENE. */
 export async function loadManifest(): Promise<{ manifest: SceneManifest; base: URL }> {
   const q = new URLSearchParams(location.search).get('scene');
-  const href = q ? (q.endsWith('.json') ? q : q.replace(/\/?$/, '/scene.json')) : `${import.meta.env.BASE_URL}scenes/demo/scene.json`;
+  const href = q ? (q.endsWith('.json') ? q : q.replace(/\/?$/, '/scene.json')) : DEFAULT_SCENE;
   const url = new URL(href, location.href);
   const res = await fetch(url); if (!res.ok) throw new Error(`Could not load scene (${res.status})`);
   const raw = await res.json();

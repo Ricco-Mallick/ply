@@ -12,12 +12,13 @@ import { buildWalkHref } from '../walk/deeplink';
 import { loadPlaces } from '../walk/places-api';
 import { buildIndex, search } from '../lab/index';
 import type { Place } from '../lab/places';
+import { DEFAULT_SCENE } from '../shared/default-scene';
 import { factorFrom, fmtScale, LIMITS, measure as tapDistance, rescaleScene } from './rescale';
 import type { Obj, SceneDocument, Shell } from './types';
 
 const BASE = '/ply/';
 const params = new URLSearchParams(location.search);
-const sceneBase = new URL(params.get('scene') ?? `${BASE}scenes/demo/`, location.href).href;
+const sceneBase = new URL(params.get('scene') ?? DEFAULT_SCENE.replace(/scene\.json$/, ''), location.href).href;
 const lidarUrl = params.get('lidar');   // a coloured point cloud (PLY) to look at on its own
 
 type View = 'walk' | 'doll' | 'plan';
