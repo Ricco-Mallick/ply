@@ -155,6 +155,10 @@ def build_parser() -> argparse.ArgumentParser:
                    help="MCMC opacity regulariser (A/B option; the trainer's default is 0.01)")
     g.add_argument("--pose-opt", action="store_true", help="refine camera poses during training (A/B option)")
     g.add_argument("--depth-loss", action="store_true", help="supervise depth at the SfM track points (A/B option)")
+    g.add_argument("--no-fill", dest="fill", action="store_false", default=None,
+                   help="ship the floor as trained, without patching the holes the camera never saw")
+    g.add_argument("--no-levels", dest="levels", action="store_false", default=None,
+                   help="treat the capture as one floor even when the walk went up or down a storey")
     g.add_argument("--no-lidar-depth", dest="lidar_depth", action="store_false", default=None,
                    help="an iPhone LiDAR capture trains against its measured depth maps by default; this turns that off")
     g.add_argument("--bilateral-grid", action="store_true",

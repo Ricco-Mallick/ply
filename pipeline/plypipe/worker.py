@@ -726,6 +726,9 @@ def run_job(api: Api, job: dict, work: Path, extra: list[str]) -> None:
             if f.exists():
                 api.upload(f"scenes/{jid}/{name}", f, CTYPE.get(f.suffix, "application/octet-stream"))
                 files[name] = f.stat().st_size
+        for f in sorted(out.glob("occupancy_L*.png")) + sorted(out.glob("occupancy_L*.json")):  # the other floors' walking grids
+            api.upload(f"scenes/{jid}/{f.name}", f, CTYPE.get(f.suffix, "application/octet-stream"))
+            files[f.name] = f.stat().st_size
         for f in sorted((out / "heldout").glob("*.jpg")) if (out / "heldout").is_dir() else []:  # the photo-vs-twin check
             api.upload(f"scenes/{jid}/heldout/{f.name}", f, CTYPE[".jpg"])
             files[f"heldout/{f.name}"] = f.stat().st_size

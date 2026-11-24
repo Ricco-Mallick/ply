@@ -22,6 +22,9 @@ export interface SceneManifest {
   occupancy?: Occupancy;
   topview?: TopView;
   cameraPath?: [number, number, number][];
+  /** several floors (pipeline levels.py): each with its own walking grid; the stairs join them */
+  levels?: { index: number; name: string; floorY: number; occupancy: Occupancy; spawn?: [number, number, number] }[];
+  stairs?: { from: number; to: number; path: [number, number, number][] }[];
   /** photos training never saw, with their exact cameras (pipeline heldout.py): the photo-vs-twin check */
   heldOut?: HeldOut[];
   /** cinematic tour keyframes (pipeline tour.py) */
@@ -111,6 +114,23 @@ async function normalise(raw: any, base: URL): Promise<SceneManifest> {
   if (raw.occupancy?.meta) {
     const o = await (await fetch(new URL(raw.occupancy.meta, base))).json();
     m.occupancy = { image: raw.occupancy.image ?? o.image, origin: o.origin, cell: o.cellSize, width: o.width, height: o.height };
+  }
+  if (Array.isArray(raw.levels) && raw.levels.length > 1) {
+    const lv = [];
+    for (const L of raw.levels) {
+      if (typeof L?.floorY !== 'number' || !L.occupancy?.meta) continue;
+      try {
+        const o = await (await fetch(new URL(L.occupancy.meta, base))).json();
+        lv.push({ index: lv.length, name: String(L.name ?? `Floor ${lv.length + 1}`), floorY: L.floorY, spawn: L.spawn,
+          occupancy: { image: L.occupancy.image ?? o.image, origin: o.origin, cell: o.cellSize, width: o.width, height: o.height } });
+      } catch { /* a floor whose grid cannot be read is left out */ }
+    }
+    if (lv.length > 1) {
+      m.levels = lv;
+      const ok3 = (p: unknown) => Array.isArray(p) && p.length === 3 && p.every(v => typeof v === 'number' && Number.isFinite(v));
+      m.stairs = (Array.isArray(raw.stairs) ? raw.stairs : []).filter((st: any) => Number.isInteger(st?.from) && Number.isInteger(st?.to) && st.from < lv.length && st.to < lv.length
+        && Array.isArray(st.path) && st.path.length >= 2 && st.path.every(ok3));
+    }
   }
   if (Array.isArray(raw.heldOut)) {
     const ok = (a: unknown, n: number) => Array.isArray(a) && a.length === n && a.every(v => typeof v === 'number' && Number.isFinite(v));

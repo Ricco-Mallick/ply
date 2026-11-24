@@ -368,6 +368,7 @@ def run_stage(ctx: Ctx) -> dict:
     if floaters:
         ctx.log.emit("export", "progress", f"floaters: removed {clean_stats['removedIsolated']} isolated and "
                      f"{clean_stats['removedFaint']} faint splats, kept {clean_stats['kept']}")
+    filled = _fill_floor(ctx, cleaned) if ctx.opt("fill", True) is not False else None
     clipped = clean_mod.clipped_fraction(cleaned)
     if viewer is None:
         try:  # what the viewer will show, scored on the held-out photos (GPU only; None elsewhere)
@@ -418,7 +419,7 @@ def run_stage(ctx: Ctx) -> dict:
             "floaterClean": clean_stats, "clippedFraction": clipped, **({"viewerEval": viewer} if viewer else {}),
             **({"roomCrop": room_crop} if room_crop else {}),
             "shRestore": sh, **({"shippedEval": shipped} if shipped else {}),
-            **({"cleanupChoice": choice} if choice else {}), **({"topview": top} if top else {}), **({"heldOut": held} if held else {}),
+            **({"cleanupChoice": choice} if choice else {}), **({"topview": top} if top else {}), **({"heldOut": held} if held else {}), **({"floorFill": filled} if filled else {}),
             **({"denseOccupancy": walk_grid} if walk_grid else {}), **({"denseLayout": layout} if layout else {})}
 
 
@@ -505,6 +506,25 @@ def _dense_layout(ctx: Ctx) -> dict | None:
     return {"used": "dense" if ok else "sparse", **({} if ok else {"why": why}), "walls": len(new["walls"]),
             "doors": sum(o["kind"] == "door" for o in new["openings"]), "windows": sum(o["kind"] == "window" for o in new["openings"]),
             "rejectedDetections": len(new["rejected"]), **({"droppedOpenings": new["droppedOpenings"]} if new.get("droppedOpenings") else {}), "seconds": round(time.time() - t0, 1)}
+
+
+def _fill_floor(ctx: Ctx, cleaned: Path) -> dict | None:
+    """Patch the floor the camera never saw with floor from beside it (plypipe.fill), every floor of the capture.
+    Best effort: the model ships unfilled if anything goes wrong."""
+    try:
+        from plypipe import fill
+        scene = read_scene(ctx) or {}
+        floors = [float(L["floorY"]) for L in scene.get("levels") or []] or [float(scene.get("floorY") or 0.0)]
+        out = cleaned.with_name("scene_filled.ply")
+        rep = fill.fill_floors(cleaned, out, floors)
+        if rep["added"]:
+            out.replace(cleaned)
+            ctx.log.emit("export", "progress", f"floor fill: {sum(f.get('holes', 0) for f in rep['floors'])} hole(s), "
+                                               f"{sum(f.get('filledM2', 0) for f in rep['floors']):.2f} m², {rep['added']} splats copied in")
+        return rep
+    except Exception as e:
+        ctx.log.emit("export", "warn", f"floor fill skipped: {str(e)[:160]}")
+        return {"skipped": str(e)[:160]}
 
 
 def _heldout(ctx: Ctx, holdout: int) -> int:
