@@ -16,10 +16,11 @@
 | **Focus** | Manual, about 1.5 m (or AE/AF lock) | Continuous AF hunting |
 | **Hold** | Upright, chest height (about 1.45 m), tilted 10–15° down | Overhead, waist-level swings |
 | **Move** | Slow walk, about 0.5 m/s (one step per second); turn while walking | Pivoting on the spot, fast pans |
-| **Path** | 2 perimeter loops (inward, then outward) + 1 cross pass, end where you started | One pass along one wall |
+| **Path** | 2 perimeter loops (inward, then outward) + 1 cross pass per room, end where you started | One pass along one wall |
+| **Stairs** | Half speed up and back down, camera along the flight, one take for both floors (§3.2) | A separate take per floor, looking at your feet |
 | **Scene** | All lights on, doors open, room empty, Ply marker at the entrance | People walking, mirrors in close-up |
 
-Duration: a small room takes 1–2 min, a 4-room floor 5–8 min. The pipeline keeps the sharpest frame of every 0.4 s, so a slow walk costs nothing extra.
+Duration: a small room takes 1–2 min, a 4-room floor 5–8 min, two floors with stairs about 8–10 min. The pipeline keeps the sharpest frame of every 0.4 s, so a slow walk costs nothing extra.
 
 ---
 
@@ -89,10 +90,24 @@ Nothing to dial in. `plypipe` plans each run from the clips: the kept frame rate
 ### 3.1 Doorways and multi-room floors
 - **Doorways:** approach slowly, stop for 1 second in the door with the next room in view, walk through, then turn back and show the doorway frame from the new side for 2 seconds. The two sides of a door are what stitch rooms together.
 - **Corridors:** walk down the middle facing forward, then walk back facing forward again (both directions), weaving gently left and right so the side walls get some parallax.
-- **One take per floor** while it stays under about 8 minutes. For larger floors, split by wing: each take starts and ends at a shared doorway or junction, with 5–10 s of overlap, and each starts with a marker in view.
-- **Stairs / other floors:** a separate take per floor. Each floor is its own twin; linking floors is an R2/R3 feature.
+- **One take for the whole space** while it stays under about 10 minutes. Rooms and floors that share a take share one coordinate frame, and routes can only cross between places that came out of the same take.
+  - For larger buildings, split by wing. Each take starts and ends at a shared doorway or junction, with 5–10 s of overlap, and each starts with a marker in view.
 
-### 3.2 Hard surfaces
+### 3.2 Stairs (two floors in one take)
+Stairs are where a take most often breaks. The steps repeat, the space is tight, and the light usually changes. Walk them like this:
+1. **Finish the lower floor first.** Cover every room with the loops in §3, then walk to the foot of the stairs.
+2. **Stop at the foot for 2 seconds** with the whole flight in view.
+3. **Climb at half your walking speed,** about one step a second. Point the camera up the flight at the landing or the next wall, not down at your feet. Keep the handrail or a wall edge in frame for texture.
+4. **At a landing, keep walking while you turn.** Never pivot on the spot; take a slow arc of 2–3 steps.
+5. **At the top, stop for 2 seconds** facing back down the stairs, then cover the upper floor with the same loops.
+6. **Walk back down the same stairs,** camera facing down the flight. This gives every step views from both directions.
+7. **End where you started,** at the marker on the lower floor. That closes one loop across both floors and removes the drift.
+
+Exposure stays locked for the whole take. If the stairwell is much darker than the rooms, turn its lights on before you start; don't change the exposure mid-take.
+
+Measure each floor's height once, floor to floor with a tape at the stairwell, and note it with the take. It checks the twin's scale between floors.
+
+### 3.3 Hard surfaces
 | Surface | Problem | What to do |
 |---|---|---|
 | Mirrors, glass doors, glossy screens | Reflections look like rooms that move | Pass at an angle, don't linger; cover large mirrors with paper if allowed; turn screens off |
