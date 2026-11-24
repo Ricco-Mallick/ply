@@ -6,6 +6,7 @@ import { Glass } from '../shared/Glass';
 import { Tour, autoTour, SHOT_NAMES } from './tour';
 import { PlacesLayer, type PlacesApi } from './Places';
 import { ClickToMove, CropPanel, ShareMenu } from './ViewTools';
+import { CompareView, LocationPanel, downloadPack } from './TwinTools';
 import { parseDeepLink } from './deeplink';
 import { ArLauncher } from './ArUi';
 import { sceneStatus } from '../shared/scene-status';
@@ -38,6 +39,7 @@ export function Walk() {
   const [help, setHelp] = useState(false);  // the controls card is opt-in: ? or the ? button
   const [cropOpen, setCropOpen] = useState(false); const [placesApi, setPlacesApi] = useState<PlacesApi | null>(null);
   const [toast, setToast] = useState<string | null>(null);
+  const [locOpen, setLocOpen] = useState(false); const [cmpOpen, setCmpOpen] = useState(false);
   useEffect(() => { if (!toast) return; const t = setTimeout(() => setToast(null), 2600); return () => clearTimeout(t); }, [toast]);
   // display gain, because the splat's own colour has no tone curve: a capture that clipped will glare
   const [exposure, setExposure] = useState(() => { const v = +(localStorage.getItem('ply-exposure') ?? 1); return v >= .5 && v <= 1.6 ? v : 1; });
@@ -105,9 +107,12 @@ export function Walk() {
           {tour && entered && <div className="views-wrap"><Glass as="button" className="tour-btn pill" opts={{ shader: false, press: true }} aria-expanded={views} onClick={() => setViews(v => !v)}>Views</Glass>
             {views && <Glass className="views-menu" opts={{ radius: 14, shader: false }}>{tour.keys.map((_, i) => <button key={i} onClick={() => { setViews(false); document.exitPointerLock?.(); tour.goTo(i); }}><span className="mono">{String(i + 1).padStart(2, '0')}</span>{SHOT_NAMES[i] ?? `View ${i + 1}`}</button>)}</Glass>}</div>}
           {entered && shell?.walls?.length && <Glass as="button" className={`tour-btn pill opt ${measured ? 'on' : ''}`} opts={{ shader: false, press: true }} aria-pressed={measured} title="Measured shell: walls and object boxes from the solve" onClick={() => setMeasured(v => !v)}>Measured</Glass>}
-          {entered && engine && <ShareMenu engine={engine} name={manifest?.name ?? 'Twin'} onToast={setToast} />}
-          {entered && engine && !EMBED && <Glass as="button" className={`tour-btn pill opt desk ${cropOpen ? 'on' : ''}`} opts={{ shader: false, press: true }} aria-pressed={cropOpen} title="Crop the twin: hide the fuzz outside the room" onClick={() => { document.exitPointerLock?.(); setTagMode(false); setCropOpen(v => !v); }}>Crop</Glass>}
+          {entered && engine && <ShareMenu engine={engine} name={manifest?.name ?? 'Twin'} onToast={setToast} onPack={base ? () => { void downloadPack(engine, base, manifest?.name ?? 'Twin', setToast); } : undefined} />}
           {entered && EMBED && <Glass as="a" className="tour-btn pill" opts={{ shader: false, press: true }} href={(() => { const u = new URL(location.href); u.searchParams.delete('embed'); return u.href; })()} target="_blank" rel="noopener" title="Open the full walkthrough">Open in Ply ↗</Glass>}
+          {entered && <MoreMenu>
+          {entered && engine && !!manifest?.heldOut?.length && <Glass as="button" className={`tour-btn pill opt ${cmpOpen ? 'on' : ''}`} opts={{ shader: false, press: true }} aria-pressed={cmpOpen} title="A photo the training never saw against the twin from the same camera" onClick={() => setCmpOpen(v => !v)}>Photo vs twin</Glass>}
+          {entered && !EMBED && (placesApi?.view?.location || !EMBED) && <Glass as="button" className={`tour-btn pill opt ${locOpen ? 'on' : ''}`} opts={{ shader: false, press: true }} aria-pressed={locOpen} title="Where is this? The building on a map" onClick={() => { document.exitPointerLock?.(); setLocOpen(v => !v); }}>📍 Where is this?</Glass>}
+          {entered && engine && !EMBED && <Glass as="button" className={`tour-btn pill opt desk ${cropOpen ? 'on' : ''}`} opts={{ shader: false, press: true }} aria-pressed={cropOpen} title="Crop the twin: hide the fuzz outside the room" onClick={() => { document.exitPointerLock?.(); setTagMode(false); setCropOpen(v => !v); }}>Crop</Glass>}
           {entered && !EMBED && <Glass as="a" className="tour-btn pill opt" opts={{ shader: false, press: true }} href={`${BASE}library.html`} title="Every capture your team has run">Library</Glass>}
             {entered && manifest && base && <Glass as="a" className="tour-btn pill desk" opts={{ shader: false, press: true }} title="Open this twin in the editor (SuperSplat)"
             target="_blank" rel="noopener"
@@ -116,6 +121,7 @@ export function Walk() {
               const cam = at ? `&cam=${at.map(n => n.toFixed(2)).join(',')}&look=${[at[0] - Math.sin(yw) * 3, at[1], at[2] - Math.cos(yw) * 3].map(n => n.toFixed(2)).join(',')}` : '';
               return `${BASE}editor/index.html?load=${encodeURIComponent(new URL(manifest.splat.replace(/scene\.spz$/, 'scene_lite.spz'), base).href)}&filename=${encodeURIComponent((manifest.name || 'twin').replace(/[^\w.-]+/g, '_'))}.spz${cam}`;
             })()}>Edit</Glass>}
+          </MoreMenu>}
           {/* AR is built but not signed off yet: hidden until it has been tested on a device, so
               judges do not review an unfinished feature. Flip AR_ENABLED to bring the button back. */}
           {AR_ENABLED && entered && engine && manifest && base && <ArLauncher places={arData.places.filter(p => p.pinned).map(p => ({ id: p.id, name: p.name, x: p.p[0], z: p.p[2] }))} nav={arData.nav}
@@ -152,9 +158,11 @@ export function Walk() {
       {engine && <MeasureLayer engine={engine} shell={shell} on={measured} showObjects={measured} />}
       {engine && <PlacesLayer engine={engine} base={base} entered={entered} onMap={setMapX} onData={setArData} searchOpen={searchOpen} onSearch={setSearchOpen} tagMode={tagMode} onTagMode={setTagMode}
         snap={() => snapPhoto(engine)} onApi={setPlacesApi} />}
-      {engine && entered && <ClickToMove engine={engine} enabled={!tagMode && !cropOpen && !tour?.playing} />}
+      {engine && entered && <ClickToMove engine={engine} enabled={!tagMode && !cropOpen && !cmpOpen && !tour?.playing} />}
       {engine && entered && cropOpen && <CropPanel engine={engine} api={placesApi} onClose={() => setCropOpen(false)} />}
       {toast && <div className="toast mono" role="status">{toast}</div>}
+      {engine && entered && locOpen && <LocationPanel api={placesApi} onClose={() => setLocOpen(false)} />}
+      {engine && entered && cmpOpen && manifest?.heldOut?.length && <CompareView engine={engine} list={manifest.heldOut} onClose={() => setCmpOpen(false)} />}
       {engine && entered && <Minimap engine={engine} manifest={manifest} extras={mapX} />}
 
       <div className={`gate ${entered ? 'gone' : ''}`}>
@@ -178,6 +186,22 @@ export function Walk() {
 function snapPhoto(engine: WalkEngine): string | null {
   for (const [w, q] of [[560, .72], [440, .62], [320, .55]] as const) { const d = engine.snapshot(w, 'image/jpeg', q); if (d.length < 58_000) return d; }
   return null;
+}
+
+/** The occasional tools (map, crop, photo check, measured shell, library, editor) behind one button, so the bar fits. */
+function MoreMenu({ children }: { children: React.ReactNode }) {
+  const [open, setOpen] = useState(false); const wrap = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!open) return;
+    const f = (e: PointerEvent) => { if (!wrap.current?.contains(e.target as Node)) setOpen(false); };
+    addEventListener('pointerdown', f); return () => removeEventListener('pointerdown', f);
+  }, [open]);
+  return (
+    <div className="q-wrap more-wrap" ref={wrap}>
+      <Glass as="button" className={`tour-btn pill ${open ? 'on' : ''}`} opts={{ shader: false, press: true }} aria-expanded={open} aria-haspopup="true" onClick={() => { document.exitPointerLock?.(); setOpen(o => !o); }}>More</Glass>
+      {open && <Glass className="views-menu more-menu" opts={{ radius: 14, shader: false }} onClick={(e: React.MouseEvent) => { if ((e.target as HTMLElement).closest('a,button')) setOpen(false); }}>{children}</Glass>}
+    </div>
+  );
 }
 
 /** Thumb stick for phones: writes a -1..1 vector into the engine. */

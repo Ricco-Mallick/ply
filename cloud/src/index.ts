@@ -66,6 +66,7 @@ function cors(req: Request, env: Env) {
 type Role = 'app' | 'worker' | null;
 
 import { inviteBudget, resultsVisible } from './limits.ts';
+import { summarize, summaryText } from './summary.ts';
 
 
 /* Invite only. There is no signup: an invite is a signed code, label.expiry.mac, minted with the
@@ -191,6 +192,22 @@ async function route(req: Request, env: Env, ctx: Ctx): Promise<Response> {
     if (!row) return json({ error: 'no such job' }, 404);
     return json({ ...row, result: row.result ? JSON.parse(row.result) : null, queuePosition: row.status === 'queued' ? (await env.DB.prepare("SELECT COUNT(*) n FROM jobs WHERE status='queued' AND created_at<?").bind(row.created_at).first()).n + 1 : 0 }, 200, { 'cache-control': 'no-store' });
   }
+  // ---- a twin described for machines (agents, chatbots): built from the published files, cached briefly ----
+  const sum = p.match(/^\/v1\/scenes\/([\w-]+)\/summary(\.txt|\.json)?$/);
+  if (sum && (req.method === 'GET' || req.method === 'HEAD')) {
+    const id = sum[1], row = await env.DB.prepare('SELECT status FROM jobs WHERE id = ?').bind(id).first() as any;
+    if (!resultsVisible(row?.status, 'scene.json', r !== 'worker')) return json({ error: 'this twin is not published yet' }, 403);
+    const read = async (f: string) => { const t = await objectText(env, `scenes/${id}/${f}`); try { return t ? JSON.parse(t) : null; } catch { return null; } };
+    const [scene, occupancy, shell, places] = await Promise.all([read('scene.json'), read('occupancy.json'), read('shell.json'), read('places.json')]);
+    if (!scene) return json({ error: 'no such twin' }, 404);
+    const j = summarize({ id, site: 'https://ricco.codes/ply', api: new URL(req.url).origin, scene, occupancy, shell, places });
+    const head = { 'cache-control': 'public, max-age=120' };
+    if (sum[2] === '.txt' || (!sum[2] && /text\/plain/.test(req.headers.get('accept') ?? ''))) {
+      return new Response(summaryText(j), { headers: { ...head, 'content-type': 'text/plain; charset=utf-8' } });
+    }
+    return json(j, 200, head);
+  }
+
   m = p.match(/^\/v1\/scenes\/([\w-]+)\/([\w.\-\/]+)$/);  // subfolders allowed: lod/class-lod-3.radc
   // the live view's index changes every few seconds while a job runs; everything else is immutable or cache-busted
   if (m && (req.method === 'GET' || req.method === 'HEAD')) {

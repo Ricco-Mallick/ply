@@ -309,3 +309,13 @@ test('view.crop is stored with the places, kept by a write without view, cleared
     assert.match((await res.json() as any).field, /^view/);
   }
 });
+
+test('view.location is stored next to the crop and checked', async () => {
+  const id = scene('loc');
+  assert.equal((await write(id, { places: [], view: { location: { lat: 12.9716, lon: 77.5946 } } })).status, 200);
+  assert.deepEqual((await read(id)).json.view, { location: { lat: 12.9716, lon: 77.5946 } });
+  for (const location of [{ lat: 91, lon: 0 }, { lat: 'x', lon: 1 }, [1, 2]]) {
+    const res = await write(scene('loc-bad'), { places: [], view: { location } });
+    assert.equal(res.status, 400); assert.equal((await res.json() as any).field, 'view.location');
+  }
+});

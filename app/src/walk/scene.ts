@@ -22,9 +22,13 @@ export interface SceneManifest {
   occupancy?: Occupancy;
   topview?: TopView;
   cameraPath?: [number, number, number][];
+  /** photos training never saw, with their exact cameras (pipeline heldout.py): the photo-vs-twin check */
+  heldOut?: HeldOut[];
   /** cinematic tour keyframes (pipeline tour.py) */
   tour?: { pos: [number, number, number]; target: [number, number, number]; fov: number; dur: number }[];
 }
+
+export interface HeldOut { image: string; width: number; height: number; fy: number; position: [number, number, number]; quaternion: [number, number, number, number]; name?: string }
 
 /** Grid of blocked cells in the floor plane (x, z). 1 = blocked. */
 export class OccupancyGrid {
@@ -107,6 +111,11 @@ async function normalise(raw: any, base: URL): Promise<SceneManifest> {
   if (raw.occupancy?.meta) {
     const o = await (await fetch(new URL(raw.occupancy.meta, base))).json();
     m.occupancy = { image: raw.occupancy.image ?? o.image, origin: o.origin, cell: o.cellSize, width: o.width, height: o.height };
+  }
+  if (Array.isArray(raw.heldOut)) {
+    const ok = (a: unknown, n: number) => Array.isArray(a) && a.length === n && a.every(v => typeof v === 'number' && Number.isFinite(v));
+    m.heldOut = raw.heldOut.filter((h: any) => h && typeof h.image === 'string' && !h.image.includes('..') && ok(h.position, 3) && ok(h.quaternion, 4) && h.fy > 0 && h.width > 0 && h.height > 0)
+      .slice(0, 12).map((h: any) => ({ ...h, image: new URL(h.image, base).href }));
   }
   const t = raw.topview;
   if (typeof t?.image === 'string' && Array.isArray(t.origin) && t.metersPerPixel > 0 && t.width > 0 && t.height > 0) {

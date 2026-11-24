@@ -409,6 +409,7 @@ def run_stage(ctx: Ctx) -> dict:
     walk_grid = _dense_occupancy(ctx, cleaned, holdout, aa) if ctx.opt("dense_occupancy") else None
     layout = _dense_layout(ctx) if walk_grid else None
     top = _topview(ctx, cleaned if cleaned.exists() else full)
+    held = _heldout(ctx, holdout)
     return {"spz": full.name, "spzMB": round(full.stat().st_size / 2**20, 2), "lite": lite.name, "liteMB": round(lite.stat().st_size / 2**20, 2),
             "cropBox": box, "cropDropped": drop_crop, "gaussiansIn": total, "gaussiansOut": n, "floaterFilter": floaters, "liteGaussians": lite_n,
             **({"liteFinetune": tuned} if tuned else {}),
@@ -417,7 +418,7 @@ def run_stage(ctx: Ctx) -> dict:
             "floaterClean": clean_stats, "clippedFraction": clipped, **({"viewerEval": viewer} if viewer else {}),
             **({"roomCrop": room_crop} if room_crop else {}),
             "shRestore": sh, **({"shippedEval": shipped} if shipped else {}),
-            **({"cleanupChoice": choice} if choice else {}), **({"topview": top} if top else {}),
+            **({"cleanupChoice": choice} if choice else {}), **({"topview": top} if top else {}), **({"heldOut": held} if held else {}),
             **({"denseOccupancy": walk_grid} if walk_grid else {}), **({"denseLayout": layout} if layout else {})}
 
 
@@ -504,6 +505,19 @@ def _dense_layout(ctx: Ctx) -> dict | None:
     return {"used": "dense" if ok else "sparse", **({} if ok else {"why": why}), "walls": len(new["walls"]),
             "doors": sum(o["kind"] == "door" for o in new["openings"]), "windows": sum(o["kind"] == "window" for o in new["openings"]),
             "rejectedDetections": len(new["rejected"]), **({"droppedOpenings": new["droppedOpenings"]} if new.get("droppedOpenings") else {}), "seconds": round(time.time() - t0, 1)}
+
+
+def _heldout(ctx: Ctx, holdout: int) -> int:
+    """A few photos training never saw, with their cameras, for the viewer's photo-vs-twin slider. Best effort."""
+    try:
+        from plypipe import heldout
+        entries = heldout.publish(ctx.data_dir, ctx.out, holdout)
+    except Exception as e:  # never fail an export over the comparison pictures
+        ctx.log.emit("export", "warn", f"held-out photos skipped: {str(e)[:160]}")
+        return 0
+    if entries:
+        update_scene(ctx, {"heldOut": entries})
+    return len(entries)
 
 
 def _topview(ctx: Ctx, source: Path) -> dict | None:

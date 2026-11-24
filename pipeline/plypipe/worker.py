@@ -42,7 +42,7 @@ from plypipe.progress import SfmProgress
 # rough share of wall time per stage on a T4, for one overall progress number
 WEIGHTS = {"frames": .05, "sfm": .20, "align": .02, "occupancy": .02, "label": .04, "train": .62, "export": .05}
 ORDER = list(WEIGHTS)
-RESULTS = ["scene.spz", "scene_lite.spz", "scene.json", "occupancy.png", "occupancy.json", "places.json", "report.json", "mesh.ply", "topview.webp"]
+RESULTS = ["scene.spz", "scene_lite.spz", "scene.json", "occupancy.png", "occupancy.json", "places.json", "report.json", "mesh.ply", "topview.webp", "shell.json"]
 # the trained model is what the GPU hours bought. Uploading it means a bad export filter is a re-export,
 # not a rebuild: 400 MB of transfer against three hours of L40S
 KEEP_MODEL = ["scene.ply", "scene_clean.ply"]
@@ -227,7 +227,7 @@ def _write_evidence(out: Path, long_edge: int = 1280, count: int = 48) -> None:
     (out / "evidence" / "poses.json").write_text(json.dumps({"frames": poses}, indent=1))
 
 
-CTYPE = {".spz": "application/octet-stream", ".ply": "application/octet-stream", ".json": "application/json", ".png": "image/png", ".webp": "image/webp"}
+CTYPE = {".spz": "application/octet-stream", ".ply": "application/octet-stream", ".json": "application/json", ".png": "image/png", ".webp": "image/webp", ".jpg": "image/jpeg"}
 
 
 def overall(stage: str | None, frac: float) -> float:
@@ -726,6 +726,9 @@ def run_job(api: Api, job: dict, work: Path, extra: list[str]) -> None:
             if f.exists():
                 api.upload(f"scenes/{jid}/{name}", f, CTYPE.get(f.suffix, "application/octet-stream"))
                 files[name] = f.stat().st_size
+        for f in sorted((out / "heldout").glob("*.jpg")) if (out / "heldout").is_dir() else []:  # the photo-vs-twin check
+            api.upload(f"scenes/{jid}/heldout/{f.name}", f, CTYPE[".jpg"])
+            files[f"heldout/{f.name}"] = f.stat().st_size
         for name in KEEP_MODEL:  # best effort: never fail a good run because the archive upload timed out
             f = out / name
             if f.exists() and f.stat().st_size < 1_500_000_000:

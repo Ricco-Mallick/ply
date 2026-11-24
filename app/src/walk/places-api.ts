@@ -39,16 +39,19 @@ async function getJson(url: string, doFetch: typeof fetch, init?: RequestInit): 
   return { ok: res.ok, status: res.status, body };
 }
 
-/** How the team set the twin to be shown (stored next to the places): a crop box in scene metres. */
-export interface SceneView { crop?: { min: [number, number, number]; max: [number, number, number] } }
+/** How the team set the twin to be shown (stored next to the places): a crop box in scene metres, and where on Earth
+    the building is (for the "Where is this?" map). */
+export interface SceneView { crop?: { min: [number, number, number]; max: [number, number, number] }; location?: { lat: number; lon: number } }
 export interface PlacesRead { places: Place[]; source: 'api' | 'file'; view?: SceneView }
 
-/** The view block of a places document, if it is a sane one. */
+/** The view block of a places document: the parts of it that are sane. */
 export function parseView(json: unknown): SceneView | undefined {
-  const v = (json as { view?: { crop?: { min?: unknown; max?: unknown } } } | null)?.view, c = v?.crop;
+  const v = (json as { view?: { crop?: { min?: unknown; max?: unknown }; location?: { lat?: unknown; lon?: unknown } } } | null)?.view;
+  const c = v?.crop, l = v?.location, out: SceneView = {};
   const pt = (q: unknown): q is [number, number, number] => Array.isArray(q) && q.length === 3 && q.every(x => typeof x === 'number' && Number.isFinite(x));
-  if (!c || !pt(c.min) || !pt(c.max) || !c.min.every((m, k) => m < (c.max as number[])[k])) return undefined;
-  return { crop: { min: c.min, max: c.max } };
+  if (c && pt(c.min) && pt(c.max) && c.min.every((m, k) => m < (c.max as number[])[k])) out.crop = { min: c.min, max: c.max };
+  if (l && typeof l.lat === 'number' && typeof l.lon === 'number' && Math.abs(l.lat) <= 90 && Math.abs(l.lon) <= 180) out.location = { lat: l.lat, lon: l.lon };
+  return out.crop || out.location ? out : undefined;
 }
 
 /** A scene's places: the API first (it never 404s, so an empty answer is a real empty list), and only when that is
