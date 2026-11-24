@@ -140,6 +140,10 @@ def run_stage(ctx: Ctx, src: Path) -> dict:
         shutil.rmtree(out)
     out.mkdir(parents=True)
 
+    lidar = _lidar_scans(ctx, src)
+    if lidar:
+        return _lidar_frames(ctx, src, lidar, out, oversample, max_frames)
+
     if src.is_dir() and not any(p.suffix.lower() in VIDEO_EXT or p.suffix.lower() == ".tar" for p in src.iterdir()):
         files = sorted(p for p in src.iterdir() if p.suffix.lower() in IMAGE_EXT)
         if not files:
@@ -360,12 +364,13 @@ def _ar_frames(ctx: Ctx, src: Path, tars: list[Path], videos: list[Path], out: P
                 name = f"{kept:06d}.jpg"
                 cv2.imwrite(str(out / name), img, [cv2.IMWRITE_JPEG_QUALITY, 95])
                 seg_frames.append({"frame": name, "m": kf["m"], "t": kf.get("t"), "fx": kf["fx"] * min(1, s), "fy": kf["fy"] * min(1, s),
-                                   "cx": kf["cx"] * min(1, s), "cy": kf["cy"] * min(1, s)})
+                                   "cx": kf["cx"] * min(1, s), "cy": kf["cy"] * min(1, s), "w": img.shape[1], "h": img.shape[0],
+                                   **({"src": kf["src"]} if kf.get("src") else {})})
                 scores_all.append(sc)
                 _note_frames(ctx, [{"frame": name, "clip": tp.name, "t": round(t, 2)}])
                 kept += 1
         segments.append({"file": tp.name, "keyframes": len(scored), "kept": len(seg_frames), "frames": seg_frames,
-                         "coverage": meta.get("coverage"), "device": meta.get("device")})
+                         "coverage": meta.get("coverage"), "device": meta.get("device"), "space": meta.get("space", "local-floor")})
     if not kept:
         raise ValueError("the AR scans held no usable frames")
     (ctx.out / "ar_poses.json").write_text(json.dumps({"space": "local-floor", "segments": segments}))
@@ -377,3 +382,69 @@ def _ar_frames(ctx: Ctx, src: Path, tars: list[Path], videos: list[Path], out: P
     return {"source": "ar", "segments": [{k: v for k, v in sg.items() if k != "frames"} for sg in segments], "videos": extra,
             "kept": kept, "dropped": dropped, "sharpnessMedian": float(np.median(scores_all)) if scores_all else 0.0,
             **color_summary(extra)}
+
+
+def _lidar_scans(ctx: Ctx, src: Path) -> list[Path]:
+    """iPhone LiDAR scans (Stray Scanner) among the inputs: zips are unpacked under the job, folders used as they are."""
+    from plypipe import stray
+    if not src.is_dir():
+        return stray.find_scans(src.parent) if src.name == "odometry.csv" else []
+    zips = sorted(p for p in src.iterdir() if p.suffix.lower() == ".zip")
+    unpacked = ctx.out / "_lidar_in"
+    if zips and unpacked.exists():
+        shutil.rmtree(unpacked)
+    for z in zips:
+        stray.unzip(z, unpacked / z.stem)
+    scans = stray.find_scans(src) + (stray.find_scans(unpacked) if zips else [])
+    if zips and not scans:
+        raise ValueError("the uploaded zip holds no Stray Scanner scan (a folder with odometry.csv and rgb.mp4)")
+    return scans
+
+
+def _lidar_frames(ctx: Ctx, src: Path, scans: list[Path], out: Path, oversample: int, max_frames) -> dict:
+    """iPhone LiDAR scans -> the AR path: candidate keyframes with ARKit poses, then the usual sharpest-of-window pick.
+    The kept frames' depth and confidence maps are copied to lidar/ with lidar.json (frame -> maps)."""
+    from plypipe import stray
+    rows = [stray.read_odometry(d) for d in scans]
+    duration = sum(((r[-1]["t"] or 0) - (r[0]["t"] or 0)) for r in rows)
+    probes = [probe_video(next(d / v for v in stray.VIDEO_NAMES if (d / v).is_file())) for d in scans]
+    source_long = max((p["longSide"] or 0 for p in probes), default=0) or 1920
+    planned = plan.input_plan(duration, len(scans), source_long, _capture(src, ctx))
+    fps = float(ctx.opt("fps", planned["keptFps"]))
+    long_side = int(ctx.opt("long_side", planned["longSide"]))
+    planned.update(fpsUsed=fps, longSideUsed=long_side, source="iphone-lidar")
+    plan.write(ctx.out, "input", planned)
+    ctx.log.emit("frames", "progress", f"plan: {planned['why']} (iPhone LiDAR, {len(scans)} scan{'s' if len(scans) > 1 else ''})")
+    tars_dir = ctx.out / "_lidar_tars"
+    if tars_dir.exists():
+        shutil.rmtree(tars_dir)
+    tars_dir.mkdir(parents=True)
+    summaries, tars = [], []
+    for i, d in enumerate(scans):
+        tp = tars_dir / f"lidar-{i + 1:02d}.tar"
+        summaries.append(stray.to_ar_tar(d, tp, fps * oversample, long_side, tars_dir))
+        tars.append(tp)
+        ctx.log.emit("frames", "progress", f"{d.name}: {summaries[-1]['candidates']} candidate frames, "
+                                           f"{summaries[-1]['depthFrames']} depth maps, walked {summaries[-1]['walkedM']} m")
+    cap = int(max_frames) if max_frames else max(60, int(round(fps * duration)))
+    res = _ar_frames(ctx, src, tars, [], out, fps, oversample, long_side, cap, [])
+    # depth for the frames kept: copied next to the job (small: 256 x 192 x 2 bytes each), the unpacked scan is dropped
+    poses = json.loads((ctx.out / "ar_poses.json").read_text())
+    lid = ctx.out / "lidar"
+    if lid.exists():
+        shutil.rmtree(lid)
+    lid.mkdir()
+    index = {}
+    for seg, d in zip(poses["segments"], scans):
+        for fr, maps in stray.depth_index(d, seg["frames"]).items():
+            dst = {"depth": f"{Path(fr).stem}{Path(maps['depth']).suffix}"}
+            shutil.copy2(maps["depth"], lid / dst["depth"])
+            if maps["confidence"]:
+                dst["confidence"] = f"{Path(fr).stem}.conf.png"
+                shutil.copy2(maps["confidence"], lid / dst["confidence"])
+            index[fr] = dst
+    (ctx.out / "lidar.json").write_text(json.dumps({"source": "stray", "units": "mm", "space": "arkit", "frames": index}))
+    shutil.rmtree(tars_dir, ignore_errors=True)
+    shutil.rmtree(ctx.out / "_lidar_in", ignore_errors=True)
+    res.update(source="iphone-lidar", scans=summaries, depthMaps=len(index))
+    return res

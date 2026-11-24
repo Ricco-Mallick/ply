@@ -61,6 +61,20 @@ Duration: a small room takes 1–2 min, a 4-room floor 5–8 min, two floors wit
 
 Nothing to dial in. `plypipe` plans each run from the clips: the kept frame rate follows how fast you walked, the working resolution follows the pixels you shot, and the gaussian budget follows the solved room. Do not pass `--max-frames` to make it quicker, it only throws views away. See [PROCESSING.md](PROCESSING.md) for the rules and the post-run checklist.
 
+## iPhone LiDAR
+
+An iPhone with LiDAR (12 Pro or later, Pro models only) records depth and its own tracked position alongside the video. Ply uses the positions for true metres and a level floor, so no camera-height guess is needed, and it keeps the depth of every frame it uses.
+
+**Recording app:** Stray Scanner, free on the App Store and open source. Safari can't reach the LiDAR, so the capture page can't record it directly.
+
+1. **Before you start:** the same pre-flight as §1 (lights on, people out, lens wiped). In Stray Scanner's settings, pick the lowest frame rate offered at 15 fps or above if it has that option. 60 fps makes the zip about four times bigger and adds nothing.
+2. **Start tracking:** open the recording screen and point the phone at a textured part of the room for 3 seconds before you move. Tracking starts on that view.
+3. **Walk exactly as in §3:** loops, doorways (§3.1), stairs (§3.2), end where you started. Keep your fingers off the camera and LiDAR module, the black circle beside the lenses.
+4. **Keep each scan under 10 minutes.** A long scan makes a big zip.
+5. **Export:** open the Files app, then On My iPhone, then Stray Scanner. Each scan is a folder with a short code for a name. Long-press it and choose Compress. You get a zip next to it.
+6. **Upload:** open ricco.codes/ply/capture.html in Safari, enter the invite code, tap **LiDAR + video**, and pick the zip. The page reads the zip first and shows the scan's length, distance walked, and frame and depth counts. Then Continue and Submit.
+   - Note the zip's size in Files. **Over 900 MB:** upload it to Google Drive instead, share it as "anyone with the link", and send the link to the team. A job can read it straight from Drive. The upload bucket allows only 1 GB of downloads a day.
+
 ## 3. How to walk
 
 ```

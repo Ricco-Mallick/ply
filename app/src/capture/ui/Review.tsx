@@ -16,11 +16,11 @@ const VERDICT = {
 export function Review({ capture, onMore, onRetake, onContinue, onHome, onPreview, onReplace }: { capture: Capture; onMore: () => void; onRetake: (clipId: string) => void; onContinue: () => void; onHome: () => void; onPreview: (jobId: string) => void; onReplace: (s: Span) => void }) {
   const [sel, setSel] = useState(capture.clips.length - 1); const clip = capture.clips[Math.min(sel, capture.clips.length - 1)];
   const p = { capture, clip, sel, setSel, onMore, onRetake, onContinue, onHome, check: <CoverageCheck capture={capture} onPreview={onPreview} onReplace={onReplace} /> };
-  return clip.ar ? <ArReview {...p} /> : <VideoReview {...p} />;
+  return clip.lidar ? <LidarReview {...p} /> : clip.ar ? <ArReview {...p} /> : <VideoReview {...p} />;
 }
 
 interface RP { capture: Capture; clip: Clip; sel: number; setSel: (i: number) => void; onMore: () => void; onRetake: (clipId: string) => void; onContinue: () => void; onHome: () => void; check: React.ReactNode }
-const Tabs = ({ capture, sel, setSel }: { capture: Capture; sel: number; setSel: (i: number) => void }) => capture.clips.length > 1 ? <div className="clip-tabs" role="tablist">{capture.clips.map((k, i) => <button key={k.id} role="tab" aria-selected={i === sel} className={i === sel ? 'on' : ''} onClick={() => setSel(i)}><span className="mono">{String(i + 1).padStart(2, '0')}</span> {k.ar ? 'AR' : ''} {fmtTime(k.duration)}</button>)}</div> : null;
+const Tabs = ({ capture, sel, setSel }: { capture: Capture; sel: number; setSel: (i: number) => void }) => capture.clips.length > 1 ? <div className="clip-tabs" role="tablist">{capture.clips.map((k, i) => <button key={k.id} role="tab" aria-selected={i === sel} className={i === sel ? 'on' : ''} onClick={() => setSel(i)}><span className="mono">{String(i + 1).padStart(2, '0')}</span> {k.lidar ? 'LiDAR' : k.ar ? 'AR' : ''} {fmtTime(k.duration)}</button>)}</div> : null;
 
 /** AR scans: the coverage cloud instead of a video, coverage instead of per-second quality. */
 function ArReview({ capture, clip, sel, setSel, onMore, onRetake, onContinue, onHome, check }: RP) {
@@ -115,6 +115,47 @@ function VideoReview({ capture, clip, sel, setSel, onMore, onRetake, onContinue,
         <button className="btn ghost" onClick={() => onRetake(clip.id)}>Delete this clip</button>
         <button className="btn ghost" onClick={onMore}>Record another part</button>
         <button className="btn big" onClick={onContinue} disabled={!capture.clips.length}>{all.verdict === 'recapture' ? 'Process anyway' : 'Continue'}</button>
+      </div>
+    </main>
+  );
+}
+
+/** iPhone LiDAR (Stray Scanner zip): what the zip holds and the walked path from ARKit, checked on this phone. */
+function LidarReview({ capture, clip, sel, setSel, onMore, onRetake, onContinue, onHome, check }: RP) {
+  const l = clip.lidar!, depthShare = l.frames ? l.depthMaps / l.frames : 0;
+  const problems = [
+    l.seconds < 20 && 'Under 20 seconds: too short to map a room.',
+    l.frames > 0 && depthShare < .5 && 'Fewer depth maps than frames: was LiDAR depth recording on?',
+    l.frames === 0 && 'The poses could not be read on this phone; the pipeline will still try.',
+  ].filter(Boolean) as string[];
+  return (
+    <main className="review">
+      <header className="cap-top"><button className="back mono" onClick={onHome}>← Captures</button><span className="mono dim">{capture.clips.length} clip{capture.clips.length === 1 ? '' : 's'} · {fmtTime(capture.clips.reduce((a, k) => a + k.duration, 0))}</span></header>
+      <div className="wide eyebrow">Review · iPhone LiDAR</div>
+      <h1>{problems.length ? 'Check this scan' : 'LiDAR scan ready'}</h1>
+      <p className="lead">{problems.length ? problems.join(' ') : 'Video, ARKit poses and depth are all in the zip. The twin gets real metres and a level floor from the phone\'s own tracking.'}</p>
+      <Tabs capture={capture} sel={sel} setSel={setSel} />
+      <div className="review-grid">
+        <Glass className="player" opts={{ radius: 20, shader: false }}>
+          {clip.path.length > 1 ? <div className="lidar-path"><PathMap path={clip.path} quality={[]} size={320} /></div> : <div className="player-na mono">No path preview</div>}
+          <div className="player-meta"><span className="mono dim">{l.scan} · {fmtBytes(clip.size)}</span></div>
+        </Glass>
+        <div className="side">
+          <Glass className="stat-card" opts={{ radius: 20, shader: false }}>
+            <dl>
+              <div><dt className="mono">Length</dt><dd>{fmtTime(l.seconds)}</dd></div>
+              <div><dt className="mono">Walked</dt><dd>{l.walkedM} m</dd></div>
+              <div><dt className="mono">Frames</dt><dd>{l.frames}</dd></div>
+              <div><dt className="mono">Depth maps</dt><dd>{l.depthMaps}</dd></div>
+            </dl>
+          </Glass>
+        </div>
+      </div>
+      {check}
+      <div className="actions">
+        <button className="btn ghost" onClick={() => onRetake(clip.id)}>Delete this scan</button>
+        <button className="btn ghost" onClick={onMore}>Add another scan</button>
+        <button className="btn big" onClick={onContinue}>Continue</button>
       </div>
     </main>
   );

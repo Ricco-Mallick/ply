@@ -315,3 +315,5 @@ a.btn { text-decoration: none; }
 .th-loss { margin-left: auto; width: 180px; height: 36px; } .th-loss path { fill: none; stroke: var(--accent); stroke-width: 2; vector-effect: non-scaling-stroke; }
 .splat-orbit { position: relative; width: 100%; border-radius: 16px; overflow: hidden; background: radial-gradient(circle at 50% 40%, #121a2a, #070B14); touch-action: none; }
 .so-state { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); color: var(--muted); font-size: 10px; pointer-events: none; }
+
+.lidar-path { display: grid; place-items: center; padding: 18px 0; }

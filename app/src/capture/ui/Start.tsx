@@ -12,14 +12,19 @@ const BASE = import.meta.env.BASE_URL;
 const PHONE = matchMedia('(pointer: coarse)').matches;
 
 
-export function Start({ onRecord, onScan, onUpload, onOpen, onJob }: { onRecord: () => void; onScan: () => void; onUpload: (files: File[]) => void; onOpen: (id: string) => void; onJob: (id: string) => void }) {
+export function Start({ onRecord, onScan, onUpload, onLidar, onOpen, onJob }: { onRecord: () => void; onScan: () => void; onUpload: (files: File[]) => void; onLidar: (files: File[]) => void; onOpen: (id: string) => void; onJob: (id: string) => void }) {
   const [ar, setAr] = useState(false); useEffect(() => { arSupported().then(setAr); }, []);
   const [jobs] = useState(() => listJobs());
   const live = useLiveJobs(jobs.map(j => j.id));
   const [saved] = useState<CaptureSummary[]>(() => listCaptures());
   const file = useRef<HTMLInputElement>(null);
+  const zip = useRef<HTMLInputElement>(null);
   const [drag, setDrag] = useState(false);
-  const pick = (fl: FileList | null) => { const v = [...(fl ?? [])].filter(f => f.type.startsWith('video/') || /\.(mp4|mov|webm|mkv)$/i.test(f.name)); if (v.length) onUpload(v); };
+  const pick = (fl: FileList | null) => {
+    const all = [...(fl ?? [])], zips = all.filter(f => /\.zip$/i.test(f.name) || f.type === 'application/zip');
+    const v = all.filter(f => f.type.startsWith('video/') || /\.(mp4|mov|webm|mkv)$/i.test(f.name));
+    if (zips.length) onLidar(zips); else if (v.length) onUpload(v);
+  };
   return (
     <main className="start" onDragOver={e => { e.preventDefault(); setDrag(true); }} onDragLeave={() => setDrag(false)} onDrop={e => { e.preventDefault(); setDrag(false); pick(e.dataTransfer.files); }}>
       <header className="cap-top"><Glass as="a" href={BASE} className="brand pill" opts={{ shader: false, press: true }}><span className="mark" aria-hidden="true" />PLY</Glass><a className="cta-ghost" href={`${BASE}library.html`}>Library</a>
@@ -48,14 +53,13 @@ export function Start({ onRecord, onScan, onUpload, onOpen, onJob }: { onRecord:
           <span className="choice-d">One or more clips of the same space. Drop them here or pick from your files.</span>
         </Glass>
         <input ref={file} type="file" accept="video/*" multiple hidden onChange={e => pick(e.target.files)} />
-        <Glass as="div" className="choice soon" aria-disabled="true" opts={{ radius: 22 }}>
+        <Glass as="button" className="choice" opts={{ press: true, radius: 22 }} onClick={() => zip.current?.click()}>
           <span className="choice-ico" aria-hidden="true"><svg viewBox="0 0 24 24" width="26" height="26" fill="none" stroke="currentColor" strokeWidth="1.6"><circle cx="12" cy="12" r="2.6" fill="currentColor" stroke="none" /><path d="M6.4 6.4a7.9 7.9 0 0 0 0 11.2M17.6 17.6a7.9 7.9 0 0 0 0-11.2" /><path d="M3.4 3.4a12.2 12.2 0 0 0 0 17.2M20.6 20.6a12.2 12.2 0 0 0 0-17.2" opacity=".5" /></svg></span>
-          <span className="soon-body">
-            <span className="choice-t">LiDAR + video<i className="pill-ios mono">iPhone only</i></span>
-            <span className="choice-d">The Pro sensor's depth, recorded alongside the video: true metric geometry in dim or textureless rooms, with photo colour on top.</span>
-          </span>
-          <span className="choice-note mono soon-note"><b aria-hidden="true" /><span className="soon-lines"><span>iPhone 12 Pro or later</span><span className="soon-sub">Coming soon · in development</span></span></span>
+          <span className="choice-t">LiDAR + video<i className="pill-ios mono">iPhone Pro</i></span>
+          <span className="choice-d">Record with the free Stray Scanner app, compress the scan's folder in Files, and upload the zip here. Real metres and a level floor from the phone's tracking, LiDAR depth for every frame.</span>
+          <span className="choice-note mono">iPhone 12 Pro or later · <a href={`${BASE}guide.html#iphone-lidar`} onClick={e => e.stopPropagation()}>how to record</a></span>
         </Glass>
+        <input ref={zip} type="file" accept=".zip,application/zip" multiple hidden onChange={e => { pick(e.target.files); e.target.value = ''; }} />
       </div>
       {!PHONE && <PhoneQR />}
       {jobs.length > 0 && (
