@@ -28,33 +28,42 @@ $PY -m pip install -q -e "$HERE"
 if [ -z "${PLY_CPU:-}" ]; then $PY -m pip install -q "transformers>=5.19" scipy; fi
 UV="$PY -m uv"
 
-log "training venv: python 3.10"
-[ -x "$VENV/bin/python" ] || $UV venv -q --python 3.10 "$VENV"
 VPY="$VENV/bin/python"
-$UV pip install -q --python "$VPY" setuptools wheel ninja
+train_venv() {
+  log "training venv: python 3.10"
+  [ -x "$VENV/bin/python" ] || $UV venv -q --python 3.10 "$VENV"
+  VPY="$VENV/bin/python"
+  $UV pip install -q --python "$VPY" setuptools wheel ninja
 
-# every later install is constrained, or gsplat's example requirements (torchmetrics) pull the newest torch (2.14,
-# CUDA 13), which the prebuilt gsplat 1.5.3 cannot load (found by the CPU rehearsal)
-printf 'torch==2.4.1\ntorchvision==0.19.1\nnumpy<2\n' > /tmp/ply-constraints.txt
-CON="-c /tmp/ply-constraints.txt"
-log "training venv: torch 2.4.1+cu124"
-# PLY_CPU=1 (rehearsal on a CPU machine): CPU builds, and no CUDA extension compiles; training runs as a dry run
-TORCH_INDEX=https://download.pytorch.org/whl/cu124; [ -n "${PLY_CPU:-}" ] && TORCH_INDEX=https://download.pytorch.org/whl/cpu
-$UV pip install -q --python "$VPY" torch==2.4.1 torchvision==0.19.1 --index-url "$TORCH_INDEX"
+  # every later install is constrained, or gsplat's example requirements (torchmetrics) pull the newest torch (2.14,
+  # CUDA 13), which the prebuilt gsplat 1.5.3 cannot load (found by the CPU rehearsal)
+  printf 'torch==2.4.1\ntorchvision==0.19.1\nnumpy<2\n' > /tmp/ply-constraints.txt
+  CON="-c /tmp/ply-constraints.txt"
+  log "training venv: torch 2.4.1+cu124"
+  # PLY_CPU=1 (rehearsal on a CPU machine): CPU builds, and no CUDA extension compiles; training runs as a dry run
+  TORCH_INDEX=https://download.pytorch.org/whl/cu124; [ -n "${PLY_CPU:-}" ] && TORCH_INDEX=https://download.pytorch.org/whl/cpu
+  $UV pip install -q --python "$VPY" torch==2.4.1 torchvision==0.19.1 --index-url "$TORCH_INDEX"
 
-log "training venv: prebuilt gsplat 1.5.3"
-$UV pip install -q --python "$VPY" $CON "$GSPLAT_WHL"
-if [ ! -d "$GSPLAT_DIR/examples" ]; then git clone -q --depth 1 --branch v1.5.3 https://github.com/nerfstudio-project/gsplat "$GSPLAT_DIR"; fi
+  log "training venv: prebuilt gsplat 1.5.3"
+  $UV pip install -q --python "$VPY" $CON "$GSPLAT_WHL"
+  if [ ! -d "$GSPLAT_DIR/examples" ]; then git clone -q --depth 1 --branch v1.5.3 https://github.com/nerfstudio-project/gsplat "$GSPLAT_DIR"; fi
 
-log "training venv: example requirements (fused-ssim, fused-bilagrid compile here)"
-grep -v -E '^#|^$|fused-ssim|fused-bilagrid' "$GSPLAT_DIR/examples/requirements.txt" > /tmp/ply-reqs153.txt
-$UV pip install -q --python "$VPY" $CON -r /tmp/ply-reqs153.txt
-FSSIM=$(grep -o 'git+https://github.com/rahul-goel/fused-ssim@[0-9a-f]*' "$GSPLAT_DIR/examples/requirements.txt")
-FBILA=$(grep -o 'git+https://github.com/harry7557558/fused-bilagrid@[0-9a-f]*' "$GSPLAT_DIR/examples/requirements.txt")
-if [ -z "${PLY_CPU:-}" ]; then $UV pip install -q --python "$VPY" $CON --no-build-isolation "$FSSIM" "$FBILA"; fi
+  log "training venv: example requirements (fused-ssim, fused-bilagrid compile here)"
+  grep -v -E '^#|^$|fused-ssim|fused-bilagrid' "$GSPLAT_DIR/examples/requirements.txt" > /tmp/ply-reqs153.txt
+  $UV pip install -q --python "$VPY" $CON -r /tmp/ply-reqs153.txt
+  FSSIM=$(grep -o 'git+https://github.com/rahul-goel/fused-ssim@[0-9a-f]*' "$GSPLAT_DIR/examples/requirements.txt")
+  FBILA=$(grep -o 'git+https://github.com/harry7557558/fused-bilagrid@[0-9a-f]*' "$GSPLAT_DIR/examples/requirements.txt")
+  if [ -z "${PLY_CPU:-}" ]; then $UV pip install -q --python "$VPY" $CON --no-build-isolation "$FSSIM" "$FBILA"; fi
+}
+# the training venv is optional: a box that only runs the coverage stages (frames, people masks, camera solve, align)
+# still works when it fails. Kaggle moved to CUDA 13 in 2026-11 and fused-ssim no longer compiles against torch cu124
+if ! ( set -euo pipefail; train_venv ); then
+  log "training venv FAILED: this box can run frames/sfm/align/occupancy only (train elsewhere)"
+  touch "${VENV}.failed"
+fi
 
 log "check"
-"$VPY" - <<'PY'
+[ -f "${VENV}.failed" ] || "$VPY" - <<'PY'
 import json, os, torch, gsplat
 if not os.environ.get("PLY_CPU"):
     import fused_ssim  # noqa: F401
