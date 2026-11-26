@@ -119,7 +119,8 @@ def run_stage(ctx: Ctx) -> dict:
     k = max(1, int(np.ceil(len(ims) / int(ctx.opt("label_frames", 120)))))
     ims = ims[::k]
     try:
-        model = Sam3Model.from_pretrained("facebook/sam3", torch_dtype=torch.bfloat16).to("cuda").eval()
+        from plypipe.people import sam3_dtype
+        model = Sam3Model.from_pretrained("facebook/sam3", torch_dtype=sam3_dtype(torch)).to("cuda").eval()
         proc = Sam3Processor.from_pretrained("facebook/sam3")
     except Exception as e:  # no access to the gated weights, no network...
         out_file.write_text(json.dumps({"version": 1, "source": "none", "places": []}))
@@ -174,8 +175,10 @@ def _detect(ctx: Ctx, model, proc, ims, torch, Image) -> list[dict]:
         ok = (uv[:, 0] >= 0) & (uv[:, 1] >= 0) & (uv[:, 0] < W) & (uv[:, 1] < H)
         uv, ids = uv[ok], ids[ok]
         inputs = proc(images=img, return_tensors="pt").to("cuda")
-        with torch.no_grad(), torch.autocast("cuda", dtype=torch.bfloat16):
-            ve = model.get_vision_features(pixel_values=inputs.pixel_values)
+        from plypipe.people import sam3_dtype
+        dt = sam3_dtype(torch)  # fp32 on a T4 (no bf16 there)
+        with torch.no_grad(), torch.autocast("cuda", dtype=dt, enabled=dt != torch.float32):
+            ve = model.get_vision_features(pixel_values=inputs.pixel_values.to(dt))
             for prompt, t in texts.items():
                 outp = model(vision_embeds=ve, input_ids=t.input_ids, attention_mask=t.get("attention_mask"))
                 res = proc.post_process_instance_segmentation(outp, threshold=thr, mask_threshold=0.5, target_sizes=[[H, W]])[0]

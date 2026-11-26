@@ -370,7 +370,7 @@ def save_checkpoint(api, jid: str, out: Path, root: Path, args: list[str], after
 def _ckpt_key(args: list[str]) -> list[str]:
     """Settings that must match for a checkpoint to be reusable. --force/--from only decide where to start, so a
     resumed run can force a later stage (e.g. redo align) and still reuse an earlier checkpoint."""
-    skip = {"--force", "--from", "--only"}
+    skip = {"--force", "--from", "--only", "--until"}  # --until only decides where a run stops: a coverage run's checkpoint carries on into training
     out, i = [], 0
     while i < len(args):
         if args[i] in skip:

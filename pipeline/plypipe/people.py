@@ -73,13 +73,18 @@ def read_keep(path: Path) -> np.ndarray | None:
 
 # ---- detection -------------------------------------------------------------------------------------------------
 
+def sam3_dtype(torch):
+    """bf16 on Ampere and newer; fp32 below (a T4 has no bf16 units, and SAM 3 in bf16 there gives wrong masks)."""
+    return torch.bfloat16 if torch.cuda.get_device_capability()[0] >= 8 else torch.float32
+
+
 def load_sam3():
     """(model, processor, torch) or raises: the same weights the label stage uses."""
     import torch
     from transformers import Sam3Model, Sam3Processor
     if not torch.cuda.is_available():
         raise RuntimeError("no GPU")
-    model = Sam3Model.from_pretrained("facebook/sam3", torch_dtype=torch.bfloat16).to("cuda").eval()
+    model = Sam3Model.from_pretrained("facebook/sam3", torch_dtype=sam3_dtype(torch)).to("cuda").eval()
     return model, Sam3Processor.from_pretrained("facebook/sam3"), torch
 
 
@@ -92,8 +97,9 @@ def sam3_detector(model, proc, torch, threshold: float = THRESHOLD):
         H, W = rgb.shape[:2]
         img = Image.fromarray(rgb)
         inputs = proc(images=img, return_tensors="pt").to("cuda")
-        with torch.no_grad(), torch.autocast("cuda", dtype=torch.bfloat16):
-            ve = model.get_vision_features(pixel_values=inputs.pixel_values)
+        dt = sam3_dtype(torch)
+        with torch.no_grad(), torch.autocast("cuda", dtype=dt, enabled=dt != torch.float32):
+            ve = model.get_vision_features(pixel_values=inputs.pixel_values.to(dt))
             outp = model(vision_embeds=ve, input_ids=text.input_ids, attention_mask=text.get("attention_mask"))
         res = proc.post_process_instance_segmentation(outp, threshold=threshold, mask_threshold=0.5, target_sizes=[[H, W]])[0]
         out = np.zeros((H, W), bool)

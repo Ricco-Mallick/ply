@@ -28,7 +28,7 @@ MIN_CONF = 2               # Stray's confidence: 0 low, 1 medium, 2 high
 def read_index(lidar_json: Path) -> dict[str, tuple[Path, Path | None]]:
     """frame file name -> (depth map, confidence map or None)."""
     j = json.loads(Path(lidar_json).read_text())
-    root = Path(lidar_json).parent / "lidar"
+    root = Path(lidar_json).parent / (j.get("dir") or "lidar")  # scandepth.json (plypipe.scan) keeps its maps in scandepth/
     out = {}
     for name, maps in (j.get("frames") or {}).items():
         d = root / maps["depth"]
@@ -51,13 +51,13 @@ def load_depth(path: Path) -> np.ndarray:
 
 
 def sample(depth: np.ndarray, conf: np.ndarray | None, width: int, height: int, n: int = SAMPLES,
-           rng: np.random.Generator | None = None) -> tuple[np.ndarray, np.ndarray] | None:
+           rng: np.random.Generator | None = None, near: float = NEAR, far: float = FAR) -> tuple[np.ndarray, np.ndarray] | None:
     """Up to n confident depth pixels as (pixel coordinates in a width x height picture, metres). None when the
     picture's aspect is not the map's (it was cropped) or the map has nothing usable."""
     h, w = depth.shape[:2]
     if abs(width / height - w / h) > 0.01 * (w / h):
         return None
-    ok = (depth > NEAR) & (depth < FAR) & np.isfinite(depth)
+    ok = (depth > near) & (depth < far) & np.isfinite(depth)
     if conf is not None and conf.shape == depth.shape:
         ok &= conf >= MIN_CONF
     v, u = np.nonzero(ok)
@@ -76,6 +76,7 @@ def install(st, lidar_json: Path, log=print) -> dict:
     """Wrap st.Dataset.__getitem__: frames with a LiDAR map get dense measured depths for the depth loss."""
     import torch
     index = read_index(Path(lidar_json))
+    near, far = (json.loads(Path(lidar_json).read_text()).get("rangeM") or [NEAR, FAR])[:2]  # a laser scan reaches past 6 m
     if not index:
         raise ValueError(f"{lidar_json} names no depth maps")
     orig = st.Dataset.__getitem__
@@ -95,7 +96,7 @@ def install(st, lidar_json: Path, log=print) -> dict:
             if hit[1] is not None:
                 import cv2
                 conf = cv2.imread(str(hit[1]), cv2.IMREAD_UNCHANGED)
-            got = sample(load_depth(hit[0]), conf, int(img.shape[1]), int(img.shape[0]))
+            got = sample(load_depth(hit[0]), conf, int(img.shape[1]), int(img.shape[0]), near=float(near), far=float(far))
             if got is None:
                 stats["fallback"] += 1
                 return data

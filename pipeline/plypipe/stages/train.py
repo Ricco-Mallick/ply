@@ -194,6 +194,12 @@ def run_stage(ctx: Ctx) -> dict:
     if lidar.is_file() and ctx.opt("lidar_depth", True) is not False:
         cmd += ["--lidar-depth", str(lidar)]
         ctx.log.emit("train", "progress", "depth loss on the LiDAR maps of the kept frames")
+    elif (ctx.out / "scandepth.json").is_file() and ctx.opt("lidar_depth", True) is not False:
+        # route 8c (plypipe.scan): the laser scan, registered to the video, is each view's depth and the training start
+        cmd += ["--lidar-depth", str(ctx.out / "scandepth.json")]
+        if (ctx.out / "scan" / "init.npz").is_file():
+            cmd += ["--init-points", str(ctx.out / "scan" / "init.npz")]
+        ctx.log.emit("train", "progress", "depth loss on the laser scan, training starts from its points")
     run(cmd, ctx, "train", env=launcher_env(), progress_every=50)
     if ctx.opt("train_dry_run"):
         return {"dryRun": True}

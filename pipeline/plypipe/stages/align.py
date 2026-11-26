@@ -70,6 +70,12 @@ def run_stage(ctx: Ctx) -> dict:
 
     T, info, extra = _scale_source(ctx, model, T, info)
     aligned = colmap_txt.transformed(model, T)
+    from plypipe import scan as scan_mod
+    for stale in ("scandepth.json", "scan/init.npz", "scan-fit.png"):  # a re-run whose scan fit fails must not keep the last one's
+        (ctx.out / stale).unlink(missing_ok=True)
+    T, info, scan_rep = scan_mod.fuse(ctx, aligned, T, info, good)  # --scan: register onto the laser scan (route 8c)
+    if scan_rep and scan_rep.get("used"):
+        aligned = colmap_txt.transformed(model, T)
     try:  # measured shell: wall segments through the mid-height band, drawn as an editable layer in the viewer
         from plypipe import shell as shell_mod
         ceiling = float(np.percentile(aligned.xyz[:, 1], 98.0))
@@ -93,6 +99,13 @@ def run_stage(ctx: Ctx) -> dict:
     except OSError:  # filesystems without symlinks (some Windows / FUSE mounts)
         shutil.copytree(ctx.dense_dir / "images", img_link)
 
+    if scan_rep is not None:
+        (ctx.out / "scan").mkdir(exist_ok=True)
+        (ctx.out / "scan" / "registration.json").write_text(json.dumps(scan_rep, indent=1, default=float))
+        summary = {k: scan_rep.get(k) for k in ("used", "refused", "medianM", "within5cm", "scale", "inside", "insideShare", "ambiguous")}
+        if scan_rep.get("used"):
+            summary["depth"] = {k: v for k, v in scan_mod.fuse_outputs(ctx, aligned, scan_rep).items() if k != "refused"}
+        extra["scan"] = {k: v for k, v in summary.items() if v is not None}
     c2, _, f2 = aligned.cameras()
     p2 = aligned.xyz[good] if good.sum() >= 200 else aligned.xyz
     floor_res = np.abs(p2[np.abs(p2[:, 1]) < 0.15][:, 1])

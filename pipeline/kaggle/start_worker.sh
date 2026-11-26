@@ -26,7 +26,17 @@ ds() {  # create or new-version a private dataset from a folder
 mkdir -p "$T/code" "$T/cfg" "$T/kernel"
 (cd "$ROOT" && git archive HEAD pipeline) | tar -x -C "$T/code" --strip-components=1
 ds ply-pipeline "$T/code"
-printf '{"api": "%s", "token": "%s"}\n' "$API" "$WORKER_TOKEN" > "$T/cfg/config.json"
+# hf_token: the read-only HF_TOKEN from cloud/.secrets (gated SAM 3 weights, the laser scan); env: extra worker settings
+python3 - "$T/cfg/config.json" "$API" "$WORKER_TOKEN" "${HF_TOKEN:-}" "${PLY_KAGGLE_ENV:-}" <<'PYCFG'
+import json, sys
+f, api, tok, hf, env = sys.argv[1:6]
+cfg = {"api": api, "token": tok}
+if hf:
+    cfg["hf_token"] = hf
+if env:  # "PLY_STAGE_LIMITS=sfm=420;PLY_JOB_CAP_MIN=600"
+    cfg["env"] = dict(kv.split("=", 1) for kv in env.split(";") if "=" in kv)
+json.dump(cfg, open(f, "w"))
+PYCFG
 ds ply-worker-config "$T/cfg"
 
 cp "$ROOT/pipeline/kaggle/ply_worker.ipynb" "$T/kernel/"

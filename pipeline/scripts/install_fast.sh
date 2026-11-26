@@ -24,6 +24,8 @@ log "pipeline env: pycolmap-cuda12 4.2.1 + plypipe"
 PYCOLMAP="pycolmap-cuda12==4.2.1"; [ -n "${PLY_CPU:-}" ] && PYCOLMAP="pycolmap==4.2.1"
 $PY -m pip install -q uv huggingface_hub "$PYCOLMAP"  # hub: results storage (PLY_HF_REPO)
 $PY -m pip install -q -e "$HERE"
+# SAM 3 (people masks, labels) needs transformers 5; scipy for the scan registration (plypipe.scan)
+if [ -z "${PLY_CPU:-}" ]; then $PY -m pip install -q "transformers>=5.19" scipy; fi
 UV="$PY -m uv"
 
 log "training venv: python 3.10"

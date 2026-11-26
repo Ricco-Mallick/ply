@@ -161,7 +161,7 @@ def test_probe_reads_each_clips_colour_tags(tmp_path):
 
 
 @needs_ffmpeg
-def test_hdr_clip_is_recorded_and_warned_about_without_changing_the_frames(tmp_path):
+def test_hdr_clip_is_tone_mapped_and_recorded(tmp_path):
     src = tmp_path / "capture"
     src.mkdir()
     tagged_clip(src / "clip-01.mp4", "bt709", "bt709", "bt709")
@@ -170,13 +170,17 @@ def test_hdr_clip_is_recorded_and_warned_about_without_changing_the_frames(tmp_p
     rep = frames.run_stage(ctx, src)
     colors = {c["file"]: c["color"] for c in rep["clips"]}
     assert colors["clip-01.mp4"]["transfer"] == "bt709" and colors["clip-01.mp4"]["hdr"] is None
+    assert not colors["clip-01.mp4"]["toneMapped"]
+    mapped = frames.tonemap_filter({"hdr": "HLG"}) is not None      # an ffmpeg without zscale keeps the old warning
     assert colors["clip-02.mp4"] == {"transfer": "arib-std-b67", "primaries": "bt2020", "space": "bt2020nc",
-                                     "pixFmt": "yuv420p10le", "bitDepth": 10, "hdr": "HLG"}
+                                     "pixFmt": "yuv420p10le", "bitDepth": 10, "hdr": "HLG", "toneMapped": mapped}
     assert rep["hdrClips"] == ["clip-02.mp4"] and rep["colorTransfers"] == {"bt709": 1, "arib-std-b67": 1}
     warned = warnings(tmp_path / "out")
-    assert len(warned) == 1 and "clip-02.mp4 (HLG)" in warned[0] and "clip-01.mp4" not in warned[0]
-    assert "washed out" in warned[0] and "not applied yet" in warned[0]
-    assert rep["kept"] == len(list((tmp_path / "out" / "frames").glob("*.jpg")))      # extraction itself is untouched
+    assert (warned == []) if mapped else ("washed out" in warned[0])
+    assert rep["kept"] == len(list((tmp_path / "out" / "frames").glob("*.jpg")))
+    off = Ctx(out=tmp_path / "o2", log=Log(tmp_path / "o2", quiet=True), opts={"fps": 2.5, "oversample": 2, "long_side": 160, "no_tonemap": True})
+    rep2 = frames.run_stage(off, src)
+    assert not {c["file"]: c["color"] for c in rep2["clips"]}["clip-02.mp4"]["toneMapped"]
 
 
 @needs_ffmpeg

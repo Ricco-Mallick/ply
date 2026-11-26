@@ -169,6 +169,8 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--lidar-depth", help="lidar.json of an iPhone LiDAR capture: its measured depth maps feed the depth loss "
                                           "(dense, confident pixels) instead of the sparse track points; implies --depth-loss")
     ap.add_argument("--masks", help="folder of <image>.png keep-masks (plypipe.people: black on people); masked pixels get no loss")
+    ap.add_argument("--init-points", help="npz of points + colors (scene frame) added to the camera-solve points the gaussians start "
+                                           "from (plypipe.scan: a laser scan); thinned to half the splat cap")
     ap.add_argument("--bilateral-grid", action="store_true")
     ap.add_argument("--exposure-affine", action="store_true", help="the bilateral grid at 1x1x1: one affine colour transform per photo")
     ap.add_argument("--random-bkgd", action="store_true")
@@ -202,7 +204,7 @@ def main(argv: list[str] | None = None) -> int:
                                 exposure_affine=a.exposure_affine)
     block = None
     patched = [flag for flag, on in (("--holdout-block", a.holdout_block), ("--depth-loss", a.depth_loss), ("--from-ply", start),
-                                     ("--masks", a.masks)) if on]
+                                     ("--masks", a.masks), ("--init-points", a.init_points)) if on]
     if patched:
         import torch
         if not a.dry_run and torch.cuda.device_count() > 1:  # gsplat would spawn workers that do not see the patch
@@ -217,6 +219,8 @@ def main(argv: list[str] | None = None) -> int:
         from plypipe import lidar_depth
         stats = lidar_depth.install(st, os.path.abspath(a.lidar_depth))
         summary["lidarDepth"] = {"maps": stats["maps"], "samplesPerView": lidar_depth.SAMPLES, "rangeM": [lidar_depth.NEAR, lidar_depth.FAR]}
+    if a.init_points and not start:
+        summary["initPoints"] = install_init(st, os.path.abspath(a.init_points), int(cfg.strategy.cap_max))
     if a.masks:  # after the LiDAR wrapper, so its dense depth samples are filtered too
         from plypipe import people
         mstats = people.install(st, os.path.abspath(a.masks))
@@ -249,6 +253,26 @@ def main(argv: list[str] | None = None) -> int:
         return 0
     st.cli(st.main, cfg, verbose=True)
     return 0
+
+
+def install_init(st, path: str, cap: int) -> dict:
+    """Wrap create_splats_with_optimizers so the parser's points gain the scan's (at most half the cap, so MCMC still
+    has room to add splats where the scan has holes)."""
+    import numpy as np
+    z = np.load(path)
+    pts, cols = np.asarray(z["points"], np.float32), np.asarray(z["colors"], np.uint8)
+    keep = max(1, cap // 2)
+    if len(pts) > keep:
+        pick = np.random.default_rng(0).choice(len(pts), keep, replace=False)
+        pts, cols = pts[pick], cols[pick]
+    orig = st.create_splats_with_optimizers
+
+    def create(parser, *args, **kw):
+        parser.points = np.concatenate([np.asarray(parser.points, np.float32), pts])
+        parser.points_rgb = np.concatenate([np.asarray(parser.points_rgb, np.uint8), cols])
+        return orig(parser, *args, **kw)
+    st.create_splats_with_optimizers = create
+    return {"points": int(len(pts)), "file": os.path.basename(path)}
 
 
 if __name__ == "__main__":

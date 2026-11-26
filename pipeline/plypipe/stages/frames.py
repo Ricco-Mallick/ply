@@ -25,9 +25,28 @@ from plypipe.util import Ctx, need, run
 
 IMAGE_EXT = {".jpg", ".jpeg", ".png", ".webp", ".heic", ".tif", ".tiff"}
 VIDEO_EXT = {".mp4", ".mov", ".webm", ".mkv", ".m4v"}
-# transfer functions of HDR video (phones record HLG by default in HDR mode); the frames are written without
-# tone mapping, so these come out washed out
+# transfer functions of HDR video (phones record HLG by default in HDR mode): written as plain 8-bit frames they come
+# out washed out and green, so they are tone mapped to BT.709 on the way (tonemap_filter)
 HDR_TRANSFERS = {"arib-std-b67": "HLG", "smpte2084": "PQ"}
+# linear light at the HLG/PQ reference white (203 nits, ITU-R BT.2408), BT.2020 -> BT.709, then mobius: mid-tones kept
+# as shot and only highlights rolled off. Chosen on the office iPhone clips (Dolby Vision 8.4 / HLG): hable came out a
+# stop darker, the untouched frames washed out and green
+TONEMAP = ("zscale=t=linear:npl=203,format=gbrpf32le,zscale=p=bt709,tonemap=tonemap=mobius:desat=0:param=0.3,"
+           "zscale=t=bt709:m=bt709:r=tv,format=yuv420p")
+_ZSCALE: list[bool] = []
+
+
+def tonemap_filter(color: dict | None) -> str | None:
+    """The filter chain that brings an HDR clip to SDR, or None (SDR, or an ffmpeg without zscale)."""
+    if not (color or {}).get("hdr"):
+        return None
+    if not _ZSCALE:
+        try:
+            out = subprocess.run(["ffmpeg", "-hide_banner", "-filters"], capture_output=True, text=True, timeout=60).stdout
+        except (OSError, subprocess.TimeoutExpired):
+            out = ""
+        _ZSCALE.append(" zscale " in out and " tonemap " in out)
+    return TONEMAP if _ZSCALE[0] else None
 
 
 def sharpness(img: np.ndarray) -> float:
@@ -179,9 +198,12 @@ def run_stage(ctx: Ctx, src: Path) -> dict:
     plan.write(ctx.out, "input", planned)
     ctx.log.emit("frames", "progress", f"plan: {planned['why']}")
     hdr = [f"{v.name} ({p['color']['hdr']})" for v, p in zip(videos, probes) if p["color"]["hdr"]]
-    if hdr:
-        ctx.log.emit("frames", "warn", f"HDR clips: {', '.join(hdr)}. Their colours will look washed out in the twin: "
-                     "HDR to SDR conversion is not applied yet")
+    if hdr and not ctx.opt("no_tonemap"):
+        if tonemap_filter(probes[[p["color"]["hdr"] is not None for p in probes].index(True)]["color"]):
+            ctx.log.emit("frames", "progress", f"HDR clips tone mapped to SDR: {', '.join(hdr)}")
+        else:
+            ctx.log.emit("frames", "warn", f"HDR clips: {', '.join(hdr)}. This ffmpeg has no zscale, so they are not tone "
+                         "mapped and will look washed out in the twin")
     if tars:
         return _ar_frames(ctx, src, tars, videos, out, fps, oversample, long_side, max_frames, probes)
     if not videos:
@@ -192,8 +214,9 @@ def run_stage(ctx: Ctx, src: Path) -> dict:
     (ctx.out / "frames_index.json").unlink(missing_ok=True)
     clips, kept = [], 0
     for v, pr in zip(videos, probes):
-        st = _video_frames(ctx, v, out, kept, fps, oversample, long_side, max_frames / len(videos) if max_frames else None)
-        clips.append({"file": v.name, "firstFrame": kept, **st, "color": pr["color"]})
+        tm = None if ctx.opt("no_tonemap") else tonemap_filter(pr["color"])
+        st = _video_frames(ctx, v, out, kept, fps, oversample, long_side, max_frames / len(videos) if max_frames else None, tm)
+        clips.append({"file": v.name, "firstFrame": kept, **st, "color": {**pr["color"], "toneMapped": bool(tm)}})
         kept += st["kept"]
     if len(clips) == 1:
         return {"source": "video", **{k: v for k, v in clips[0].items() if k not in ("file", "firstFrame")}, **color_summary(clips)}
@@ -262,7 +285,7 @@ def decode_args(src: Path) -> list[str]:
 
 
 def _video_frames(ctx: Ctx, src: Path, out: Path, start: int, fps: float, oversample: int, long_side: int,
-                  max_frames: float | None) -> dict:
+                  max_frames: float | None, tonemap: str | None = None) -> dict:
     """Sharpest frame per window of one video, written to out/ numbered from `start`."""
     need("ffmpeg", "Install ffmpeg (apt install ffmpeg) or put a static build on PATH.")
     duration = probe_duration(src)
@@ -277,7 +300,7 @@ def _video_frames(ctx: Ctx, src: Path, out: Path, start: int, fps: float, oversa
     raw.mkdir(parents=True)
     hw = decode_args(src)
     extract = lambda pre: run(["ffmpeg", "-hide_banner", "-loglevel", "error", "-y", *pre, "-i", str(src),
-                               "-vf", f"fps={fps * oversample:.4f},{_scale_filter(long_side)}", "-q:v", "2",
+                               "-vf", f"fps={fps * oversample:.4f},{_scale_filter(long_side)}" + (f",{tonemap}" if tonemap else ""), "-q:v", "2",
                                str(raw / "%06d.jpg")], ctx, "frames")
     try:
         extract(hw)
