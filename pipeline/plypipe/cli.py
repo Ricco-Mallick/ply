@@ -111,6 +111,9 @@ def build_parser() -> argparse.ArgumentParser:
                         "in PyTorch (GPU). sift: classic")
     g.add_argument("--matcher", choices=["auto", "sequential", "exhaustive", "vocabtree"], default="auto")
     g.add_argument("--no-loop-detection", action="store_true", help="sequential matching without retrieval loop closure")
+    g.add_argument("--loop-period", type=int, default=10, help="sequential: every Nth frame looks for matches elsewhere in the capture "
+                                                               "(1 for clips filmed apart that must join)")
+    g.add_argument("--loop-images", type=int, default=50, help="sequential: look-alike frames each loop check retrieves")
     g.add_argument("--sfm-part", choices=["all", "match"], default="all",
                    help="match: stop the sfm stage after features and matching (the GPU half of a split solve); "
                         "map the database later with --reuse-matches")

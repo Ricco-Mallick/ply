@@ -683,6 +683,14 @@ def run_job(api: Api, job: dict, work: Path, extra: list[str]) -> None:
             for f in preview.build(out):
                 api.upload(f"scenes/{jid}/{f.name}", f, CTYPE.get(f.suffix, "application/octet-stream"))
                 files[f.name] = f.stat().st_size
+            for extra_file in ("scan-fit.png", "scan/registration.json"):  # route 8c's fit, for a look before training
+                fp = out / extra_file
+                if fp.is_file():
+                    try:
+                        api.upload(f"scenes/{jid}/{fp.name}", fp, CTYPE.get(fp.suffix, "application/octet-stream"))
+                        files[fp.name] = fp.stat().st_size
+                    except Exception as e:
+                        print(f"[worker] {extra_file} not published: {e}", flush=True)
             try:  # people masks (plypipe.people), blurred, for a look before training is paid for
                 from plypipe import people
                 sheet = people.review_sheet(out)

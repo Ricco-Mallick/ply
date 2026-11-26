@@ -125,3 +125,21 @@ def test_align_with_a_scan_registers_and_writes_depth_and_start(tmp_path):
     assert j["dir"] == "scandepth" and len(j["frames"]) > 40
     assert (out / "scan" / "init.npz").is_file() and (out / "scan-fit.png").is_file()
     assert not (out / "scan" / "source").exists()
+
+
+def test_install_init_adds_the_scan_points_thinned_to_half_the_cap(tmp_path):
+    import types
+    from plypipe import train_launcher
+    np.savez(tmp_path / "init.npz", points=np.random.default_rng(0).normal(size=(1000, 3)).astype(np.float32),
+             colors=np.full((1000, 3), 7, np.uint8))
+    seen = {}
+
+    def create(parser, *a, **kw):
+        seen["n"], seen["dt"], seen["rgb"] = len(parser.points), parser.points.dtype, parser.points_rgb
+        return "splats", "opt"
+    st = types.SimpleNamespace(create_splats_with_optimizers=create)
+    rep = train_launcher.install_init(st, str(tmp_path / "init.npz"), cap=600)
+    parser = types.SimpleNamespace(points=np.zeros((50, 3), np.float64), points_rgb=np.zeros((50, 3), np.uint8))
+    assert st.create_splats_with_optimizers(parser, sh_degree=3) == ("splats", "opt")
+    assert rep["points"] == 300 and seen["n"] == 350 and seen["dt"] == np.float32
+    assert seen["rgb"].dtype == np.uint8 and (seen["rgb"][50:] == 7).all()

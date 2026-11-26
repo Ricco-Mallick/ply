@@ -139,7 +139,7 @@ def _extract(pycolmap, db: Path, images: Path, features: str, device, camera_par
 
 
 def _match(pycolmap, db: Path, features: str, n_images: int, matcher: str, exhaustive_max: int, device,
-           tree: Path | None = None, unordered: bool = False) -> str:
+           tree: Path | None = None, unordered: bool = False, loop_period: int = 10, loop_images: int = 50) -> str:
     """Pairs and matches. Video: sequential, plus loop closure by retrieval when a tree is available (walking back
     into a room is a loop the neighbours never see). Photos: file order says nothing about overlap, so exhaustive
     while affordable, then retrieval."""
@@ -165,6 +165,11 @@ def _match(pycolmap, db: Path, features: str, n_images: int, matcher: str, exhau
         if tree is not None:
             pairing.loop_detection = True
             pairing.vocab_tree_path = str(tree)
+            # every Nth frame asks the retrieval tree for look-alikes elsewhere in the capture. 10 (COLMAP's default) is
+            # plenty for one long walk; clips filmed apart (a ceiling, then a wall) only join where frames find each
+            # other, so --loop-period 1 makes every frame look (the office: 5 of 17 clips joined at 10)
+            pairing.loop_detection_period = max(1, int(loop_period))
+            pairing.loop_detection_num_images = max(1, int(loop_images))
         pycolmap.match_sequential(db, matching_options=mopts, pairing_options=pairing, device=device)
     return matcher
 
@@ -505,7 +510,8 @@ def _extract_and_match(ctx: Ctx, pycolmap, cdir: Path, db: Path, images: Path, n
 
     tree = tree_for(features)
     try:
-        matcher = _match(pycolmap, db, features, n_images, want, exhaustive_max, device, tree, unordered)
+        matcher = _match(pycolmap, db, features, n_images, want, exhaustive_max, device, tree, unordered,
+                         int(ctx.opt("loop_period", 10) or 10), int(ctx.opt("loop_images", 50) or 50))
     except Exception as e:
         if features != "aliked":
             raise
@@ -514,7 +520,8 @@ def _extract_and_match(ctx: Ctx, pycolmap, cdir: Path, db: Path, images: Path, n
         features = "sift"
         _extract(pycolmap, db, images, features, device, cam_params, ctx.opt("camera_model", "SIMPLE_RADIAL"), _masks(ctx))
         tree = tree_for(features)
-        matcher = _match(pycolmap, db, features, n_images, want, exhaustive_max, device, tree, unordered)
+        matcher = _match(pycolmap, db, features, n_images, want, exhaustive_max, device, tree, unordered,
+                         int(ctx.opt("loop_period", 10) or 10), int(ctx.opt("loop_images", 50) or 50))
     loops = matcher == "sequential" and tree is not None
     (cdir / "matching.json").write_text(json.dumps({"features": features, "matcher": matcher, "loopDetection": loops}))
     return features, matcher, loops
