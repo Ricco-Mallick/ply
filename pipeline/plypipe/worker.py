@@ -602,7 +602,15 @@ def run_job(api: Api, job: dict, work: Path, extra: list[str]) -> None:
         args = list(job["args"])
         attempts: list[dict] = []
         # a coverage preview and a rehearsal are not twins: only a full run is judged and retried
-        judged = "--until" not in job["args"] and not rehearsal
+        settings = job.get("settings") or {}
+        if isinstance(settings, str):
+            try:
+                settings = json.loads(settings)
+            except ValueError:
+                settings = {}
+        # settings.noRetry: judged and reported, never re-run (a capture whose weak solve is known, trained on purpose;
+        # a retry would redo frames and the camera solve on a paid GPU)
+        judged = "--until" not in job["args"] and not rehearsal and not settings.get("noRetry")
         for attempt in range(1, (orchestrate.MAX_ATTEMPTS if judged else 1) + 1):
             state["msg"] = f"attempt {attempt}: starting pipeline"
             t_attempt = time.time()
