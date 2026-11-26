@@ -211,9 +211,13 @@ def _write_evidence(out: Path, long_edge: int = 1280, count: int = 48) -> None:
     for index, f in enumerate(pick):
         dest = ev / f"{index:03d}.jpg"
         try:
-            img = Image.open(f)
+            img = Image.open(f).convert("RGB")
+            from plypipe import people
+            keep = people.read_keep(out / people.MASKS / people.mask_name(f.name))
+            if keep is not None and keep.shape == (img.size[1], img.size[0]):  # the bundle is shared: people blurred out
+                img = Image.fromarray(people.hide(np.asarray(img), keep))
             img.thumbnail((long_edge, long_edge))
-            img.convert("RGB").save(dest, quality=82)
+            img.save(dest, quality=82)
         except Exception:
             continue
         pos = None
@@ -679,6 +683,14 @@ def run_job(api: Api, job: dict, work: Path, extra: list[str]) -> None:
             for f in preview.build(out):
                 api.upload(f"scenes/{jid}/{f.name}", f, CTYPE.get(f.suffix, "application/octet-stream"))
                 files[f.name] = f.stat().st_size
+            try:  # people masks (plypipe.people), blurred, for a look before training is paid for
+                from plypipe import people
+                sheet = people.review_sheet(out)
+                if sheet:
+                    api.upload(f"scenes/{jid}/{sheet.name}", sheet, "image/jpeg")
+                    files[sheet.name] = sheet.stat().st_size
+            except Exception as e:
+                print(f"[worker] people review sheet skipped: {e}", flush=True)
             report = json.loads((out / "report.json").read_text()) if (out / "report.json").exists() else {}
             state["alive"] = False
             post(status="done", stage=until, progress=1, message="coverage preview ready", result={"preview": True, "base": f"/v1/scenes/{jid}/", "files": files, "report": report})

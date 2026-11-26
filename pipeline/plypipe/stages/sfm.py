@@ -121,9 +121,11 @@ def _camera_mode(pycolmap, images: Path):
 
 
 def _extract(pycolmap, db: Path, images: Path, features: str, device, camera_params: str | None = None,
-             camera_model: str = "SIMPLE_RADIAL") -> str:
+             camera_model: str = "SIMPLE_RADIAL", masks: Path | None = None) -> str:
     reader = pycolmap.ImageReaderOptions()
     reader.camera_model = camera_model
+    if masks is not None:  # plypipe.people: no features on people (black in <frame>.jpg.png)
+        reader.mask_path = str(masks)
     if camera_params and camera_model == "SIMPLE_RADIAL":  # the focal prior is written for SIMPLE_RADIAL's parameters
         reader.camera_params = camera_params
     if features == "aliked":
@@ -380,9 +382,19 @@ def _map_keyframes(ctx: Ctx, pycolmap, db: Path, images: Path, out: Path, n_imag
     return {0: best}
 
 
+def _masks(ctx: Ctx) -> Path | None:
+    from plypipe import people
+    d = ctx.out / people.MASKS
+    return d if not ctx.opt("no_people_mask") and (d / "people.json").is_file() else None
+
+
 def run_stage(ctx: Ctx) -> dict:
     pycolmap = _pycolmap()
     images = ctx.frames_dir
+    people_report = None
+    if not ctx.opt("reuse_matches"):  # SAM 3 on every frame first: frames that are mostly person leave frames/ here
+        from plypipe import people
+        people_report = people.prepare(ctx)
     n_images = len(list(images.glob("*.jpg")))
     if n_images < 10:
         raise RuntimeError(f"only {n_images} frames: need at least 10 (check the frames stage)")
@@ -418,7 +430,13 @@ def run_stage(ctx: Ctx) -> dict:
             # (`--reuse-matches`). The stage is not marked done, so the next run resumes here.
             return {"partial": "matched", "features": features, "matcher": matcher, "loopDetection": loops,
                     "images": n_images}
-    return _map(ctx, pycolmap, cdir, db, images, n_images, source, features, requested, matcher, loops, cam_params)
+    report = _map(ctx, pycolmap, cdir, db, images, n_images, source, features, requested, matcher, loops, cam_params)
+    if people_report is None and _masks(ctx) is not None:
+        people_report = json.loads((_masks(ctx) / "people.json").read_text())
+    if people_report is not None:
+        report["people"] = {k: people_report.get(k) for k in ("frames", "framesWithPeople", "dropped", "meanShareWhenPresent", "seconds")}
+        report["people"]["undistorted"] = report.pop("peopleMasks", None)
+    return report
 
 
 def _extract_and_match(ctx: Ctx, pycolmap, cdir: Path, db: Path, images: Path, n_images: int, device, requested: str,
@@ -440,7 +458,7 @@ def _extract_and_match(ctx: Ctx, pycolmap, cdir: Path, db: Path, images: Path, n
             stats = sfm_torch.extract_and_match(
                 pycolmap, db, images, _camera_mode(pycolmap, images), reader,
                 clip_index(ctx.out) if source in ORDERED_SOURCES else None, ordered=source in ORDERED_SOURCES,
-                log=lambda msg, **kw: ctx.log.emit("sfm", "progress", msg, **kw))
+                log=lambda msg, **kw: ctx.log.emit("sfm", "progress", msg, **kw), masks=_masks(ctx))
             (cdir / "matching.json").write_text(json.dumps({"features": "aliked", "matcher": "lightglue", "loopDetection": stats["retrieval"], "torch": stats}))
             ctx.log.emit("sfm", "progress", "matched", **stats)
             return "aliked", "lightglue", stats["retrieval"]
@@ -451,14 +469,14 @@ def _extract_and_match(ctx: Ctx, pycolmap, cdir: Path, db: Path, images: Path, n
         features = "sift"
     ctx.log.emit("sfm", "progress", f"extracting {features} features", images=n_images, cameraPrior=cam_params)
     try:
-        _extract(pycolmap, db, images, features, device, cam_params, ctx.opt("camera_model", "SIMPLE_RADIAL"))
+        _extract(pycolmap, db, images, features, device, cam_params, ctx.opt("camera_model", "SIMPLE_RADIAL"), _masks(ctx))
     except Exception as e:  # ONNX model download/runtime missing -> SIFT
         if features != "aliked":
             raise
         ctx.log.emit("sfm", "warn", f"ALIKED failed ({e}); falling back to SIFT")
         db.unlink(missing_ok=True)
         features = "sift"
-        _extract(pycolmap, db, images, features, device, cam_params, ctx.opt("camera_model", "SIMPLE_RADIAL"))
+        _extract(pycolmap, db, images, features, device, cam_params, ctx.opt("camera_model", "SIMPLE_RADIAL"), _masks(ctx))
 
     ctx.log.emit("sfm", "progress", "matching")
     # several clips: frames from different clips sit next to each other in the numbering, so sequential pairing
@@ -494,7 +512,7 @@ def _extract_and_match(ctx: Ctx, pycolmap, cdir: Path, db: Path, images: Path, n
         ctx.log.emit("sfm", "warn", f"LightGlue matching failed ({e}); re-running with SIFT")
         db.unlink(missing_ok=True)
         features = "sift"
-        _extract(pycolmap, db, images, features, device, cam_params, ctx.opt("camera_model", "SIMPLE_RADIAL"))
+        _extract(pycolmap, db, images, features, device, cam_params, ctx.opt("camera_model", "SIMPLE_RADIAL"), _masks(ctx))
         tree = tree_for(features)
         matcher = _match(pycolmap, db, features, n_images, want, exhaustive_max, device, tree, unordered)
     loops = matcher == "sequential" and tree is not None
@@ -574,6 +592,11 @@ def _map(ctx: Ctx, pycolmap, cdir: Path, db: Path, images: Path, n_images: int, 
         shutil.rmtree(dense)
     pycolmap.undistort_images(dense, sparse0, images)
     rec = pycolmap.Reconstruction(dense / "sparse")
+    people_masks = None
+    if _masks(ctx) is not None:  # the trainer reads the undistorted views: warp the people masks the same way
+        from plypipe import people
+        people_masks = people.undistort_masks(ctx.out, best, rec, dense / people.MASKS)
+        ctx.log.emit("sfm", "progress", f"people masks in the undistorted views: {people_masks['masks']}")
     txt = dense / "sparse_txt"
     txt.mkdir(parents=True, exist_ok=True)
     rec.write_text(txt)
@@ -583,7 +606,8 @@ def _map(ctx: Ctx, pycolmap, cdir: Path, db: Path, images: Path, n_images: int, 
               "trajectoryJumps": jumps, "droppedViews": len(dropped) + len(spikes), "droppedSpikes": spikes, "images": n_images, "registered": reg,
               "registeredRatio": reg / n_images, "models": len(models), "points": rec.num_points3D(),
               "meanReprojErrorPx": float(rec.compute_mean_reprojection_error()),
-              "focalPx": float(next(iter(rec.cameras.values())).params[0]), "focalPrior": cam_params}
+              "focalPx": float(next(iter(rec.cameras.values())).params[0]), "focalPrior": cam_params,
+              **({"peopleMasks": people_masks} if people_masks else {})}
     if reg / n_images < 0.6:
         ctx.log.emit("sfm", "warn", f"only {reg}/{n_images} frames registered; expect holes (see SOP failure fixes)")
     return report

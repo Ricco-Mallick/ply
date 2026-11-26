@@ -78,10 +78,30 @@ def _dino_descriptors(paths: list[Path], device: str) -> np.ndarray | None:
     return np.concatenate(rows)
 
 
+def _keep_off_people(f: dict, mask_file: Path) -> dict:
+    """ALIKED's output without the keypoints (and their descriptors) that sit on a person."""
+    import torch
+    from plypipe import people
+    keep = people.read_keep(mask_file)
+    if keep is None or keep.all():
+        return f
+    kp = f["keypoints"][0]
+    h, w = keep.shape
+    xi = kp[:, 0].round().long().clamp(0, w - 1).cpu().numpy()
+    yi = kp[:, 1].round().long().clamp(0, h - 1).cpu().numpy()
+    ok = torch.from_numpy(keep[yi, xi]).to(kp.device)
+    out = dict(f)
+    for k in ("keypoints", "descriptors", "keypoint_scores"):
+        if k in f and f[k] is not None and f[k].shape[1] == len(ok):
+            out[k] = f[k][:, ok]
+    return out
+
+
 def extract_and_match(pycolmap, db_path: Path, images: Path, camera_mode, reader, clip_of: dict[str, str] | None,
                       ordered: bool = True, max_keypoints: int = 4096, overlap: int = 20, retrieve: int = 20,
-                      log=None, device: str = "cuda") -> dict:
-    """Fill a fresh database at db_path: images, ALIKED keypoints, LightGlue matches, verified two-view geometry."""
+                      log=None, device: str = "cuda", masks: Path | None = None) -> dict:
+    """Fill a fresh database at db_path: images, ALIKED keypoints, LightGlue matches, verified two-view geometry.
+    masks: plypipe.people's folder (<frame>.jpg.png, black on people); keypoints there are dropped."""
     import torch
     from lightglue import ALIKED, LightGlue
     from lightglue.utils import load_image
@@ -99,6 +119,8 @@ def extract_and_match(pycolmap, db_path: Path, images: Path, camera_mode, reader
     with torch.inference_mode():
         for i, nm in enumerate(names):
             f = extractor.extract(load_image(images / nm).to(dev))
+            if masks is not None:  # plypipe.people: drop keypoints on people before they are written or matched
+                f = _keep_off_people(f, masks / f"{nm}.png")
             kp = f["keypoints"][0].cpu().numpy().astype(np.float32)
             db.write_keypoints(ids[nm], kp + 0.5)  # COLMAP puts the origin at the corner of the first pixel
             feats.append({"keypoints": f["keypoints"], "descriptors": f["descriptors"].half(), "image_size": f["image_size"]})

@@ -16,7 +16,7 @@ from pathlib import Path
 
 import numpy as np
 
-from plypipe import colmap_txt
+from plypipe import colmap_txt, people
 
 MAX_VIEWS = 6
 LONG_SIDE = 1280
@@ -86,6 +86,9 @@ def publish(data_dir: Path, out: Path, holdout: int) -> list[dict]:
         img = cv2.imread(str(data_dir / "images" / name))
         if img is None:
             continue
+        keep = people.read_keep(data_dir.parent / "dense" / people.MASKS / people.mask_name(name))
+        if keep is not None and keep.shape == img.shape[:2]:
+            img = people.hide(img, keep)  # these photos are published beside the twin: no one's face goes with them
         h, w = img.shape[:2]
         k = min(1.0, LONG_SIDE / max(w, h))
         if k < 1:

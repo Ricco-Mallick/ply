@@ -168,6 +168,7 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--depth-loss", action="store_true")
     ap.add_argument("--lidar-depth", help="lidar.json of an iPhone LiDAR capture: its measured depth maps feed the depth loss "
                                           "(dense, confident pixels) instead of the sparse track points; implies --depth-loss")
+    ap.add_argument("--masks", help="folder of <image>.png keep-masks (plypipe.people: black on people); masked pixels get no loss")
     ap.add_argument("--bilateral-grid", action="store_true")
     ap.add_argument("--exposure-affine", action="store_true", help="the bilateral grid at 1x1x1: one affine colour transform per photo")
     ap.add_argument("--random-bkgd", action="store_true")
@@ -200,7 +201,8 @@ def main(argv: list[str] | None = None) -> int:
                                 a.bilateral_grid, a.random_bkgd, a.opacity_reg, a.holdout_block, len(start["means"]) if start else 0,
                                 exposure_affine=a.exposure_affine)
     block = None
-    patched = [flag for flag, on in (("--holdout-block", a.holdout_block), ("--depth-loss", a.depth_loss), ("--from-ply", start)) if on]
+    patched = [flag for flag, on in (("--holdout-block", a.holdout_block), ("--depth-loss", a.depth_loss), ("--from-ply", start),
+                                     ("--masks", a.masks)) if on]
     if patched:
         import torch
         if not a.dry_run and torch.cuda.device_count() > 1:  # gsplat would spawn workers that do not see the patch
@@ -215,6 +217,10 @@ def main(argv: list[str] | None = None) -> int:
         from plypipe import lidar_depth
         stats = lidar_depth.install(st, os.path.abspath(a.lidar_depth))
         summary["lidarDepth"] = {"maps": stats["maps"], "samplesPerView": lidar_depth.SAMPLES, "rangeM": [lidar_depth.NEAR, lidar_depth.FAR]}
+    if a.masks:  # after the LiDAR wrapper, so its dense depth samples are filtered too
+        from plypipe import people
+        mstats = people.install(st, os.path.abspath(a.masks))
+        summary["peopleMasks"] = {"masks": mstats["masks"]}
     if start:
         if not hasattr(st, "create_splats_with_optimizers"):  # nothing to wrap: the run would start from the SfM points
             raise SystemExit("--from-ply: simple_trainer has no create_splats_with_optimizers to start from a model (check the gsplat pin)")
@@ -230,6 +236,9 @@ def main(argv: list[str] | None = None) -> int:
         item = ds[0]
         found = {"images": len(parser.image_names), "trainImages": len(ds), "points": int(len(parser.points)),
                  "imageShape": list(item["image"].shape), "sceneScale": float(parser.scene_scale)}
+        if a.masks:  # how much of the training views the people masks take out
+            shares = [1.0 - float(ds[i]["mask"].float().mean()) for i in range(len(ds)) if "mask" in ds[i]]
+            found.update(maskedViews=len(shares), maskedShareMean=round(sum(shares) / len(shares), 4) if shares else 0.0)
         if a.holdout_block:
             found.update(valImages=len(st.Dataset(parser, split="val")), blockImages=len(st.Dataset(parser, split="block")),
                          block=block["block"])

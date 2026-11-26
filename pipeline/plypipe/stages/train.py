@@ -49,6 +49,10 @@ def split_flags(ctx: Ctx) -> tuple[list[str], int]:
         flags += ["--holdout-block", str(block), "--frames-index", str(ctx.out / "frames_index.json")]
     if ctx.opt("opacity_reg") is not None:
         flags += ["--opacity-reg", str(ctx.opt("opacity_reg"))]
+    from plypipe import people
+    masks = ctx.dense_dir / people.MASKS
+    if not ctx.opt("no_people_mask") and masks.is_dir() and any(masks.glob("*.png")):
+        flags += ["--masks", str(masks)]  # people (plypipe.people): no colour or depth loss on them, in every run on this job
     return flags, block
 
 
