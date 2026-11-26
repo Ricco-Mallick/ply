@@ -88,10 +88,12 @@ def load_sam3():
     return model, Sam3Processor.from_pretrained("facebook/sam3"), torch
 
 
-def sam3_detector(model, proc, torch, threshold: float = THRESHOLD):
-    """A function RGB array (H x W x 3) -> boolean person mask (H x W), all instances joined."""
+def sam3_detector(model, proc, torch, threshold: float = THRESHOLD, prompts: tuple[str, ...] = (PROMPT,)):
+    """A function RGB array (H x W x 3) -> boolean mask (H x W) of every instance of every prompt, joined. Besides
+    people, anything that moves while filming belongs here (--mask-prompts "person,ceiling fan": spinning blades are
+    in a different place in every frame)."""
     from PIL import Image
-    text = proc(text=PROMPT, return_tensors="pt").to("cuda")
+    texts = [proc(text=p, return_tensors="pt").to("cuda") for p in prompts]
 
     def detect(rgb: np.ndarray) -> np.ndarray:
         H, W = rgb.shape[:2]
@@ -100,12 +102,14 @@ def sam3_detector(model, proc, torch, threshold: float = THRESHOLD):
         dt = sam3_dtype(torch)
         with torch.no_grad(), torch.autocast("cuda", dtype=dt, enabled=dt != torch.float32):
             ve = model.get_vision_features(pixel_values=inputs.pixel_values.to(dt))
-            outp = model(vision_embeds=ve, input_ids=text.input_ids, attention_mask=text.get("attention_mask"))
-        res = proc.post_process_instance_segmentation(outp, threshold=threshold, mask_threshold=0.5, target_sizes=[[H, W]])[0]
+            outs = [model(vision_embeds=ve, input_ids=t.input_ids, attention_mask=t.get("attention_mask")) for t in texts]
         out = np.zeros((H, W), bool)
-        for m in res["masks"]:
-            out |= m.bool().cpu().numpy()
+        for outp in outs:
+            res = proc.post_process_instance_segmentation(outp, threshold=threshold, mask_threshold=0.5, target_sizes=[[H, W]])[0]
+            for m in res["masks"]:
+                out |= m.bool().cpu().numpy()
         return out
+    detect.prompts = ",".join(prompts)
     return detect
 
 
@@ -141,7 +145,7 @@ def mask_frames(frames: Path, out: Path, detect, max_share: float = MAX_SHARE, l
         write_mask(mdir / mask_name(f.name), person)
         if log and n % 25 == 0:
             log(f"looking for people: frame {n + 1}/{len(files)}", done=n + 1, total=len(files))
-    report = {"model": "facebook/sam3", "prompt": PROMPT, "frames": len(files), "framesWithPeople": with_people,
+    report = {"model": "facebook/sam3", "prompt": getattr(detect, "prompts", PROMPT), "frames": len(files), "framesWithPeople": with_people,
               "dropped": dropped, "meanShareWhenPresent": round(float(np.mean(shares)), 4) if shares else 0.0,
               "maxShareKept": max_share, "seconds": round(time.time() - t0, 1)}
     (mdir / "people.json").write_text(json.dumps(report, indent=1))
@@ -175,7 +179,8 @@ def prepare(ctx) -> dict | None:
         ctx.log.emit("sfm", "warn", f"people are not masked (SAM 3 unavailable: {str(e)[:160]}); anyone walking through will leave ghosts")
         return None
     try:
-        detect = sam3_detector(model, proc, torch, float(ctx.opt("people_threshold", THRESHOLD)))
+        prompts = tuple(p.strip() for p in str(ctx.opt("mask_prompts") or PROMPT).split(",") if p.strip())
+        detect = sam3_detector(model, proc, torch, float(ctx.opt("people_threshold", THRESHOLD)), prompts)
         rep = mask_frames(ctx.frames_dir, ctx.out, detect, float(ctx.opt("people_max_share", MAX_SHARE)),
                           log=lambda msg, **kw: ctx.log.emit("sfm", "progress", msg, **kw))
     except Exception as e:  # OOM, an API change: a twin with ghosts beats no twin

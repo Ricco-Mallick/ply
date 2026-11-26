@@ -102,6 +102,8 @@ def build_parser() -> argparse.ArgumentParser:
     g = r.add_argument_group("people (SAM 3 masks, see plypipe.people)")
     g.add_argument("--no-people-mask", action="store_true", help="train on whole frames: do not look for people")
     g.add_argument("--people-threshold", type=float, default=0.4, help="SAM 3 score for a person")
+    g.add_argument("--mask-prompts", default="person", help="comma-separated SAM 3 prompts masked out of the solve and the training: "
+                                                            "people, and anything that moved while filming (\"person,ceiling fan\")")
     g.add_argument("--people-max-share", type=float, default=0.45, help="drop a frame that is more than this share person")
     g = r.add_argument_group("sfm")
     g.add_argument("--features", choices=["aliked", "aliked-lg", "sift"], default="aliked",
