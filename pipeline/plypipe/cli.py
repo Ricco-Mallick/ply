@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 import time
 import traceback
@@ -20,7 +21,7 @@ from pathlib import Path
 
 from plypipe import STAGES, __version__
 from plypipe.log import Log
-from plypipe.util import Ctx, clear_from, is_done, mark_done
+from plypipe.util import PAUSED, Ctx, Paused, clear_from, is_done, mark_done
 
 
 def _stage_fn(name: str):
@@ -256,6 +257,13 @@ def _priors_main(a) -> int:  # noqa: ANN001
 
 def main(argv: list[str] | None = None) -> int:
     a = build_parser().parse_args(argv)
+    if os.environ.get("PLY_PDEATHSIG") == "1":  # started by a worker: if the worker dies, stop (training saves first)
+        try:
+            import ctypes
+            import signal
+            ctypes.CDLL("libc.so.6", use_errno=True).prctl(1, signal.SIGTERM)
+        except Exception:
+            pass
     if a.cmd == "rescale":
         from plypipe import rescale
         return rescale.main(a)
@@ -290,6 +298,9 @@ def main(argv: list[str] | None = None) -> int:
         try:
             fn = _stage_fn(name)
             report = fn(ctx, a.input) if name == "frames" else fn(ctx)
+        except Paused as e:  # saved and stopped on request: run the same command again to continue
+            log.emit(name, "paused", f"{e}. Run the same command again to continue from the restore point")
+            return PAUSED
         except Exception as e:  # report and stop; the next run resumes here
             log.emit(name, "error", str(e), trace=traceback.format_exc()[-2000:])
             return 1

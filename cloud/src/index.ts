@@ -45,6 +45,7 @@ const s3 = (e: Env): S3Conf => ({ endpoint: e.S3_ENDPOINT, region: e.S3_REGION, 
 const SIGN_TTL = 6 * 3600;
 
 const STALE_MS = 20 * 60 * 1000;
+const MAX_PAUSES = 8;
 const MAX_ATTEMPTS = 2;
 const json = (data: unknown, status = 200, h: Record<string, string> = {}) => new Response(JSON.stringify(data), { status, headers: { 'content-type': 'application/json', ...h } });
 /** Anything a person can change between two views: no browser, proxy or edge copy may answer the next read. */
@@ -463,6 +464,16 @@ async function route(req: Request, env: Env, ctx: Ctx): Promise<Response> {
       // a worker re-queueing its own job is a planned hand-over (the CPU camera solve hands back to a GPU), not a crash:
       // the next claim must not use up the job's crash retries
       if (b.status === 'queued') sets.push('attempts=0');
+      // paused (a restore point saved, the job handed back): counted, and failed past MAX_PAUSES
+      if (b.status === 'queued' && b.paused) {
+        const row = await env.DB.prepare('SELECT pauses FROM jobs WHERE id=?').bind(m[1]).first() as any;
+        if ((row?.pauses ?? 0) + 1 > MAX_PAUSES) {
+          await env.DB.prepare("UPDATE jobs SET status='failed', message=?, finished_at=?, updated_at=? WHERE id=?")
+            .bind(`stopped after ${MAX_PAUSES} pauses: its workers keep being stopped. Its restore point is kept; queue it again to continue.`, now, now, m[1]).run();
+          return json({ ok: true, failed: 'too many pauses' });
+        }
+        sets.push('pauses=pauses+1');
+      }
       if (b.stage !== undefined) { sets.push('stage=?'); vals.push(b.stage); }
       if (b.progress !== undefined) { sets.push('progress=?'); vals.push(Math.max(0, Math.min(1, Number(b.progress) || 0))); }
       if (b.message !== undefined) { sets.push('message=?'); vals.push(String(b.message).slice(0, 4000)); }

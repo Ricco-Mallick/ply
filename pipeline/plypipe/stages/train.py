@@ -15,7 +15,7 @@ import sys
 import time
 from pathlib import Path
 
-from plypipe import device, plan
+from plypipe import device, plan, restore
 from plypipe.util import Ctx, read_scene, run
 
 GSPLAT_SHA = "512d366b67073d77ca099ede742683c165dfc23b"  # nerfstudio-project/gsplat main, 2026-09-19 (v1.6.0)
@@ -207,8 +207,21 @@ def run_stage(ctx: Ctx) -> dict:
             cmd += ["--init-points", str(ctx.out / "scan" / "init.npz")]
         ctx.log.emit("train", "progress", "depth loss on the laser scan, training starts from its points")
     oom_retry = None
+    # restore points (plypipe.restore): autosave, save-and-exit on a signal, and pick up at the saved step when the
+    # same settings run again (a closed window, Ctrl+C, a cloud container that was stopped)
+    rdir = (result / "restore").resolve()
+    cmd += ["--restore", str(rdir)]
+    rkey = restore.restore_key(cmd)
+    found = restore.usable(rdir, rkey)
+    if found:
+        cmd.append("--resume")
+        ctx.log.emit("train", "progress", f"restore point found: continuing at step {found['step'] + 1} of {found.get('of')} "
+                                          f"({found.get('splats')} splats, saved {found.get('why')})")
+    elif restore.read_meta(rdir):
+        ctx.log.emit("train", "warn", "a restore point from other settings was left alone: training starts over")
+    env = {**launcher_env(), "PLY_RESTORE_KEY": rkey}
     try:
-        run(cmd, ctx, "train", env=launcher_env(), progress_every=50)
+        run(cmd, ctx, "train", env=env, progress_every=50, own_session=True)
     except RuntimeError as e:
         # a small card (plypipe.device) whose per-splat estimate was optimistic: one retry at a lower cap, from scratch,
         # rather than a failed job. An explicit --cap-max is the operator's number and is not second-guessed
@@ -222,7 +235,9 @@ def run_stage(ctx: Ctx) -> dict:
         budget = {**budget, "capMax": lower, "why": budget["why"] + f"; out of memory, retried at {lower:,}"}
         plan.write(ctx.out, "model", budget)
         shutil.rmtree(result, ignore_errors=True)
-        run(cmd, ctx, "train", env=launcher_env(), progress_every=50)
+        cmd = [c for c in cmd if c != "--resume"]
+        env["PLY_RESTORE_KEY"] = restore.restore_key(cmd)
+        run(cmd, ctx, "train", env=env, progress_every=50, own_session=True)
     if ctx.opt("train_dry_run"):
         return {"dryRun": True}
     plys = sorted((result / "ply").glob("point_cloud_*.ply"), key=lambda p: int(p.stem.rsplit("_", 1)[1]))

@@ -15,3 +15,6 @@ CREATE UNIQUE INDEX IF NOT EXISTS machines_code ON machines (pair_code) WHERE pa
 -- a job assigned to a machine by name: only that machine claims it, and Modal is never woken for it
 ALTER TABLE jobs ADD COLUMN assigned_worker TEXT;
 CREATE INDEX IF NOT EXISTS jobs_assigned ON jobs (assigned_worker, status);
+-- times a worker saved a restore point and handed the job back (stopped, preempted, its PC closed). Counted apart
+-- from crash attempts, and capped, so a job that is paused again and again cannot wake a paid GPU forever
+ALTER TABLE jobs ADD COLUMN pauses INTEGER NOT NULL DEFAULT 0;

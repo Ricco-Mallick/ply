@@ -138,3 +138,18 @@ test('pairing is rate limited', async () => {
   for (let i = 0; i < 25; i++) last = (await call('POST', '/v1/machines/pair', { hint: `pc${i}` })).status;
   assert.equal(last, 429);
 });
+
+test('a paused job goes back to the queue, its pauses are counted, and too many fail it', async () => {
+  job('job-pause1');
+  DB.raw.prepare("UPDATE jobs SET status='running', attempts=1 WHERE id='job-pause1'").run();
+  for (let i = 1; i <= 8; i++) {
+    const r = await call('POST', '/v1/worker/jobs/job-pause1', { status: 'queued', paused: true, message: 'paused' }, shared);
+    assert.equal(r.status, 200);
+    const row = DB.raw.prepare("SELECT status, pauses, attempts FROM jobs WHERE id='job-pause1'").get() as any;
+    assert.deepEqual([row.status, row.pauses, row.attempts], ['queued', i, 0]);
+  }
+  await call('POST', '/v1/worker/jobs/job-pause1', { status: 'queued', paused: true }, shared);
+  const row = DB.raw.prepare("SELECT status, message FROM jobs WHERE id='job-pause1'").get() as any;
+  assert.equal(row.status, 'failed');
+  assert.match(row.message, /pauses/);
+});

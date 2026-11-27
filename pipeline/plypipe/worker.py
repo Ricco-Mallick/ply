@@ -21,6 +21,7 @@ import math
 import os
 import re
 import shutil
+import signal
 import socket
 import subprocess
 import sys
@@ -38,6 +39,7 @@ from plypipe.limits import EXPORT_RESERVE_MIN, job_cap_min, max_input_mb, stage_
 from plypipe.live import Live
 from plypipe import hf
 from plypipe.progress import SfmProgress
+from plypipe.util import PAUSED
 
 # rough share of wall time per stage on a T4, for one overall progress number
 WEIGHTS = {"frames": .05, "sfm": .20, "align": .02, "occupancy": .02, "label": .04, "train": .62, "export": .05}
@@ -58,6 +60,63 @@ CHECKPOINT_AFTER = ("sfm", "occupancy", "label", "train")
 CKPT_SKIP = {"frames", "frames_raw", "colmap", "train"}
 # Cloudflare rejects the default "Python-urllib" user agent with 403 before the request reaches the API
 UA = {"user-agent": "ply-worker/1.0 (+https://ricco.codes/ply)"}
+
+
+# a stop request for this worker (SIGTERM from the cloud, the PC's window closing, Ctrl+C): the running job saves a
+# restore point, uploads it and goes back in the queue as paused; then the worker exits
+STOP = {"signal": None, "proc": None}
+RESTORE_UPLOAD_MIN = float(os.environ.get("PLY_RESTORE_UPLOAD_MIN", 15))   # 0: upload only when stopping
+RESTORE_MAX_MB = float(os.environ.get("PLY_RESTORE_MAX_MB", 4000))
+
+
+def _stop_requested(signum, _frame):
+    if STOP["signal"]:
+        raise SystemExit(130)
+    STOP["signal"] = signal.Signals(signum).name
+    print(f"[worker] {STOP['signal']}: stopping after a restore point is saved", flush=True)
+    p = STOP["proc"]
+    if p is not None and p.poll() is None:
+        p.send_signal(signal.SIGTERM)  # plypipe forwards it to the trainer, which saves at the end of its step
+
+
+def restore_dir(out: Path) -> Path:
+    return out / "train" / "restore"
+
+
+def upload_restore(api, jid: str, out: Path) -> dict | None:
+    """The restore point to scenes/<job>/restore/ so another machine can continue. None when there is none or it is
+    larger than PLY_RESTORE_MAX_MB."""
+    d = restore_dir(out)
+    meta_p, file_p = d / "restore.json", d / "restore.pt"
+    if not (meta_p.is_file() and file_p.is_file()):
+        return None
+    mb = file_p.stat().st_size / 2**20
+    if mb > RESTORE_MAX_MB:
+        print(f"[worker] restore point not uploaded: {mb:.0f} MB > {RESTORE_MAX_MB:g} MB (PLY_RESTORE_MAX_MB); it stays on this machine", flush=True)
+        return None
+    meta = json.loads(meta_p.read_text())
+    api.upload(f"scenes/{jid}/restore/restore.pt", file_p, "application/octet-stream")
+    api.upload(f"scenes/{jid}/restore/restore.json", meta_p, "application/json")  # last: the pair is whole once this lands
+    print(f"[worker] restore point uploaded: step {meta.get('step')} ({mb:.0f} MB)", flush=True)
+    return meta
+
+
+def download_restore(api, jid: str, out: Path) -> dict | None:
+    """A restore point another machine left, unless this one has its own (newer or same)."""
+    d = restore_dir(out)
+    if (d / "restore.json").is_file() and (d / "restore.pt").is_file():
+        return None
+    try:
+        d.mkdir(parents=True, exist_ok=True)
+        api.download(f"scenes/{jid}/restore/restore.json", d / "restore.json.part")
+        api.download(f"scenes/{jid}/restore/restore.pt", d / "restore.pt.part")
+        (d / "restore.pt.part").rename(d / "restore.pt")
+        (d / "restore.json.part").rename(d / "restore.json")
+        return json.loads((d / "restore.json").read_text())
+    except Exception:
+        for f in ("restore.json.part", "restore.pt.part"):
+            (d / f).unlink(missing_ok=True)
+        return None
 
 
 class Api:
@@ -462,6 +521,10 @@ def run_job(api: Api, job: dict, work: Path, extra: list[str]) -> None:
         else:
             back = False
         resumed = "sfm" if back else load_checkpoint(api, jid, out, root, job["args"])
+        if resumed and resumed != "train":
+            got = download_restore(api, jid, out)
+            if got:
+                print(f"[worker] {jid}: training restore point at step {got.get('step')} downloaded", flush=True)
         if resumed:
             post(message=f"resuming after {resumed} (checkpoint)")
             print(f"[worker] resuming {jid} after {resumed}", flush=True)
@@ -493,7 +556,39 @@ def run_job(api: Api, job: dict, work: Path, extra: list[str]) -> None:
             """Run the pipeline once; returns (exit code, last error event, last lines of non-JSON output)."""
             cmd = [*runner, "run", str(inp), "--out", str(out), *args, *split, *extra]
             print("[worker] " + " ".join(cmd), flush=True)
-            p = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1)
+            # its own session: Ctrl+C in this window reaches the worker only, which forwards ONE stop; PLY_PDEATHSIG makes
+            # the pipeline stop (and save) if this worker is killed outright
+            p = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1,
+                                 start_new_session=True, env={**os.environ, "PLY_PDEATHSIG": "1"})
+            STOP["proc"] = p
+            if STOP["signal"]:
+                p.send_signal(signal.SIGTERM)
+
+            def stop_gracefully(grace_s: float = 240):
+                """SIGTERM first: training saves a restore point at the end of its step. Killed if it does not exit."""
+                p.send_signal(signal.SIGTERM)
+                t_end = time.time() + grace_s
+                while p.poll() is None and time.time() < t_end:
+                    time.sleep(1)
+                if p.poll() is None:
+                    p.kill()
+
+            def uploader():  # the restore point leaves the machine now and then: a machine that just dies loses little
+                last, sent = 0.0, None
+                while p.poll() is None:
+                    time.sleep(20)
+                    m = restore_dir(out) / "restore.json"
+                    if RESTORE_UPLOAD_MIN <= 0 or rehearsal or not m.is_file():
+                        continue
+                    if m.stat().st_mtime != sent and time.time() - last >= RESTORE_UPLOAD_MIN * 60:
+                        try:
+                            mt = m.stat().st_mtime
+                            if upload_restore(api, jid, out):
+                                last, sent = time.time(), mt
+                        except Exception as e:
+                            print(f"[worker] restore upload failed (retrying later): {e}", flush=True)
+                            last = time.time()
+            threading.Thread(target=uploader, daemon=True).start()
             last_err, tail = "", collections.deque(maxlen=40)
             sfm = SfmProgress()  # real progress inside sfm, from COLMAP's own counters
             ckpts: list[threading.Thread] = []
@@ -516,12 +611,12 @@ def run_job(api: Api, job: dict, work: Path, extra: list[str]) -> None:
                     if now >= state["cap_end"] - (export_reserve_s if st == "train" else 0):
                         state["timeout"] = cap_msg(st)
                         state["salvage"] = st == "train"
-                        p.kill()
+                        stop_gracefully() if st == "train" else p.kill()
                         return
                     if st and lim_s and now - state["stage_t0"] > lim_s:
                         state["timeout"] = f"{st} exceeded its {lim_s / 60:g}-minute limit and was stopped"
                         state["salvage"] = st == "train"
-                        p.kill()
+                        stop_gracefully() if st == "train" else p.kill()
                         return
                     time.sleep(2)
             threading.Thread(target=watchdog, daemon=True).start()
@@ -615,6 +710,25 @@ def run_job(api: Api, job: dict, work: Path, extra: list[str]) -> None:
             state["msg"] = f"attempt {attempt}: starting pipeline"
             t_attempt = time.time()
             code, last_err, tail = pipeline(args)
+            if code == PAUSED and STOP["signal"] and not state.get("salvage"):
+                meta = None
+                try:
+                    meta = upload_restore(api, jid, out)
+                except Exception as e:
+                    print(f"[worker] restore upload on stop failed: {e}", flush=True)
+                try:
+                    if not rehearsal and checkpoint_size(out) <= CKPT_MAX_MB * 2**20:
+                        finished = [st for st in ORDER if (out / ".done" / f"{st}.json").exists()]
+                        if finished:  # named after the last stage that finished: training itself continues from the restore point
+                            save_checkpoint(api, jid, out, root, job["args"], finished[-1])
+                except Exception as e:
+                    print(f"[worker] checkpoint on stop failed: {e}", flush=True)
+                state["alive"] = False
+                where = f"step {meta['step']} of {meta.get('of')}" if meta else (state["stage"] or "start")
+                post(status="queued", paused=True, stage=state["stage"], progress=overall(state["stage"], state["frac"]),
+                     message=f"paused at {where} ({STOP['signal']}); a restore point is saved and the next run continues from it")
+                print(f"[worker] {jid}: paused at {where}", flush=True)
+                return
             if code == 0 and split and handoff.paused(out):
                 # matched: the mapping goes to a CPU box, and this GPU is free for the next job (or to stop billing)
                 used = cap_min * 60 - (state["cap_end"] - time.time())
@@ -805,6 +919,9 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--keep", action="store_true", help="keep job folders after upload")
     ap.add_argument("extra", nargs="*", help="extra plypipe flags for every job (e.g. --device cuda)")
     a = ap.parse_args(argv)
+    for name in ("SIGTERM", "SIGINT", "SIGHUP"):
+        if hasattr(signal, name):
+            signal.signal(getattr(signal, name), _stop_requested)
     # a paired PC (plypipe.enroll, pipeline/local/start.bat): its own token, and only jobs assigned to it by name
     from plypipe import enroll
     paired = None if a.token else enroll.load()
@@ -848,12 +965,17 @@ def main(argv: list[str] | None = None) -> int:
             print(f"[worker] claimed {job['id']} ({job['name']})", flush=True)
             took_job = True
             run_job(api, job, a.work, a.extra)
+            if STOP["signal"]:  # paused: the job folder (and its local restore point) stays for the next run here
+                print("[worker] stopped on request", flush=True)
+                return 0
             if not a.keep:
                 shutil.rmtree(a.work / job["id"], ignore_errors=True)
             idle_since = time.time()
             if a.once:
                 return 0
             continue
+        if STOP["signal"]:
+            return 0
         if a.idle_exit and time.time() - idle_since > a.idle_exit * 60:
             print("[worker] idle, exiting", flush=True)
             return 0

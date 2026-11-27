@@ -177,6 +177,8 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--from-ply", help="fine-tune: start from this trained model instead of the SfM points, the splat cap at its own "
                                        "count (its SH is cut to --sh-degree)")
     ap.add_argument("--world-scale", type=float, help="median camera distance (scene units): MCMC noise/scale_reg follow it")
+    ap.add_argument("--restore", help="folder for restore points: autosave every PLY_AUTOSAVE_MIN minutes, save-and-exit on a signal (plypipe.restore)")
+    ap.add_argument("--resume", action="store_true", help="continue from the restore point in --restore when its settings match")
     ap.add_argument("--packed", action="store_true", help="gsplat's packed rasterisation: less VRAM, a little slower (plypipe.device)")
     ap.add_argument("--loader-workers", type=int, help="DataLoader worker processes (gsplat hard-codes 4; each is a process holding RAM)")
     ap.add_argument("--dry-run", action="store_true",
@@ -237,6 +239,10 @@ def main(argv: list[str] | None = None) -> int:
     if a.loader_workers is not None:
         summary["loaderWorkers"] = limit_loader_workers(st, a.loader_workers)
     cfg.adjust_steps(cfg.steps_scaler)
+    if a.restore and not a.dry_run:
+        from plypipe import restore
+        key = os.environ.get("PLY_RESTORE_KEY") or restore.restore_key(sys.argv[1:])
+        summary["restore"] = restore.install(st, cfg, os.path.abspath(a.restore), a.resume, key)
     os.makedirs(a.result, exist_ok=True)
     with open(os.path.join(a.result, "ply_preset.json"), "w") as f:
         json.dump(summary, f, indent=2)

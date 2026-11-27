@@ -38,11 +38,11 @@ jobs:
         run: |
           W="npx --yes wrangler@4.149.0"
           has() { $W d1 execute ply-jobs --remote --json --command "$1" | grep -q '"n": *1'; }
-          if ! has "SELECT COUNT(*) AS n FROM pragma_table_info('jobs') WHERE name='assigned_worker'"; then
+          if ! has "SELECT COUNT(*) AS n FROM pragma_table_info('jobs') WHERE name='pauses'"; then
             echo "applying migrations/0003_machines.sql"
             $W d1 execute ply-jobs --remote --file migrations/0003_machines.sql -y
           fi
-          has "SELECT COUNT(*) AS n FROM pragma_table_info('jobs') WHERE name='assigned_worker'" || { echo "::error::migration 0003 did not apply"; exit 1; }
+          has "SELECT COUNT(*) AS n FROM pragma_table_info('jobs') WHERE name='pauses'" || { echo "::error::migration 0003 did not apply"; exit 1; }
       - name: deploy
         working-directory: cloud
         env:

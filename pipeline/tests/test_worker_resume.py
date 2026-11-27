@@ -166,3 +166,56 @@ def test_train_limit_stretches_to_the_projected_finish_within_the_deadline():
     # too early to project, or no deadline: the fixed limit, at most tripled
     assert worker.train_limit_s(base, 600, 0.02, 0, 0, 0) == base
     assert worker.train_limit_s(base, 7000, 0.1, 0, 0, 0) == 3 * base
+
+
+PAUSING = r'''
+import json, os, signal, sys, time, pathlib
+a = sys.argv; out = pathlib.Path(a[a.index("--out") + 1]); (out / ".done").mkdir(parents=True, exist_ok=True)
+r = out / "train" / "restore"
+resumed = (r / "restore.json").exists()
+for st in ["frames", "sfm", "align", "occupancy"]:
+    print(json.dumps({"stage": st, "event": "start", "msg": ""}), flush=True)
+    (out / ".done" / f"{st}.json").write_text("{}")
+    print(json.dumps({"stage": st, "event": "done", "msg": ""}), flush=True)
+print(json.dumps({"stage": "train", "event": "start", "msg": "resumed" if resumed else ""}), flush=True)
+if resumed:  # the second machine: carries on from the restore point and finishes
+    (out / "resumed-from.txt").write_text((r / "restore.json").read_text())
+    print(json.dumps({"stage": "train", "event": "done", "msg": ""}), flush=True)
+    (out / "scene.spz").write_bytes(b"spz"); (out / "report.json").write_text("{}")
+    sys.exit(0)
+def stop(*_):  # what plypipe + the trainer do on SIGTERM: save at the end of the step, exit 75
+    r.mkdir(parents=True, exist_ok=True)
+    (r / "restore.pt").write_bytes(b"state")
+    (r / "restore.json").write_text(json.dumps({"step": 1234, "of": 30000, "key": "k"}))
+    sys.exit(75)
+signal.signal(signal.SIGTERM, stop)
+open(os.environ["FAKE_READY"], "w").write("1")
+time.sleep(60)
+'''
+
+
+def test_a_stopped_worker_saves_uploads_and_requeues_paused_and_another_machine_continues(tmp_path, monkeypatch):
+    import threading
+    import time as t
+    fake = tmp_path / "pausing.py"
+    fake.write_text(PAUSING)
+    monkeypatch.setenv("PLY_PIPELINE_CMD", f"{sys.executable} {fake}")
+    monkeypatch.setenv("FAKE_READY", str(tmp_path / "ready"))
+    monkeypatch.setitem(worker.STOP, "signal", None)
+    store = Store()
+    th = threading.Thread(target=worker.run_job, args=(store, job(), tmp_path / "w1", []))
+    th.start()
+    for _ in range(200):
+        if (tmp_path / "ready").exists():
+            break
+        t.sleep(0.05)
+    worker._stop_requested(15, None)  # SIGTERM to the worker (a cloud stop, the PC's window closing)
+    th.join(30)
+    assert not th.is_alive()
+    last = store.posts[-1]
+    assert last["status"] == "queued" and last["paused"] is True and "step 1234" in last["message"]
+    assert store.objects["scenes/j1/restore/restore.pt"] == b"state"
+    worker.STOP.update(signal=None, proc=None)
+    worker.run_job(store, job(), tmp_path / "w2", [])  # another machine
+    assert (tmp_path / "w2" / "j1" / "out" / "resumed-from.txt").exists()
+    assert store.posts[-1]["status"] == "review"
