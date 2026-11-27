@@ -37,7 +37,7 @@ import numpy as np
 
 from plypipe.limits import EXPORT_RESERVE_MIN, job_cap_min, max_input_mb, stage_limits, worst_case_min
 from plypipe.live import Live
-from plypipe import hf
+from plypipe import console, hf
 from plypipe.progress import SfmProgress
 from plypipe.util import PAUSED
 
@@ -559,7 +559,7 @@ def run_job(api: Api, job: dict, work: Path, extra: list[str]) -> None:
             # its own session: Ctrl+C in this window reaches the worker only, which forwards ONE stop; PLY_PDEATHSIG makes
             # the pipeline stop (and save) if this worker is killed outright
             p = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1,
-                                 start_new_session=True, env={**os.environ, "PLY_PDEATHSIG": "1"})
+                                 start_new_session=True, env={**os.environ, "PLY_PDEATHSIG": "1", "PLY_PRETTY": "0"})
             STOP["proc"] = p
             if STOP["signal"]:
                 p.send_signal(signal.SIGTERM)
@@ -621,8 +621,17 @@ def run_job(api: Api, job: dict, work: Path, extra: list[str]) -> None:
                     time.sleep(2)
             threading.Thread(target=watchdog, daemon=True).start()
             with (root / "pipeline.log").open("a") as logf:
+                pretty = console.enabled()
                 for line in p.stdout:  # the pipeline prints the same JSON lines it writes to log.jsonl, plus library output
-                    sys.stdout.write(line)
+                    if not pretty:
+                        sys.stdout.write(line)
+                    else:  # a person watching this PC's worker window: one readable line per event
+                        try:
+                            shown = console.format(json.loads(line))
+                            if shown:
+                                print(f"[{jid[:8]}] {shown}", flush=True)
+                        except ValueError:
+                            pass
                     logf.write(line)
                     try:
                         ev = json.loads(line)

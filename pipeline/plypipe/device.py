@@ -158,8 +158,8 @@ def device_plan(machine: dict) -> dict:
     usable = max(free - RESERVE_GB, 0.3)
     cap = int(usable * 2**30 / BYTES_PER_GAUSSIAN)
     out["maxGaussians"] = cap
-    notes.append(f"{gpu.get('name', 'GPU')}: {free:g} of {total:g} GB free → ≤{cap / 1e6:.2f}M splats "
-                 f"({BYTES_PER_GAUSSIAN} B each after {RESERVE_GB:g} GB reserve)")
+    notes.append(f"{gpu.get('name', 'GPU')}: {free:g} of {total:g} GB free, holds about {cap / 1e6:.2f}M splats "
+                 f"({BYTES_PER_GAUSSIAN} B each after {RESERVE_GB:g} GB reserve; the only splat bound)")
     if free < SMALL_CARD_GB:
         out["maxLongSide"] = SMALL_CARD_SIDE
         notes.append(f"under {SMALL_CARD_GB:g} GB: working size ≤{SMALL_CARD_SIDE} px")
@@ -170,7 +170,7 @@ def device_plan(machine: dict) -> dict:
     if free < sam_need:
         out["sam3"] = False
         notes.append(f"SAM 3 off (needs ~{sam_need:g} GB {'bf16' if sm >= 8 else 'fp32'} on sm {sm:g}): "
-                     "no people masks or labels here")
+                     "people masks with YOLO, no object labels")
     if ram is not None:
         workers = 4 if ram >= 24 else 2 if ram >= 12 else 1
         if workers < 4:

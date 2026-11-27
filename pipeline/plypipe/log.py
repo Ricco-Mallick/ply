@@ -18,6 +18,8 @@ class Log:
     def __init__(self, out_dir: Path | None = None, quiet: bool = False):
         self.path = Path(out_dir) / "log.jsonl" if out_dir else None
         self.quiet = quiet
+        from plypipe import console
+        self.pretty = console.enabled()
         if self.path:
             self.path.parent.mkdir(parents=True, exist_ok=True)
 
@@ -25,7 +27,13 @@ class Log:
         rec = {"t": time.strftime("%Y-%m-%dT%H:%M:%S%z"), "stage": stage, "event": event, "msg": msg, **data}
         line = json.dumps(rec, default=_default)
         if not self.quiet:
-            print(line, flush=True)
+            if self.pretty:  # a person at a console: readable lines (plypipe.console); log.jsonl stays JSON
+                from plypipe import console
+                shown = console.format(json.loads(line))
+                if shown:
+                    print(shown, flush=True)
+            else:
+                print(line, flush=True)
         if self.path:
             with self.path.open("a") as f:
                 f.write(line + "\n")
