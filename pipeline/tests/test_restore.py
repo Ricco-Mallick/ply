@@ -111,3 +111,18 @@ def test_util_run_reports_a_pause_and_forwards_structured_lines(tmp_path):
     events = [json.loads(l) for l in (tmp_path / "log.jsonl").read_text().splitlines()]
     assert any(e.get("train", {}).get("step") == 5 for e in events)
     assert any(e["event"] == "restore" for e in events)
+
+
+def test_the_key_does_not_depend_on_the_machine():
+    a = restore.restore_key(["py", "--cap-max", "9", "--packed", "--loader-workers", "2"])
+    assert a == restore.restore_key(["py", "--cap-max", "9"])
+
+
+def test_worker_reads_structured_training_progress_and_rounds_continue_the_bar():
+    from plypipe import worker
+    f0 = worker.frac_from({"train": {"step": 15000, "of": 30000}})
+    f1 = worker.frac_from({"train": {"step": 30000, "of": 30000}})
+    r1 = worker.frac_from({"train": {"step": 0, "of": 7500, "round": "1"}})
+    r1e = worker.frac_from({"train": {"step": 7500, "of": 7500, "round": "1"}})
+    r2 = worker.frac_from({"train": {"step": 100, "of": 7500, "round": "2"}})
+    assert 0 < f0 < f1 <= r1 < r1e <= r2 < 1

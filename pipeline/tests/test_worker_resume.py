@@ -37,7 +37,7 @@ class Store:
         self.posts.append(body)
         return 200, {"ok": True}
 
-    def download(self, key, dest):
+    def download(self, key, dest, bucket_only=False):
         dest.parent.mkdir(parents=True, exist_ok=True)
         if key.startswith("captures/"):
             self.clip_downloads += 1
@@ -47,7 +47,7 @@ class Store:
             raise OSError("404")
         dest.write_bytes(self.objects[key])
 
-    def upload(self, key, path, ctype):
+    def upload(self, key, path, ctype, bucket_only=False):
         self.objects[key] = Path(path).read_bytes()
 
 
@@ -111,7 +111,7 @@ def test_a_slow_checkpoint_upload_does_not_trip_the_stage_watchdog(tmp_path, mon
     import time as _t
 
     class SlowStore(Store):
-        def upload(self, key, path, ctype):
+        def upload(self, key, path, ctype, bucket_only=False):
             if key.endswith("checkpoint.tar"):
                 _t.sleep(4)
             super().upload(key, path, ctype)
@@ -214,7 +214,7 @@ def test_a_stopped_worker_saves_uploads_and_requeues_paused_and_another_machine_
     assert not th.is_alive()
     last = store.posts[-1]
     assert last["status"] == "queued" and last["paused"] is True and "step 1234" in last["message"]
-    assert store.objects["scenes/j1/restore/restore.pt"] == b"state"
+    assert store.objects["restore/j1/restore.pt"] == b"state"
     worker.STOP.update(signal=None, proc=None)
     worker.run_job(store, job(), tmp_path / "w2", [])  # another machine
     assert (tmp_path / "w2" / "j1" / "out" / "resumed-from.txt").exists()

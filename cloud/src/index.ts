@@ -107,7 +107,8 @@ async function role(req: Request, env: Env): Promise<Role> {
 /** The app may only write its own captures; the worker may only write results. */
 function keyAllowed(key: string, r: Role) {
   if (key.includes('..') || key.startsWith('/')) return false;
-  return r === 'app' ? key.startsWith('captures/') : r === 'worker' ? key.startsWith('scenes/') : false;
+  // restore/: training restore points (plypipe.restore), apart from scenes/ so the bucket keeps only the newest
+  return r === 'app' ? key.startsWith('captures/') : r === 'worker' ? key.startsWith('scenes/') || key.startsWith('restore/') : false;
 }
 
 type Machine = { name: string; busyJob: string | null; files: string[] };

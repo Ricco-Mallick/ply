@@ -70,6 +70,7 @@ cmd_run() {
   local code=$?
   set -e
   cmd_status "$name" || true
+  [ "$code" = 75 ] && { say "paused: a restore point is saved. Run the same command again to continue from it"; exit 75; }
   [ "$code" = 0 ] || die "stopped (exit $code). Fix the cause above and run the same command again: finished stages are kept"
   say "done. Copy it out: plylocal results $name"
 }
@@ -149,6 +150,8 @@ cmd_worker() {
   # a local GPU costs nothing per minute: the stage limits only stop a stuck run, so they are hours, not the cloud's minutes
   export PLY_STAGE_LIMITS="${PLY_STAGE_LIMITS:-frames=60,sfm=600,label=120,train=1440,export=180}"
   export PLY_JOB_MAX_MIN="${PLY_JOB_MAX_MIN:-2880}"
+  # restore points stay on this PC's disk (assigned jobs come back here): no 700 MB uploads over a college network
+  export PLY_RESTORE_UPLOAD_MIN="${PLY_RESTORE_UPLOAD_MIN:-0}" PLY_RESTORE_UPLOAD_ON_STOP="${PLY_RESTORE_UPLOAD_ON_STOP:-0}"
   say "worker starting; it runs only the jobs the Ply team assigns to this PC. Ctrl+C (or closing the window) stops it"
   cd "$PIPE"
   while true; do

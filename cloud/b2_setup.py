@@ -25,6 +25,12 @@ CORS = [{
 }]
 
 
+# captures: 30 days. restore/: training restore points, overwritten every ~15 min while a job trains, so an overwritten
+# version goes a day later and a job's last one after 3 days (it only matters until the job runs again)
+LIFECYCLE = [{"fileNamePrefix": "captures/", "daysFromUploadingToHiding": 30, "daysFromHidingToDeleting": 1},
+             {"fileNamePrefix": "restore/", "daysFromUploadingToHiding": 3, "daysFromHidingToDeleting": 1}]
+
+
 def env(path: Path) -> dict:
     out = {}
     for line in path.read_text().splitlines():
@@ -62,11 +68,11 @@ def main() -> None:
     name = cfg.get("B2_BUCKET")
     existing = {b["bucketName"]: b for b in call(base + "/b2_list_buckets", token, {"accountId": account})["buckets"]}
     if name and name in existing:
-        call(base + "/b2_update_bucket", token, {"accountId": account, "bucketId": existing[name]["bucketId"], "bucketType": "allPrivate", "corsRules": CORS})
+        call(base + "/b2_update_bucket", token, {"accountId": account, "bucketId": existing[name]["bucketId"], "bucketType": "allPrivate", "corsRules": CORS, "lifecycleRules": LIFECYCLE})
     else:
         name = name or f"ply-data-{secrets.token_hex(4)}"  # bucket names are global across B2
         call(base + "/b2_create_bucket", token, {"accountId": account, "bucketName": name, "bucketType": "allPrivate", "corsRules": CORS,
-                                                  "lifecycleRules": [{"fileNamePrefix": "captures/", "daysFromUploadingToHiding": 30, "daysFromHidingToDeleting": 1}]})
+                                                  "lifecycleRules": LIFECYCLE})
         with cfg_path.open("a") as f:
             f.write(f"B2_BUCKET={name}\n")
     print(f"S3_ENDPOINT={s3}\nS3_REGION={region}\nS3_BUCKET={name}")

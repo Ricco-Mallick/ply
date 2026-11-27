@@ -64,8 +64,25 @@ def launcher_env() -> dict:
             "CUDA_VISIBLE_DEVICES": os.environ.get("PLY_TRAIN_GPU", "0")}
 
 
+CARRIED = {"--world-scale": 1, "--depth-loss": 0, "--lidar-depth": 1}  # flag -> how many values follow it
+
+
+def carried_flags(cmd: list[str]) -> list[str]:
+    """The base run's loss terms and scale, which every growth round must train with too (a round that dropped the
+    LiDAR / scan depth loss could gain dB while losing the measured geometry, and would be kept)."""
+    out, i = [], 0
+    while i < len(cmd):
+        n = CARRIED.get(cmd[i])
+        if n is not None:
+            out += [str(c) for c in cmd[i:i + 1 + n]]
+            i += 1 + n
+            continue
+        i += 1
+    return out
+
+
 def train_on(ctx: Ctx, ply: Path, steps: int, sh_degree: int, result: Path, stage: str, grow_cap: int | None = None,
-             round_no: int | None = None) -> Path:
+             round_no: int | None = None, extra: list[str] | None = None) -> Path:
     """Train on from the model in `ply` for `steps`, on the views the job trained on and with no appearance model.
     Without `grow_cap` at its own splat count (plypipe.finetune: MCMC moves splats and adds none); with it, MCMC adds
     splats up to `grow_cap` (a growth round, plypipe.growth). `result` is this run's alone, with its own restore
@@ -74,6 +91,7 @@ def train_on(ctx: Ctx, ply: Path, steps: int, sh_degree: int, result: Path, stag
     cmd = launcher(ctx, result) + ["--no-ppisp", "--from-ply", str(ply), "--iterations", str(steps), "--sh-degree", str(sh_degree), *flags]
     if grow_cap:
         cmd += ["--grow-cap", str(int(grow_cap))]
+    cmd += list(extra or [])
     if ctx.opt("random_bkgd"):
         cmd.append("--random-bkgd")
     rdir = (result / "restore").resolve()
@@ -155,6 +173,7 @@ def fold_exposure(ctx: Ctx, result: Path, ply: Path, steps: int, block: int) -> 
 
 
 def run_stage(ctx: Ctx) -> dict:
+    stage_t0 = time.time()
     preset = ctx.opt("preset", "standard")
     result = ctx.train_dir
     cmd = launcher(ctx, result)
@@ -233,11 +252,14 @@ def run_stage(ctx: Ctx) -> dict:
         ctx.log.emit("train", "warn", "a restore point from other settings was left alone: training starts over")
     env = {**launcher_env(), "PLY_RESTORE_KEY": rkey}
     base_done = result / "base_done.json"
+    base_seconds = None
     try:
         if _done_key(base_done) == rkey and list((result / "ply").glob("point_cloud_*.ply")):
             ctx.log.emit("train", "progress", "base training already finished: continuing with the growth rounds")
         else:
+            t_base = time.time()
             run(cmd, ctx, "train", env=env, progress_every=50, own_session=True)
+            base_seconds = time.time() - t_base
     except RuntimeError as e:
         # a small card (plypipe.device) whose per-splat estimate was optimistic: one retry at a lower cap, from scratch,
         # rather than a failed job. An explicit --cap-max is the operator's number and is not second-guessed
@@ -256,7 +278,8 @@ def run_stage(ctx: Ctx) -> dict:
         run(cmd, ctx, "train", env=env, progress_every=50, own_session=True)
     if ctx.opt("train_dry_run"):
         return {"dryRun": True}
-    base_done.write_text(json.dumps({"key": rkey}))
+    prev = _base_seconds(base_done) if _done_key(base_done) == rkey else None
+    base_done.write_text(json.dumps({"key": rkey, "seconds": round(base_seconds or prev or 0, 1)}))
     plys = sorted((result / "ply").glob("point_cloud_*.ply"), key=lambda p: int(p.stem.rsplit("_", 1)[1]))
     if not plys:
         raise RuntimeError(f"training finished but no PLY in {result / 'ply'}")
@@ -267,15 +290,17 @@ def run_stage(ctx: Ctx) -> dict:
         ctx.log.emit("train", "progress", f"growth rounds off: {why_not}")
     else:
         preset0 = json.loads((result / "ply_preset.json").read_text()) if (result / "ply_preset.json").exists() else {}
-        ship, scored, grown = grow(ctx, result, plys[-1], int(budget["iterations"]), int(preset0.get("shDegree", 3)), dev, budget)
+        ship, scored, grown = grow(ctx, result, plys[-1], int(budget["iterations"]), int(preset0.get("shDegree", 3)), dev, budget,
+                                   carried=carried_flags(cmd), base_seconds=_base_seconds(base_done), stage_t0=stage_t0)
     if ctx.opt("exposure_fold") is not None:
         ship, scored, fold = fold_exposure(ctx, result, plys[-1], int(ctx.opt("exposure_fold")), block)
     shutil.copy2(ship, ctx.out / "scene.ply")
     dens = None
     try:  # soft patches: too few splats where the cameras looked (grow), or too few cameras (film again)
         from plypipe import growth
+        sc = read_scene(ctx) or {}
         dens = growth.density(growth.ply_means(ctx.out / "scene.ply"), growth.cameras_from_scene(ctx.out),
-                              float((read_scene(ctx) or {}).get("floorY", 0.0)))
+                              float(sc.get("floorY", 0.0)), bounds=sc.get("bounds") if isinstance(sc.get("bounds"), dict) else None)
         if dens.get("underFilmed"):
             ctx.log.emit("train", "warn", f"{dens['underFilmed']} floor cells ({dens['cellM']} m) have splats but were barely filmed: "
                          f"film again near {dens['underFilmedAt'][:5]} (scene x, z) for an even twin")
@@ -325,6 +350,8 @@ def growth_blocked(ctx: Ctx) -> str | None:
         return "dry run"
     if int(ctx.opt("holdout", 30) or 0) <= 1:
         return "no held-out views (--holdout 0): nothing to measure a round on"
+    if ctx.opt("pose_opt"):
+        return "--pose-opt: a round starts from the PLY and would lose the refined camera poses"
     for flag in ("ppisp", "bilateral_grid", "exposure_affine", "exposure_fold"):
         if ctx.opt(flag) not in (None, False):
             return f"--{flag.replace('_', '-')}: rounds train without an appearance model, so they would not compare"
@@ -340,7 +367,9 @@ def _view_masks(ctx: Ctx) -> list[Path | None]:
     return [(mdir / people.mask_name(nm)) if (mdir / people.mask_name(nm)).is_file() else None for i, nm in enumerate(names) if n > 1 and i % n == 0]
 
 
-def grow(ctx: Ctx, base_result: Path, base_ply: Path, base_steps: int, sh_degree: int, dev: dict, budget: dict) -> tuple[Path, Path, dict]:
+def grow(ctx: Ctx, base_result: Path, base_ply: Path, base_steps: int, sh_degree: int, dev: dict, budget: dict,
+         carried: list[str] | None = None, base_seconds: float | None = None, clock=time.time,
+         stage_t0: float | None = None) -> tuple[Path, Path, dict]:
     """More splats while the held-out views say it helps (plypipe.growth). Returns the PLY and result folder of the best
     round and the record of every round. Resumable: finished rounds are kept in growth.json, a stopped round has its
     own restore point."""
@@ -365,10 +394,19 @@ def grow(ctx: Ctx, base_result: Path, base_ply: Path, base_steps: int, sh_degree
             break
         i = len(hist["rounds"])
         steps = growth.round_steps(base_steps)
+        # paid GPUs: a round that cannot finish before the job's time runs out is not started (the worker passes the
+        # deadline). More splats are slower per step: the estimate is the last round's pace, else the base run's, x1.3
+        deadline = growth.deadline(stage_t0)
+        pace = best.get("secondsPerStep") or (base_seconds / base_steps if base_seconds and base_steps else None)
+        if deadline and pace and clock() + pace * GROWTH_PACE * steps > deadline:
+            stop = {"reason": "time", "why": f"round {i} needs ~{pace * GROWTH_PACE * steps / 60:.0f} min, "
+                                             f"{max(0, deadline - clock()) / 60:.0f} min left before the job's time limit"}
+            break
         ctx.log.emit("train", "progress", f"growth round {i}: {why} splats, {steps:,} steps from round {best['round']}")
         rres = base_result / f"grow-{i}"
+        t_round = clock()
         try:
-            ply = train_on(ctx, Path(best["ply"]), steps, sh_degree, rres, "train", grow_cap=cap, round_no=i)
+            ply = train_on(ctx, Path(best["ply"]), steps, sh_degree, rres, "train", grow_cap=cap, round_no=i, extra=carried)
         except Paused:
             raise
         except RuntimeError as e:
@@ -378,6 +416,7 @@ def grow(ctx: Ctx, base_result: Path, base_ply: Path, base_steps: int, sh_degree
             stop = {"reason": "gpu-full" if oom else "round-failed", "why": hist["rounds"][-1]["why"]}
             break
         cand = {"round": i, "result": str(rres), "ply": str(ply), "splats": _splats(ply), "steps": steps, "cap": cap,
+                "secondsPerStep": round((clock() - t_round) / steps, 4) if steps else None,
                 "eval": held_out_scores(rres, ctx.out / "eval" / f"grow-{i}"), "patches": growth.patches(rres, masks)}
         ok, verdict = growth.judge(best, cand)
         cand.update(kept=ok, why=verdict)
@@ -395,6 +434,8 @@ def grow(ctx: Ctx, base_result: Path, base_ply: Path, base_steps: int, sh_degree
     improving = any(r.get("kept") and r["round"] > 0 for r in hist["rounds"]) or bool(budget.get("deviceCapMax"))
     hist["stop"] = stop
     hist["needsBiggerGpu"] = bool(stop and stop["reason"] == "gpu-full" and improving)
+    if stop and stop["reason"] == "time":
+        ctx.log.emit("train", "warn", f"growth stopped by the job's time limit, not because the twin stopped improving: {stop['why']}")
     if hist["needsBiggerGpu"]:
         ctx.log.emit("train", "warn", "this twin was still improving when the GPU ran out of room: a bigger GPU would make it sharper "
                      f"({stop['why']})")
@@ -404,6 +445,16 @@ def grow(ctx: Ctx, base_result: Path, base_ply: Path, base_steps: int, sh_degree
                "lpips": (r.get("eval") or {}).get("lpips"), "patchShare": (r.get("patches") or {}).get("share")} for r in hist["rounds"]],
                "best": hist["best"], "stop": stop, "needsBiggerGpu": hist["needsBiggerGpu"], "rules": hist["rules"]}
     return Path(best["ply"]), Path(best["result"]), summary
+
+
+GROWTH_PACE = 1.3
+
+
+def _base_seconds(path: Path) -> float | None:
+    try:
+        return float(json.loads(path.read_text()).get("seconds") or 0) or None
+    except (OSError, ValueError):
+        return None
 
 
 def _splats(ply: Path) -> int:

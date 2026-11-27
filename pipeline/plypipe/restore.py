@@ -47,6 +47,7 @@ class _S:
     resume = False
     key = ""
     every_s = 600.0
+    light = False
     max_steps = None
     log = staticmethod(lambda m: print(m, flush=True))
 
@@ -54,11 +55,12 @@ class _S:
 def restore_key(cmd: list[str]) -> str:
     """What must match for a restore point to be resumed: the trainer's settings, minus the flags that only say where
     state lives. A restore point from other settings (another splat cap, other steps) is never used."""
-    skip = {"--resume", "--restore"}
+    # --packed / --loader-workers follow the machine (plypipe.device), not the model: a paused job continues elsewhere
+    skip = {"--resume", "--restore", "--packed", "--loader-workers"}
     keep, i = [], 0
     while i < len(cmd):
         if cmd[i] in skip:
-            i += 1 if cmd[i] == "--resume" else 2
+            i += 1 if cmd[i] in ("--resume", "--packed") else 2
             continue
         a = str(cmd[i])
         keep.append(Path(a).name if "/" in a or "\\" in a else a)  # paths differ per machine; the settings do not
@@ -120,8 +122,13 @@ def _modules(runner):
 def snapshot(runner, step: int) -> dict:
     data = {"step": int(step), "splats": {k: v.detach() for k, v in runner.splats.items()}, "optim": {}, "modules": {},
             "sched": [s.state_dict() for s in _S.schedulers], "strategy": getattr(runner, "strategy_state", None)}
+    def sd(o):
+        d = o.state_dict()
+        # light (PLY_RESTORE_LIGHT=1, the cloud): no Adam moments, a third of the size; Adam rebuilds them in a few
+        # hundred steps after a resume. Learning rates and step counts (param_groups) are kept either way
+        return {"state": {}, "param_groups": d["param_groups"]} if _S.light else d
     for name, val in _optimizer_sets(runner):
-        data["optim"][name] = {k: o.state_dict() for k, o in val.items()} if isinstance(val, dict) else [o.state_dict() for o in val]
+        data["optim"][name] = {k: sd(o) for k, o in val.items()} if isinstance(val, dict) else [sd(o) for o in val]
     for name, mod in _modules(runner):
         data["modules"][name] = mod.state_dict()
     return data
@@ -135,7 +142,7 @@ def save(runner, step: int, why: str) -> dict:
     tmp = d / (FILE + ".tmp")
     torch.save(snapshot(runner, step), tmp)
     os.replace(tmp, d / FILE)  # atomic: a kill mid-save leaves the previous restore point whole
-    meta = {"step": int(step), "of": _S.max_steps, "splats": int(len(runner.splats["means"])), "key": _S.key, "why": why,
+    meta = {"step": int(step), "of": _S.max_steps, "light": _S.light, "splats": int(len(runner.splats["means"])), "key": _S.key, "why": why,
             "savedAt": int(time.time()), "seconds": round(time.time() - t0, 1), "mb": round((d / FILE).stat().st_size / 2**20, 1)}
     (d / (META + ".tmp")).write_text(json.dumps(meta))
     os.replace(d / (META + ".tmp"), d / META)
@@ -284,6 +291,7 @@ def install(st, cfg, directory: str | None, resume: bool, key: str) -> dict:
     _S.dir = Path(directory) if directory else None
     _S.resume, _S.key, _S.max_steps = bool(resume), key, int(cfg.max_steps)
     _S.every_s = float(os.environ.get("PLY_AUTOSAVE_MIN", 10)) * 60
+    _S.light = os.environ.get("PLY_RESTORE_LIGHT") == "1"
     _track_schedulers()
     import tqdm as real
     st.tqdm = _TqdmShim(real)

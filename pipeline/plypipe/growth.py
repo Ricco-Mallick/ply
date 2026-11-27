@@ -119,9 +119,14 @@ def patches(result: Path, masks: list[Path | None] | None = None, stage: str = "
 # ---- density: under-dense (grow) versus under-filmed (film again) ------------------------------------------------
 
 def density(means: np.ndarray, cameras: np.ndarray, floor_y: float = 0.0, cell: float = CELL_M,
-            see_m: float = SEE_M, well_seen: int = WELL_SEEN, under: float = UNDER_DENSE) -> dict:
+            see_m: float = SEE_M, well_seen: int = WELL_SEEN, under: float = UNDER_DENSE, bounds: dict | None = None) -> dict:
     """Splats per floor cell next to how many cameras were near it. `means` and `cameras` are N x 3 in the scene frame
-    (+Y up, metres)."""
+    (+Y up, metres). `bounds` (scene.json) keeps it to the room: what was seen through a window or a door is thin by
+    nature and is not a place to film again."""
+    if bounds and len(means):
+        lo, hi = np.asarray(bounds["min"], float), np.asarray(bounds["max"], float)
+        inside = np.all((means >= lo) & (means <= hi), axis=1)
+        means = means[inside]
     if len(means) == 0 or len(cameras) == 0:
         return {"cells": 0}
     xz = means[:, [0, 2]]
@@ -208,3 +213,21 @@ def next_cap(splats: int, device_max: int | None) -> tuple[int | None, str]:
 
 def round_steps(base_steps: int) -> int:
     return max(ROUND_MIN_STEPS, int(base_steps * ROUND_STEP_SHARE))
+
+
+def deadline(stage_t0: float | None = None) -> float | None:
+    """Epoch seconds by which growth must be done, or None where no clock runs (a local PC). A cloud worker passes
+    PLY_TRAIN_DEADLINE (the job's time cap less export) and PLY_TRAIN_LIMIT_MIN (the train stage's own limit, counted
+    from when the stage started); the earlier one wins, with a five-minute margin."""
+    import os
+    out = []
+    try:
+        v = float(os.environ.get("PLY_TRAIN_DEADLINE") or 0)
+        if v:
+            out.append(v)
+        lim = float(os.environ.get("PLY_TRAIN_LIMIT_MIN") or 0)
+        if lim and stage_t0:
+            out.append(stage_t0 + lim * 60)
+    except ValueError:
+        return None
+    return min(out) - 300 if out else None

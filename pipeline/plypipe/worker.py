@@ -66,7 +66,8 @@ UA = {"user-agent": "ply-worker/1.0 (+https://ricco.codes/ply)"}
 # restore point, uploads it and goes back in the queue as paused; then the worker exits
 STOP = {"signal": None, "proc": None}
 RESTORE_UPLOAD_MIN = float(os.environ.get("PLY_RESTORE_UPLOAD_MIN", 15))   # 0: upload only when stopping
-RESTORE_MAX_MB = float(os.environ.get("PLY_RESTORE_MAX_MB", 4000))
+# under the bucket's free 1 GB/day download, so a restore point can come back the same day
+RESTORE_MAX_MB = float(os.environ.get("PLY_RESTORE_MAX_MB", 900))
 
 
 def _stop_requested(signum, _frame):
@@ -77,6 +78,11 @@ def _stop_requested(signum, _frame):
     p = STOP["proc"]
     if p is not None and p.poll() is None:
         p.send_signal(signal.SIGTERM)  # plypipe forwards it to the trainer, which saves at the end of its step
+
+
+def paired_pc() -> bool:
+    from plypipe import enroll
+    return not os.environ.get("PLY_WORKER_TOKEN") and enroll.load() is not None
 
 
 def restore_dir(out: Path) -> Path:
@@ -95,8 +101,10 @@ def upload_restore(api, jid: str, out: Path) -> dict | None:
         print(f"[worker] restore point not uploaded: {mb:.0f} MB > {RESTORE_MAX_MB:g} MB (PLY_RESTORE_MAX_MB); it stays on this machine", flush=True)
         return None
     meta = json.loads(meta_p.read_text())
-    api.upload(f"scenes/{jid}/restore/restore.pt", file_p, "application/octet-stream")
-    api.upload(f"scenes/{jid}/restore/restore.json", meta_p, "application/json")  # last: the pair is whole once this lands
+    # restore/<job>/ on the bucket, never Hugging Face (every upload there is a revision kept forever); the bucket's
+    # lifecycle keeps only the newest (cloud/b2_setup.py)
+    api.upload(f"restore/{jid}/restore.pt", file_p, "application/octet-stream", bucket_only=True)
+    api.upload(f"restore/{jid}/restore.json", meta_p, "application/json", bucket_only=True)  # last: the pair is whole once this lands
     print(f"[worker] restore point uploaded: step {meta.get('step')} ({mb:.0f} MB)", flush=True)
     return meta
 
@@ -108,8 +116,8 @@ def download_restore(api, jid: str, out: Path) -> dict | None:
         return None
     try:
         d.mkdir(parents=True, exist_ok=True)
-        api.download(f"scenes/{jid}/restore/restore.json", d / "restore.json.part")
-        api.download(f"scenes/{jid}/restore/restore.pt", d / "restore.pt.part")
+        api.download(f"restore/{jid}/restore.json", d / "restore.json.part", bucket_only=True)
+        api.download(f"restore/{jid}/restore.pt", d / "restore.pt.part", bucket_only=True)
         (d / "restore.pt.part").rename(d / "restore.pt")
         (d / "restore.json.part").rename(d / "restore.json")
         return json.loads((d / "restore.json").read_text())
@@ -143,8 +151,8 @@ class Api:
                     raise RuntimeError(f"{method} {path}: {e}") from None
             time.sleep([1, 3, 8, 20, 40][min(i, 4)])
 
-    def download(self, key: str, dest: Path):
-        if key.startswith("scenes/") and hf.configured():  # results: 100 GB, no daily download cap
+    def download(self, key: str, dest: Path, bucket_only: bool = False):
+        if key.startswith("scenes/") and hf.configured() and not bucket_only:  # results: 100 GB, no daily download cap
             try:
                 hf.download(key, dest)
                 return
@@ -200,8 +208,8 @@ class Api:
         except Exception:
             return None
 
-    def upload(self, key: str, path: Path, ctype: str):
-        if key.startswith("scenes/") and hf.configured():
+    def upload(self, key: str, path: Path, ctype: str, bucket_only: bool = False):
+        if key.startswith("scenes/") and hf.configured() and not bucket_only:
             try:
                 hf.upload(key, path)
                 return
@@ -300,7 +308,24 @@ def overall(stage: str | None, frac: float) -> float:
     return round(sum(WEIGHTS[s] for s in ORDER[:i]) + WEIGHTS[stage] * max(0.0, min(1.0, frac)), 4)
 
 
+BASE_TRAIN_SHARE = 0.85  # of the train stage's bar: the base run; growth rounds fill the rest, each half of what is left
+
+
+def train_frac(t: dict) -> float | None:
+    """One train-stage fraction from a {"train": {step, of, round}} event: rounds continue the bar, never restart it."""
+    step, of = t.get("step"), t.get("of")
+    if step is None or not of:
+        return None
+    f = min(1.0, max(0.0, step / of))
+    r = int(t.get("round") or 0)
+    if r <= 0:
+        return BASE_TRAIN_SHARE * f
+    return BASE_TRAIN_SHARE + (1 - BASE_TRAIN_SHARE) * (1 - 0.5 ** (r - 1 + f))
+
+
 def frac_from(ev: dict) -> float | None:
+    if isinstance(ev.get("train"), dict):
+        return train_frac(ev["train"])
     if "done" in ev and "total" in ev and ev["total"]:
         return ev["done"] / ev["total"]
     m = re.search(r"(\d+)\s*/\s*(\d+)", ev.get("msg", ""))  # gsplat's "step 2800/7000"-style lines
@@ -559,7 +584,11 @@ def run_job(api: Api, job: dict, work: Path, extra: list[str]) -> None:
             # its own session: Ctrl+C in this window reaches the worker only, which forwards ONE stop; PLY_PDEATHSIG makes
             # the pipeline stop (and save) if this worker is killed outright
             p = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1,
-                                 start_new_session=True, env={**os.environ, "PLY_PDEATHSIG": "1", "PLY_PRETTY": "0"})
+                                 start_new_session=True, env={**os.environ, "PLY_PDEATHSIG": "1", "PLY_PRETTY": "0",
+                                                              "PLY_RESTORE_LIGHT": os.environ.get("PLY_RESTORE_LIGHT", "0" if paired_pc() else "1"),
+                                                              # growth rounds start only if they can finish inside the job's time (plypipe.growth)
+                                                              "PLY_TRAIN_DEADLINE": str(int(state["cap_end"] - export_reserve_s)),
+                                                              "PLY_TRAIN_LIMIT_MIN": str(limits.get("train", 0) or 0)})
             STOP["proc"] = p
             if STOP["signal"]:
                 p.send_signal(signal.SIGTERM)
@@ -683,8 +712,10 @@ def run_job(api: Api, job: dict, work: Path, extra: list[str]) -> None:
                         if f is not None:
                             state["frac"] = max(state["frac"], f)
                             if st == "train":
-                                state["msg"] = f"train: {round(f * 100)}%{eta(state['stage_t0'], f)}"
-                                live.train_line(f, ev.get("msg", ""))
+                                t = ev.get("train") if isinstance(ev.get("train"), dict) else {}
+                                detail = (f", round {t['round']}" if t.get("round") else "") + (f", {t['splats']:,} splats" if t.get("splats") else "")
+                                state["msg"] = f"train: {round(f * 100)}%{detail}{eta(state['stage_t0'], f)}"
+                                live.train_line(f, ev.get("msg") or (f"loss={t['loss']}" if t.get("loss") is not None else ""))
                         elif ev.get("event") == "progress" and ev.get("msg"):  # named steps inside a stage ("matching", "incremental mapping")
                             state["msg"] = f"{st}: {ev['msg']}"[:200]
                         if ev.get("event") in ("start", "done", "warn"):
@@ -721,10 +752,13 @@ def run_job(api: Api, job: dict, work: Path, extra: list[str]) -> None:
             code, last_err, tail = pipeline(args)
             if code == PAUSED and STOP["signal"] and not state.get("salvage"):
                 meta = None
-                try:
-                    meta = upload_restore(api, jid, out)
+                try:  # a paired PC keeps it on its own disk (PLY_RESTORE_UPLOAD_ON_STOP=0): its assigned job comes back to it
+                    if os.environ.get("PLY_RESTORE_UPLOAD_ON_STOP", "1") != "0":
+                        meta = upload_restore(api, jid, out)
+                    else:
+                        meta = json.loads((restore_dir(out) / "restore.json").read_text())
                 except Exception as e:
-                    print(f"[worker] restore upload on stop failed: {e}", flush=True)
+                    print(f"[worker] restore point on stop: {e}", flush=True)
                 try:
                     if not rehearsal and checkpoint_size(out) <= CKPT_MAX_MB * 2**20:
                         finished = [st for st in ORDER if (out / ".done" / f"{st}.json").exists()]

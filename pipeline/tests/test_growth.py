@@ -96,7 +96,7 @@ def rig(tmp_path, monkeypatch):
     ply.write_bytes(b"ply\nformat binary_little_endian 1.0\nelement vertex 1000000\nend_header\n")
     scores = {}
 
-    def fake_train_on(ctx, src, steps, sh, result, stage, grow_cap=None, round_no=None):
+    def fake_train_on(ctx, src, steps, sh, result, stage, grow_cap=None, round_no=None, extra=None):
         result.mkdir(parents=True, exist_ok=True)
         p = result / "r.ply"
         p.write_bytes(f"ply\nelement vertex {grow_cap}\nend_header\n".encode())
@@ -150,3 +150,41 @@ def test_growth_resumes_from_its_record_and_a_paused_round_is_not_lost(rig):
     _, result, rep = rig.train.grow(rig.ctx, rig.base, rig.ply, 30_000, 3, {}, {})
     assert [r["round"] for r in rep["rounds"]] == [0, 1, 2, 3]
     assert result.name == "grow-2" and rep["stop"]["reason"] == "converged"
+
+
+def test_rounds_train_with_the_base_runs_loss_terms():
+    from plypipe.stages import train
+    base = ["py", "-m", "plypipe.train_launcher", "--data", "/d", "--cap-max", "900000", "--world-scale", "2.1",
+            "--antialiased", "--lidar-depth", "/o/scandepth.json", "--init-points", "/o/scan/init.npz", "--restore", "/r"]
+    assert train.carried_flags(base) == ["--world-scale", "2.1", "--lidar-depth", "/o/scandepth.json"]
+
+
+def test_growth_is_off_with_pose_optimisation():
+    from plypipe.log import Log
+    from plypipe.stages import train
+    from plypipe.util import Ctx
+    assert "pose" in train.growth_blocked(Ctx(out=__import__("pathlib").Path("/tmp"), log=Log(None, quiet=True), opts={"pose_opt": True}))
+
+
+def test_a_round_that_cannot_finish_before_the_deadline_is_not_started(rig, monkeypatch):
+    t = [1000.0]
+    monkeypatch.setenv("PLY_TRAIN_DEADLINE", str(1000 + 300 + 60 * 30))   # 30 min left after the 5 min margin
+    rig.db = [28.4, 28.45]
+    _, _, rep = rig.train.grow(rig.ctx, rig.base, rig.ply, 30_000, 3, {}, {}, base_seconds=3600, clock=lambda: t[0])
+    # base: 0.12 s/step; a round is 7,500 steps x 1.3 = 19.5 min < 30 min: the rounds run, and stop on the measurement
+    assert rep["stop"]["reason"] == "converged" and len(rep["rounds"]) == 3
+    monkeypatch.setenv("PLY_TRAIN_DEADLINE", str(1000 + 300 + 60 * 5))   # 5 min left
+    (rig.base / "growth.json").unlink()
+    rig.db = [28.4]
+    _, _, rep = rig.train.grow(rig.ctx, rig.base, rig.ply, 30_000, 3, {}, {}, base_seconds=3600, clock=lambda: t[0])
+    assert rep["stop"]["reason"] == "time" and len(rep["rounds"]) == 1
+
+
+def test_density_ignores_what_was_seen_outside_the_room():
+    rng = np.random.default_rng(3)
+    room = np.column_stack([rng.uniform(0, 4, 20000), rng.uniform(0, 2.5, 20000), rng.uniform(0, 4, 20000)])
+    outside = np.column_stack([rng.uniform(8, 9, 30), rng.uniform(0, 2, 30), rng.uniform(0, 4, 30)])  # through a window
+    cams = np.column_stack([np.linspace(0.5, 3.5, 40), np.full(40, 1.5), np.full(40, 2.0)])
+    with_win = growth.density(np.vstack([room, outside]), cams)
+    inside = growth.density(np.vstack([room, outside]), cams, bounds={"min": [0, 0, 0], "max": [4, 3, 4]})
+    assert with_win["underFilmed"] > 0 and inside["underFilmed"] == 0

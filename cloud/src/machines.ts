@@ -56,13 +56,13 @@ export function machinePathAllowed(path: string): boolean {
 /** Storage keys a machine may write: its current job's results, nothing else. */
 export function machineKeyAllowed(key: string, busyJob: string | null): boolean {
   if (!busyJob || !key || key.includes('..') || key.startsWith('/')) return false;
-  return key.startsWith(`scenes/${busyJob}/`);
+  return key.startsWith(`scenes/${busyJob}/`) || key.startsWith(`restore/${busyJob}/`);
 }
 
 /** Inputs a machine may read: the files of its current job, and that job's own checkpoints and results. */
 export function machineReadAllowed(key: string, busyJob: string | null, jobFiles: string[]): boolean {
   if (!busyJob || !key || key.includes('..')) return false;
-  return jobFiles.includes(key) || key.startsWith(`scenes/${busyJob}/`) || key.startsWith(`checkpoints/${busyJob}/`);
+  return jobFiles.includes(key) || key.startsWith(`scenes/${busyJob}/`) || key.startsWith(`restore/${busyJob}/`);
 }
 
 /** The specs a machine reports (plypipe.device's plan), cut to what the team list shows. */
