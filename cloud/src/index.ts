@@ -207,8 +207,10 @@ async function route(req: Request, env: Env, ctx: Ctx): Promise<Response> {
       const b = await req.json().catch(() => ({})) as any;
       if (mm[2] === 'revoke') {
         await env.DB.prepare("UPDATE machines SET status='revoked', token_hash=NULL, poll_hash=NULL, pair_code=NULL WHERE name=?").bind(mm[1]).run();
-        // its waiting jobs go back to nobody; a running one is re-queued by the stale check once it stops reporting
-        await env.DB.prepare("UPDATE jobs SET assigned_worker=NULL WHERE assigned_worker=? AND status='queued'").bind(mm[1]).run();
+        // its open jobs stop here, loudly: nothing else may claim them (and they must not drift onto paid Modal)
+        await env.DB.prepare(`UPDATE jobs SET status='failed', message=?, finished_at=?, updated_at=?
+            WHERE assigned_worker=? AND status IN ('queued','running')`)
+          .bind(`stopped: its PC ${mm[1]} was revoked. Assign it again (plyctl assign) to run it elsewhere`, now, now, mm[1]).run();
       } else {
         await env.DB.prepare('UPDATE machines SET label=? WHERE name=?').bind(String(b.label ?? '').slice(0, 80) || null, mm[1]).run();
       }
@@ -226,21 +228,33 @@ async function route(req: Request, env: Env, ctx: Ctx): Promise<Response> {
       const m2 = await env.DB.prepare("SELECT name FROM machines WHERE name=? AND status IN ('approved','active')").bind(worker).first();
       if (!m2) return json({ error: `no paired machine called ${worker}` }, 404);
     }
-    const job = await env.DB.prepare('SELECT id,status,args,capture_id FROM jobs WHERE id=?').bind(assign[1]).first() as any;
+    const job = await env.DB.prepare('SELECT * FROM jobs WHERE id=?').bind(assign[1]).first() as any;
     if (!job) return json({ error: 'no such job' }, 404);
-    if (job.status === 'running') return json({ error: 'job is running: stop it first' }, 409);
     const args = Array.isArray(b.args) ? JSON.stringify(b.args.map(String)) : job.args;  // what to run on it: --until, --from, --preset ...
-    await env.DB.prepare("UPDATE jobs SET assigned_worker=?, args=?, status='queued', attempts=0, progress=0, stage=NULL, message=?, updated_at=? WHERE id=?")
-      .bind(worker, args, worker ? `assigned to ${worker}` : 'back in the shared queue', now, job.id).run();
-    if (!worker && !String(job.capture_id ?? '').startsWith('rehearsal-')) ctx.waitUntil(kickModal(env, `job ${job.id}`));
-    return json({ ok: true, jobId: job.id, worker, args: JSON.parse(args) });
+    // queued or failed: moved as it is. Done, in review or running: a copy with the same clips and a new id, so the
+    // PC never writes over scenes/<id>/ of a twin that is published or still being made
+    if (!b.copy && (job.status === 'queued' || job.status === 'failed')) {
+      await env.DB.prepare("UPDATE jobs SET assigned_worker=?, args=?, status='queued', attempts=0, progress=0, stage=NULL, message=?, updated_at=? WHERE id=?")
+        .bind(worker, args, worker ? `assigned to ${worker}` : 'back in the shared queue', now, job.id).run();
+      if (!worker && !String(job.capture_id ?? '').startsWith('rehearsal-')) ctx.waitUntil(kickModal(env, `job ${job.id}`));
+      return json({ ok: true, jobId: job.id, copied: false, worker, args: JSON.parse(args) });
+    }
+    const copyId = id();
+    await env.DB.prepare('INSERT INTO jobs (id,name,capture_id,settings,args,files,status,progress,created_at,updated_at,owner,assigned_worker,message) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)')
+      .bind(copyId, `${String(job.name).slice(0, 64)} (${worker ? 'on ' + worker.slice(0, 12) : 'again'})`, job.capture_id, job.settings, args, job.files,
+        'queued', 0, now, now, job.owner ?? 'team', worker, `copy of ${job.id}${worker ? `, assigned to ${worker}` : ''}`).run();
+    if (!worker && !String(job.capture_id ?? '').startsWith('rehearsal-')) ctx.waitUntil(kickModal(env, `job ${copyId}`));
+    return json({ ok: true, jobId: copyId, copied: true, from: job.id, worker, args: JSON.parse(args) });
   }
 
   if (p === '/' || p === '/v1') return json({ ok: true, service: 'ply-api', version: env.CF_VERSION?.tag ?? env.VERSION ?? 'manual', deployedAt: env.CF_VERSION?.timestamp ?? env.DEPLOYED_AT ?? null, id: env.CF_VERSION?.id ?? null }, 200, { 'cache-control': 'no-store' });
   if (p === '/v1/health' && req.method === 'GET') {
     const w = await env.DB.prepare('SELECT name,last_seen,busy_job,note FROM workers WHERE last_seen > ? ORDER BY last_seen DESC').bind(now - 90_000).all();
     const q = await env.DB.prepare("SELECT COUNT(*) n FROM jobs WHERE status='queued'").first();
-    return json({ ok: true, workersOnline: w.results.filter((x: any) => !x.note).length, workersStarting: w.results.filter((x: any) => x.note).length, workers: w.results.map((x: any) => ({ name: x.name, busy: !!x.busy_job, starting: x.note || null, seenSecondsAgo: Math.round((now - x.last_seen) / 1000) })), queued: q.n }, 200, { 'cache-control': 'no-store' });
+    const pcs = new Set(((await env.DB.prepare('SELECT name FROM machines').all()).results as any[]).map(x => x.name));
+    const pcsOnline = w.results.filter((x: any) => pcs.has(x.name)).length;
+    w.results = w.results.filter((x: any) => !pcs.has(x.name));
+    return json({ ok: true, pcsOnline, workersOnline: w.results.filter((x: any) => !x.note).length, workersStarting: w.results.filter((x: any) => x.note).length, workers: w.results.map((x: any) => ({ name: x.name, busy: !!x.busy_job, starting: x.note || null, seenSecondsAgo: Math.round((now - x.last_seen) / 1000) })), queued: q.n }, 200, { 'cache-control': 'no-store' });
   }
 
   // ---- places: the walkthrough's pins (round 2, interactive spatial POI tagging) ----

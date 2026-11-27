@@ -75,6 +75,7 @@ if ($m.gpu) {
     $cap = [math]::Floor(([math]::Max($g.freeGB - 1.2, 0.3)) * 1GB / 2400)
     $m.splatCeiling = $cap
     Out-Line "Splat ceiling" ("~{0:N2}M (estimate; the first run measures it)" -f ($cap / 1e6)) "info"
+    if ($g.totalGB -lt 8) { [void]$warnings.Add("small card: in NVIDIA Control Panel > Manage 3D settings, set 'CUDA - Sysmem Fallback Policy' to 'Prefer No Sysmem Fallback', so running out of VRAM fails fast (and is retried smaller) instead of crawling in system RAM") }
     $samNeed = if ($g.sm -ge 8) { 6 } else { 10 }
     if ($g.freeGB -lt $samNeed) { [void]$warnings.Add("SAM 3 (people masks, labels) needs ~$samNeed GB here: skipped automatically. Captures with people walking through: run the coverage stages on Kaggle, train here") }
     if ($g.freeGB -lt ($g.totalGB - 0.6)) { [void]$warnings.Add("the GPU already has $([math]::Round($g.totalGB - $g.freeGB, 1)) GB in use (desktop, browser, games): close them before training") }

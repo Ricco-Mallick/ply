@@ -233,6 +233,12 @@ def run_stage(ctx: Ctx) -> dict:
         ship, scored, fold = fold_exposure(ctx, result, plys[-1], int(ctx.opt("exposure_fold")), block)
     shutil.copy2(ship, ctx.out / "scene.ply")
     preset_info = json.loads((result / "ply_preset.json").read_text()) if (result / "ply_preset.json").exists() else {}
+    # Windows drivers can spill CUDA memory into system RAM instead of failing (the "sysmem fallback"): no OOM, so no
+    # retry, just a run many times slower. Reserved memory above the card's own size is that spill
+    if preset_info.get("peakReservedGB") and preset_info.get("vramTotalGB") and preset_info["peakReservedGB"] > preset_info["vramTotalGB"]:
+        ctx.log.emit("train", "warn", f"training used {preset_info['peakReservedGB']} GB on a {preset_info['vramTotalGB']} GB card: it spilled into "
+                     "system RAM (slow). Set 'CUDA - Sysmem Fallback Policy' to 'Prefer No Sysmem Fallback' in the NVIDIA Control Panel, "
+                     "or lower BYTES_PER_GAUSSIAN's estimate in plypipe/device.py")
     keep = ctx.out / "eval"
     if scored != result:  # the scores below are the settled model's: the trainer's scores of the model before the fold go beside the fit
         before = {"eval": held_out_scores(result, keep / "trained"), "evalBlock": held_out_scores(result, keep / "trained", stage="block") if block else None}

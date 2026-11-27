@@ -263,6 +263,9 @@ def main(argv: list[str] | None = None) -> int:
         import torch
         if torch.cuda.is_available():
             summary["peakVramGB"] = round(torch.cuda.max_memory_allocated() / 2**30, 2)
+            # reserved is what the allocator held, and what runs out first: the gap to allocated is fragmentation
+            summary["peakReservedGB"] = round(torch.cuda.max_memory_reserved() / 2**30, 2)
+            summary["vramTotalGB"] = round(torch.cuda.get_device_properties(0).total_memory / 2**30, 2)
             with open(os.path.join(a.result, "ply_preset.json"), "w") as f:
                 json.dump(summary, f, indent=2)
     except Exception:

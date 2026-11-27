@@ -97,17 +97,40 @@ test('a PC pairs, is approved, collects its token once, and works only on what i
   assert.equal((await call('GET', '/v1/jobs', undefined, mine)).status, 401);
   assert.equal((await call('GET', '/v1/machines', undefined, mine)).status, 401);
 
-  // revoked: the token stops working at once
+  // revoked: the token stops working at once, and its running job fails loudly instead of waiting forever
   assert.equal((await call('POST', `/v1/machines/${name}/revoke`, {}, team)).status, 200);
   assert.equal((await call('POST', '/v1/worker/jobs/job-lab1', { progress: 0.2 }, mine)).status, 401);
+  const gone = DB.raw.prepare("SELECT status, message FROM jobs WHERE id='job-lab1'").get() as any;
+  assert.equal(gone.status, 'failed');
+  assert.match(gone.message, /revoked/);
+  assert.equal((await call('POST', '/v1/worker/claim', { worker: 'modal-l40s' }, shared)).status, 204);  // not handed to Modal
 });
 
-test('assigning needs the team key and a real machine; a running job is not moved', async () => {
+test('assigning needs the team key and a real machine; a finished twin is copied, never overwritten', async () => {
   job('job-x01');
   assert.equal((await call('POST', '/v1/jobs/job-x01/assign', { worker: 'pc-nope-0000' }, team)).status, 404);
   assert.equal((await call('POST', '/v1/jobs/job-x01/assign', { worker: null }, shared)).status, 401);
-  DB.raw.prepare("UPDATE jobs SET status='running' WHERE id='job-x01'").run();
-  assert.equal((await call('POST', '/v1/jobs/job-x01/assign', { worker: null }, team)).status, 409);
+  for (const status of ['done', 'review', 'running']) {
+    DB.raw.prepare('UPDATE jobs SET status=? WHERE id=?').run(status, 'job-x01');
+    const r = await call('POST', '/v1/jobs/job-x01/assign', { worker: null, args: ['--preset', 'quick'] }, team);
+    assert.equal(r.status, 200);
+    assert.equal(r.body.copied, true);
+    assert.notEqual(r.body.jobId, 'job-x01');
+    assert.equal((DB.raw.prepare('SELECT status FROM jobs WHERE id=?').get('job-x01') as any).status, status);  // untouched
+    const c = DB.raw.prepare('SELECT status, files, args FROM jobs WHERE id=?').get(r.body.jobId) as any;
+    assert.equal(c.status, 'queued');
+    assert.equal(c.files, JSON.stringify(['captures/cap-1/a.mp4']));
+    assert.equal(c.args, JSON.stringify(['--preset', 'quick']));
+  }
+});
+
+test('health keeps paired PCs apart from the shared GPU workers', async () => {
+  const now = Date.now();
+  DB.raw.prepare("INSERT INTO machines (name,status,created_at) VALUES ('pc-h-0001','active',?)").run(now);
+  DB.raw.prepare("INSERT OR REPLACE INTO workers (name,last_seen,busy_job,note) VALUES ('pc-h-0001',?,NULL,NULL)").run(now);
+  const h = await call('GET', '/v1/health');
+  assert.ok(h.body.pcsOnline >= 1);
+  assert.ok(!h.body.workers.some((w: any) => w.name === 'pc-h-0001'));
 });
 
 test('pairing is rate limited', async () => {

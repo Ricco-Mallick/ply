@@ -27,6 +27,22 @@ jobs:
           node --experimental-strip-types test/sigv4.test.mts
           node --experimental-strip-types test/cdn.test.mts
           node --experimental-strip-types test/modal.test.mts
+          node --experimental-strip-types test/machines.test.mts
+      # the database before the code: the code reads columns a migration adds. Each migration is applied only when its
+      # marker is missing, so a re-run is harmless; a failure stops here and the old code stays live
+      - name: database migrations
+        working-directory: cloud
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          WRANGLER_SEND_METRICS: 'false'
+        run: |
+          W="npx --yes wrangler@4.149.0"
+          has() { $W d1 execute ply-jobs --remote --json --command "$1" | grep -q '"n": *1'; }
+          if ! has "SELECT COUNT(*) AS n FROM pragma_table_info('jobs') WHERE name='assigned_worker'"; then
+            echo "applying migrations/0003_machines.sql"
+            $W d1 execute ply-jobs --remote --file migrations/0003_machines.sql -y
+          fi
+          has "SELECT COUNT(*) AS n FROM pragma_table_info('jobs') WHERE name='assigned_worker'" || { echo "::error::migration 0003 did not apply"; exit 1; }
       - name: deploy
         working-directory: cloud
         env:

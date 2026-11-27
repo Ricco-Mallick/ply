@@ -5,8 +5,12 @@ WSL 2 Ubuntu on its own GPU and takes only the jobs the team sends it by name.
 
 ## On the PC: one double-click
 
-1. Download the repo as a zip (GitHub → Code → Download ZIP) and extract it anywhere.
-2. Double-click **`start.bat`** and allow the admin prompt.
+1. Get the repo as a zip and extract it anywhere.
+   - The repo is private, so a friend can't use GitHub's Download ZIP.
+   - Send them a zip yourself: `git archive -o ply-worker.zip HEAD`, or a release asset.
+   - A zip has no git history. To update a PC, send a new zip and run `start.bat` again. That copies the new code
+     in and keeps the install, the pairing and the jobs.
+2. Double-click **`start.bat`**. It runs as you; Windows asks for admin rights only once, to turn on WSL.
 
 `start.bat` then runs `pipeline\local\start.ps1`. Each step is skipped when it's already done, so running it again is
 safe.
@@ -34,6 +38,7 @@ python scripts/plyctl.py machines approve K7QM-3XTP --label "college lab 3"
 python scripts/plyctl.py assign <job> pc-desktop-lab3-ab12                                     # run the job as queued
 python scripts/plyctl.py assign <job> pc-desktop-lab3-ab12 --args "--preset standard --from train"   # choose what runs
 python scripts/plyctl.py assign <job> --shared              # back to the shared queue (Modal / Kaggle)
+# a finished, in-review or running job is never overwritten: assign makes a copy (same clips, new id) and queues that
 python scripts/plyctl.py machines revoke pc-desktop-lab3-ab12
 ```
 
@@ -45,6 +50,13 @@ python scripts/plyctl.py machines revoke pc-desktop-lab3-ab12
 - **What the PC's token can do:** claim its assigned jobs, report on them, read their inputs, and write
   `scenes/<that job>/`. Nothing else in the API answers it. `revoke` kills the token at the next request.
 - **Pairing codes:** they expire after 24 h, and the API accepts at most 20 pairing requests an hour.
+- **Results** from a PC go to the bucket, not Hugging Face, because a PC holds no HF token. The API serves them from
+  either. Mind the bucket's 1 GB/day download cap for big twins.
+- **Inputs on Hugging Face don't work on a PC.** A job that reads from it, such as `--scan hf:lidar/...` (the office
+  route), fails there. Run those on Modal or Kaggle.
+- **Deploy order:** migration `0003_machines.sql` must be in D1 before this API code runs. `api.yml` applies it before
+  deploying and stops if it can't. Its Cloudflare token needs D1 edit rights, or you apply it by hand:
+  `npx wrangler d1 execute ply-jobs --remote --file cloud/migrations/0003_machines.sql`.
 
 API: `cloud/src/machines.ts`, migration `cloud/migrations/0003_machines.sql`, test `cloud/test/machines.test.mts`.
 

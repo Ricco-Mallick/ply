@@ -504,6 +504,8 @@ def cmd_assign(api: Api, a, say=say) -> int:
     if a.args is not None:
         body["args"] = a.args.split()
     got = api.call("POST", f"/v1/jobs/{a.job}/assign", body)
+    if got.get("copied"):
+        say(f"job {got['from']} is finished or busy, so it is left as it is; its copy {got['jobId']} is queued instead")
     say(f"job {got['jobId']} -> {got['worker'] or 'shared queue'}; runs: plypipe run {' '.join(got['args'])}")
     return 0
 
@@ -536,7 +538,7 @@ def main(argv: list[str] | None = None) -> int:
     mc.add_argument("target", nargs="?", help="the pairing code (approve) or the machine name (label, revoke)")
     mc.add_argument("text", nargs="?", help="label text (label)")
     mc.add_argument("--label", help="approve: a note for the list ('college lab 3')")
-    asg = sub.add_parser("assign", help="send a queued/failed/finished job to a paired PC")
+    asg = sub.add_parser("assign", help="send a job to a paired PC (a finished, in-review or running job is copied, never overwritten)")
     asg.add_argument("job")
     asg.add_argument("machine", nargs="?")
     asg.add_argument("--shared", action="store_true", help="back to the shared queue (Modal / Kaggle)")

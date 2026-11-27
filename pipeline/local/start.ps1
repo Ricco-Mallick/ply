@@ -1,4 +1,4 @@
-# Ply worker PC, everything automatic (start.bat runs this as administrator). Safe to run again: done steps are skipped.
+# Ply worker PC, everything automatic (start.bat runs this as the logged-in user; admin is asked for once, for WSL). Safe to run again: done steps are skipped.
 #   1 check the PC        2 WSL 2 (reboot once if Windows needs it; this resumes by itself after the reboot)
 #   3 Ubuntu + user 'ply' 4 RAM for Linux     5 copy this folder in     6 install for THIS GPU (20-40 min once)
 #   7 pair with the Ply API (shows a code for the team)                  8 run the worker (and, if you say yes, at logon)
@@ -34,12 +34,15 @@ if ($real.Count -gt 0) { Fail "Fix the BLOCKER lines above (driver update, or vi
 
 Step 2 "WSL 2"
 if (-not $m.wsl) {
-    Write-Host "Installing WSL (a Windows feature)."
-    & wsl.exe --install --no-distribution
-    # come back by itself after the reboot: a one-time task at logon, removed when it runs
+    # the only step that needs admin, and only this step gets it: everything else stays in YOUR profile (on a college
+    # account an elevated run would be the admin's profile, and the worker would never appear for you)
+    Write-Host "Turning on WSL. Windows asks for administrator rights for this one step."
+    $p = Start-Process -FilePath "wsl.exe" -ArgumentList "--install --no-distribution" -Verb RunAs -Wait -PassThru
+    if ($p.ExitCode -ne 0) { Fail "WSL could not be turned on (exit $($p.ExitCode)). If this account has no admin rights, ask the PC owner to approve the prompt." }
+    # come back by itself after the reboot: a one-time task at your logon, removed when it runs
     $act = New-ScheduledTaskAction -Execute "powershell.exe" -Argument "-NoProfile -ExecutionPolicy Bypass -File `"$here\start.ps1`" -Resumed -Distro $Distro$(if ($WslDrive) { " -WslDrive $WslDrive" })$(if ($NoWorker) { ' -NoWorker' })$(if ($NoAutostart) { ' -NoAutostart' })"
     $trg = New-ScheduledTaskTrigger -AtLogOn -User "$env:USERDOMAIN\$env:USERNAME"
-    Register-ScheduledTask -TaskName $task -Action $act -Trigger $trg -RunLevel Highest -Force | Out-Null
+    Register-ScheduledTask -TaskName $task -Action $act -Trigger $trg -Force | Out-Null
     Write-Host "Windows needs a restart to finish WSL. Setup continues by itself after you log back in." -ForegroundColor Yellow
     $a = Read-Host "Restart now? [Y/n]"
     Stop-Transcript | Out-Null
