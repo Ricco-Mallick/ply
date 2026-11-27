@@ -303,8 +303,9 @@ def _stage_command(tmp_path, monkeypatch, **opts):
 
 def test_train_stage_command_line_is_unchanged_without_the_new_options(tmp_path, monkeypatch):
     cmd = _stage_command(tmp_path, monkeypatch)
+    # --restore: every run has restore points now (plypipe.restore), the folder next to the result
     assert [c for c in cmd if c.startswith("--")] == ["--examples", "--data", "--result", "--preset", "--iterations", "--cap-max",
-                                                      "--antialiased", "--holdout"]
+                                                      "--antialiased", "--holdout", "--restore"]
     assert _stage_command(tmp_path, monkeypatch, exposure_fold=None) == cmd
     cmd = _stage_command(tmp_path, monkeypatch, holdout_block=0, opacity_reg=None)
     assert "--holdout-block" not in cmd and "--opacity-reg" not in cmd and "--frames-index" not in cmd
@@ -511,7 +512,7 @@ def test_without_the_option_nothing_is_fitted_and_the_report_is_what_it_was(tmp_
     report, cmds, fits, job = _fold_job(tmp_path, monkeypatch, FIT, bilateral_grid=True, holdout=8)
     assert len(cmds) == 1 and fits == [] and "exposureFold" not in report and not (job / "train" / "folded.ply").exists()
     assert (job / "scene.ply").read_bytes() == (job / "train" / "ply" / "point_cloud_299.ply").read_bytes() and report["eval"]["psnr"] == 26.0
-    assert sorted(report) == ["appearance", "eval", "fromStep", "maxSteps", "plan", "ply", "sizeMB"]
+    assert sorted(report) == ["appearance", "density", "eval", "fromStep", "maxSteps", "plan", "ply", "sizeMB"]  # + the density check
 
 
 def test_exposure_fold_0_ships_the_folded_model_without_training_on(tmp_path, monkeypatch):
