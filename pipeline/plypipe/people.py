@@ -145,7 +145,7 @@ def mask_frames(frames: Path, out: Path, detect, max_share: float = MAX_SHARE, l
         write_mask(mdir / mask_name(f.name), person)
         if log and n % 25 == 0:
             log(f"looking for people: frame {n + 1}/{len(files)}", done=n + 1, total=len(files))
-    report = {"model": "facebook/sam3", "prompt": getattr(detect, "prompts", PROMPT), "frames": len(files), "framesWithPeople": with_people,
+    report = {"model": getattr(detect, "model", "facebook/sam3"), "prompt": getattr(detect, "prompts", PROMPT), "frames": len(files), "framesWithPeople": with_people,
               "dropped": dropped, "meanShareWhenPresent": round(float(np.mean(shares)), 4) if shares else 0.0,
               "maxShareKept": max_share, "seconds": round(time.time() - t0, 1)}
     (mdir / "people.json").write_text(json.dumps(report, indent=1))
@@ -173,6 +173,8 @@ def prepare(ctx) -> dict | None:
     if rep is not None:
         ctx.log.emit("sfm", "progress", f"people masks reused: {rep['framesWithPeople']} of {rep['frames']} frames had someone in them")
         return rep
+    if backend(ctx) == "yolo":
+        return prepare_yolo(ctx)
     try:
         model, proc, torch = load_sam3()
     except Exception as e:
@@ -193,6 +195,59 @@ def prepare(ctx) -> dict | None:
         gc.collect()
         torch.cuda.empty_cache()
     ctx.log.emit("sfm", "progress", f"people: {rep['framesWithPeople']} of {rep['frames']} frames had someone in them, "
+                 f"{len(rep['dropped'])} dropped as mostly person")
+    return rep
+
+
+def backend(ctx) -> str:
+    """sam3 or yolo: --mask-backend, else SAM 3 where the GPU holds it (plypipe.device), YOLO where it does not."""
+    choice = ctx.opt("mask_backend", "auto")
+    if choice in ("sam3", "yolo"):
+        return choice
+    try:
+        from plypipe import plan
+        dev = plan.read(ctx.out).get("device") or {}
+    except Exception:
+        dev = {}
+    return "yolo" if dev and dev.get("sam3") is False and dev.get("trainable") else "sam3"
+
+
+def prepare_yolo(ctx) -> dict | None:
+    """plypipe.people_yolo in the Python that has torch (the training venv on a local PC), as its own process."""
+    import os
+    import subprocess
+    import sys
+    py = os.environ.get("PLY_TRAIN_PYTHON") or sys.executable
+    pkg_root = Path(__file__).resolve().parents[1]
+    cmd = [py, "-m", "plypipe.people_yolo", "--frames", str(ctx.frames_dir), "--out", str(ctx.out),
+           "--prompts", str(ctx.opt("mask_prompts") or PROMPT), "--max-share", str(ctx.opt("people_max_share", MAX_SHARE))]
+    if ctx.opt("people_threshold") is not None and ctx.opt("mask_backend") == "yolo":
+        cmd += ["--threshold", str(ctx.opt("people_threshold"))]
+    ctx.log.emit("sfm", "progress", "looking for people with YOLO (SAM 3 does not fit this GPU)")
+    env = {**os.environ, "PYTHONPATH": os.pathsep.join([str(pkg_root), os.environ.get("PYTHONPATH", "")])}
+    try:
+        proc = subprocess.run(cmd, capture_output=True, text=True, env=env, timeout=6 * 3600, cwd=str(ctx.out))
+    except Exception as e:
+        ctx.log.emit("sfm", "warn", f"people are not masked (YOLO could not start: {str(e)[:160]})")
+        return None
+    rep = None
+    for line in proc.stdout.splitlines():
+        if line.startswith('{"plyPeople"'):
+            rep = json.loads(line)["plyPeople"]
+        elif line.startswith('{"stage"'):
+            try:
+                ev = json.loads(line)
+                ctx.log.emit("sfm", "progress", ev.get("msg", ""), **{k: v for k, v in ev.items() if k in ("done", "total")})
+            except ValueError:
+                pass
+    if proc.returncode != 0 or rep is None:
+        shutil.rmtree(ctx.out / MASKS, ignore_errors=True)
+        tail = (proc.stderr or proc.stdout or "").strip().splitlines()[-3:]
+        ctx.log.emit("sfm", "warn", f"people masking with YOLO failed ({' / '.join(tail)[:200]}); training on whole frames")
+        return None
+    if rep.get("promptsNotFound"):
+        ctx.log.emit("sfm", "warn", f"YOLO has no class for {', '.join(rep['promptsNotFound'])}: those are not masked")
+    ctx.log.emit("sfm", "progress", f"people ({rep['model']}): {rep['framesWithPeople']} of {rep['frames']} frames had someone in them, "
                  f"{len(rep['dropped'])} dropped as mostly person")
     return rep
 

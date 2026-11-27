@@ -84,6 +84,20 @@ user() {
   [ ! -f "$ROOT/venv310.failed" ] || die "the training environment failed to build (see the output above); frames/sfm/occupancy still work"
   "$ROOT/venv/bin/python" -m pip install -q trimesh
 
+  log "YOLO for people masks (SAM 3 needs ~10 GB on this generation of GPU): ultralytics + CLIP in the training venv"
+  printf 'torch==2.4.1\ntorchvision==0.19.1\nnumpy<2\n' > "$ROOT/constraints.txt"
+  "$ROOT/venv/bin/python" -m uv pip install -q --python "$ROOT/venv310/bin/python" -c "$ROOT/constraints.txt" \
+    "ultralytics>=8.3.150" "git+https://github.com/ultralytics/CLIP.git"
+  # the weights now, so the first job does not wait on (or fail at) a download behind a college proxy
+  (cd "$ROOT" && PYTHONPATH="$HERE" "$ROOT/venv310/bin/python" -c "
+from plypipe import people_yolo as y
+try:
+    y.yoloe_detector(['person'], 0.3); print('[ply-local] YOLOE ready')
+except Exception as e:
+    print('[ply-local] YOLOE not available (', str(e)[:100], '): COCO YOLO11-seg will be used')
+y.coco_detector(['person'], 0.3); print('[ply-local] YOLO11-seg ready')
+") || log "YOLO weights could not be fetched now; the first job will try again"
+
   log "splat-transform 3.10.1 -> $ROOT/node"
   npm install -g -s --prefix "$ROOT/node" @playcanvas/splat-transform@3.10.1
 

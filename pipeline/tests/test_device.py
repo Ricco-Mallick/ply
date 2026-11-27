@@ -95,19 +95,67 @@ def test_oom_text():
     assert not device.oom("RuntimeError: something else")
 
 
-def test_cli_turns_sam3_off_on_a_small_card_and_keeps_masks_made_elsewhere(monkeypatch, tmp_path):
-    from plypipe import cli
+def test_a_small_card_masks_people_with_yolo_and_skips_sam3_labels(monkeypatch, tmp_path):
+    from plypipe import cli, people
     from plypipe.log import Log
     from plypipe.util import Ctx
     monkeypatch.setenv("PLY_DEVICE_VRAM_GB", "4")
     monkeypatch.setenv("PLY_DEVICE_SM", "7.5")
     ctx = Ctx(out=tmp_path, log=Log(tmp_path, quiet=True), opts={})
     cli._device_profile(ctx, ["frames", "sfm", "label", "train", "export"])
-    assert ctx.opts["no_people_mask"] and ctx.opts["no_labels"]
+    assert ctx.opts["no_labels"] and not ctx.opts.get("no_people_mask")
+    assert people.backend(ctx) == "yolo"
     assert json.loads((tmp_path / "plan.json").read_text())["device"]["packed"] is True
 
-    (tmp_path / "masks").mkdir()
-    (tmp_path / "masks" / "people.json").write_text("{}")
-    ctx2 = Ctx(out=tmp_path, log=Log(tmp_path, quiet=True), opts={})
-    cli._device_profile(ctx2, ["sfm", "label", "train"])
-    assert not ctx2.opts.get("no_people_mask")
+
+def test_a_big_card_keeps_sam3_and_no_gpu_masks_nothing(monkeypatch, tmp_path):
+    from plypipe import cli, people
+    from plypipe.log import Log
+    from plypipe.util import Ctx
+    monkeypatch.setenv("PLY_DEVICE_VRAM_GB", "24")
+    monkeypatch.setenv("PLY_DEVICE_SM", "8.9")
+    ctx = Ctx(out=tmp_path, log=Log(tmp_path, quiet=True), opts={})
+    cli._device_profile(ctx, ["sfm", "label"])
+    assert people.backend(ctx) == "sam3" and not ctx.opts.get("no_labels")
+    monkeypatch.delenv("PLY_DEVICE_VRAM_GB")
+    monkeypatch.delenv("PLY_DEVICE_SM")
+    monkeypatch.setattr(device_mod_probe(), "_nvidia_smi", lambda: None)
+    monkeypatch.setattr(device_mod_probe(), "_torch_gpu", lambda: None)
+    ctx2 = Ctx(out=tmp_path / "b", log=Log(tmp_path / "b", quiet=True), opts={})
+    cli._device_profile(ctx2, ["sfm", "label"])
+    assert ctx2.opts["no_people_mask"] and ctx2.opts["no_labels"]
+
+
+def device_mod_probe():
+    return device
+
+
+def test_yolo_masks_come_back_in_the_sam3_layout(monkeypatch, tmp_path):
+    """people.prepare_yolo with a stand-in for the YOLO process: the report and masks are what the solve reads."""
+    import sys
+    from plypipe import people
+    from plypipe.log import Log
+    from plypipe.util import Ctx
+    fake = tmp_path / "fakeyolo"
+    (fake / "plypipe").mkdir(parents=True)
+    (fake / "plypipe" / "__init__.py").write_text("")
+    (fake / "plypipe" / "people_yolo.py").write_text(
+        "import json, sys, pathlib\n"
+        "a = sys.argv; out = pathlib.Path(a[a.index('--out') + 1])\n"
+        "(out / 'masks').mkdir(parents=True, exist_ok=True)\n"
+        "(out / 'masks' / '000000.jpg.png').write_bytes(b'png')\n"
+        "rep = {'model': 'ultralytics/yolo11m-seg.pt', 'frames': 1, 'framesWithPeople': 1, 'dropped': [], 'promptsNotFound': ['ceiling fan']}\n"
+        "print(json.dumps({'stage': 'sfm', 'event': 'progress', 'msg': 'looking for people: frame 1/1'}))\n"
+        "print(json.dumps({'plyPeople': rep}))\n")
+    shim = tmp_path / "py"
+    shim.write_text(f"#!/bin/sh\nPYTHONPATH={fake} exec {sys.executable} \"$@\"\n")
+    shim.chmod(0o755)
+    monkeypatch.setenv("PLY_TRAIN_PYTHON", str(shim))
+    monkeypatch.chdir(tmp_path)  # not the repo: its plypipe would shadow the stand-in
+    out = tmp_path / "out"
+    (out / "frames").mkdir(parents=True)
+    ctx = Ctx(out=out, log=Log(out, quiet=True), opts={"mask_backend": "yolo", "mask_prompts": "person,ceiling fan"})
+    rep = people.prepare(ctx)
+    assert rep["model"].startswith("ultralytics/") and (out / "masks" / "000000.jpg.png").exists()
+    log = (out / "log.jsonl").read_text()
+    assert "ceiling fan" in log and "frame 1/1" in log

@@ -105,6 +105,8 @@ def build_parser() -> argparse.ArgumentParser:
     g.add_argument("--people-threshold", type=float, default=0.4, help="SAM 3 score for a person")
     g.add_argument("--mask-prompts", default="person", help="comma-separated SAM 3 prompts masked out of the solve and the training: "
                                                             "people, and anything that moved while filming (\"person,ceiling fan\")")
+    g.add_argument("--mask-backend", choices=["auto", "sam3", "yolo"], default="auto",
+                   help="auto: SAM 3 where the GPU holds it, YOLO (YOLOE text prompts, else COCO YOLO11-seg) where it does not")
     g.add_argument("--people-max-share", type=float, default=0.45, help="drop a frame that is more than this share person")
     g = r.add_argument_group("sfm")
     g.add_argument("--features", choices=["aliked", "aliked-lg", "sift"], default="aliked",
@@ -333,8 +335,12 @@ def _device_profile(ctx: Ctx, stages: list[str]) -> None:
     dp = device.device_plan(device.probe(ctx.out))
     plan.write(ctx.out, "device", dp)
     ctx.log.emit("plan", "progress", f"device: {dp['why']}")
+    if not dp["sam3"] and dp["trainable"] and ctx.opts.get("mask_backend", "auto") == "auto" and "sfm" in stages:
+        ctx.log.emit("plan", "progress", "people masks with YOLO: SAM 3 does not fit this GPU")
     if not dp["sam3"]:
-        for key, stage, what in (("no_people_mask", "sfm", "people masks"), ("no_labels", "label", "SAM 3 labels")):
+        # labels (SAM 3 object labelling) have no YOLO path yet; people masks do (plypipe.people_yolo) unless there is no GPU
+        skip = [("no_labels", "label", "SAM 3 labels")] + ([] if dp["trainable"] else [("no_people_mask", "sfm", "people masks")])
+        for key, stage, what in skip:
             # masks made earlier on a bigger card (Kaggle coverage run, then train here) are still used: they cost nothing now
             made = key == "no_people_mask" and (ctx.out / "masks" / "people.json").is_file()
             if stage in stages and not ctx.opts.get(key) and not made:
