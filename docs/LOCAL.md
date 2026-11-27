@@ -69,16 +69,17 @@ GPU and RAM on every run, and the PC reports the result when it claims, so `plyc
 |---|---|---|
 | Frames, frame rate | as planned from the clips | same |
 | Working size | as planned (1280–2048 px); ≤1024 px only under 3.5 GB free | same |
-| Splat ceiling | ~1.0–1.2M (free VRAM − 1.2 GB, at 2.4 KB per splat) | none (surface area / views decide) |
+| Splats | grow while held-out views improve, up to what the card holds (~1.1M on 4 GB). Past that the report says "needs a bigger GPU" | grow while held-out views improve |
 | Rasterisation | packed (less memory, a bit slower) | default |
 | Loader workers | 2 (RAM) | 4 |
-| SAM 3 people masks + labels | off (fp32 needs ~10 GB before Ampere) | on |
+| People masks | YOLO (YOLOE text prompts, COCO YOLO11-seg fallback) | SAM 3 |
+| Object labels (SAM 3) | off | on |
 | Out of memory | one retry from scratch at 0.7× the splat cap (`report.train.oomRetry`) | n/a |
 
 - **The per-splat cost is an estimate.** Each run records `report.train.peakVramGB`, so tune `BYTES_PER_GAUSSIAN` in
   `plypipe/device.py` after the first real run on a 1650.
-- **Captures with people in them:** run the camera solve where SAM 3 fits (Kaggle, `--until occupancy`). Then assign
-  `--from train` to the PC. Masks made elsewhere are still used.
+- **People:** small cards mask people with YOLO. SAM 3 masks made elsewhere (Kaggle, `--until occupancy`) are still used
+  when a job continues on the PC.
 - **Overrides:** `--device-profile off` plans as on a big cloud card. `PLY_DEVICE_VRAM_GB`, `PLY_DEVICE_RAM_GB` and
   `PLY_DEVICE_SM` override the probe.
 - **Timing on a GTX 1650:** a ~300-frame room should take tens of minutes to solve and several hours to train at
@@ -112,3 +113,13 @@ Ubuntu.
 
 The GPU camera solve (`pycolmap-cuda12`) ships Linux wheels only. The training stack (gsplat 1.5.3 + fused-ssim) is
 the route already proven on Kaggle's T4, and the GTX 1650 has the same architecture (Turing, sm 7.5).
+
+## Stopping, resuming, and what the window shows
+
+- **Closing the worker window or pressing Ctrl+C is safe.** Training saves a restore point at the end of its current
+  step, the worker uploads it, and the job goes back to the queue as paused. The next start continues from that step.
+- **Hard stops lose little.** If the PC just dies (power cut, lid closed, `wsl --shutdown`), the last autosave
+  (every 10 min) is the restore point.
+- **What the window shows:** one line per event, and for training every few seconds:
+  `[########............]  42.1% | step 12,630/30,000 | loss 0.041 | 1.12M splats | VRAM 3.1 GB | 9.8 steps/s | ETA 29m`.
+  Growth rounds print their comparison: `round 2: 1,680,000 splats, 29.41 dB (best 29.12) ... kept`.

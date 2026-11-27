@@ -10,10 +10,13 @@ so a finished job can always be audited: what was decided, from what measurement
 
 | Measured | Sets | Rule |
 |---|---|---|
-| Clip duration and count (ffprobe) | kept frames per second | one frame per ~0.46 s of walking, scaled by how fast the operator actually moved, capped by a frame budget of `2 × seconds + 400` (700–3200 frames) |
+| Clip duration and count (ffprobe) | kept frames per second | one frame per ~0.46 s of walking, scaled by how fast the operator actually moved. **No frame budget**: a long walk keeps the same views per second as a short one. Blurry frames are still dropped (sharpest of each window) |
 | Motion samples from `capture.json` (flow %/s, turn °/s, 80th percentile) | the same rate | slow walk 0.7×, normal 1.0×, fast 1.6× |
 | Source pixels (long side) | working resolution | 45 % of the source, snapped to 16 px, kept within 1280–2048 |
-| Solved bounding box + shell ceiling | gaussian cap (MCMC) | ~4,200 gaussians per m² of wall + floor + ceiling surface, at most ~2,200 per solved view, 0.4M–4M |
+| Solved bounding box + shell ceiling | where training **starts** (MCMC) | ~4,200 gaussians per m² of wall + floor + ceiling surface, or ~2,400 per view-megapixel if smaller. A starting estimate, **not a ceiling** |
+| Held-out views after each round | the final splat count | growth rounds (`plypipe.growth`): 1.5× the splats from the best model while held-out dB rises ≥ 0.15 with LPIPS no worse, or soft patches drop ≥ 15 %. Otherwise stop and ship the best. The only bound is the GPU's memory, and the report says when a twin wanted more (`train.growth.needsBiggerGpu`) |
+| Per-tile error on held-out views + splats and cameras per floor cell | where the twin is uneven | soft patches (tiles 4 dB under their view, people masked) and density per 0.5 m cell. Under-dense where it was well filmed means grow; under-filmed means film that spot again (`train.density.underFilmedAt`) |
+| The machine (`plypipe.device`) | packed mode, loader workers, people-mask model | small cards get packed rasterisation and YOLO masks instead of SAM 3; frames are never reduced for a small card |
 | Views that registered | training steps | ~50 steps per view, 18k–55k, scaled by the preset |
 | The trained PLY itself | export thresholds | opacity and scale filters are probed against the model; a filter that would keep less than 85 % of what training fitted is loosened until it does |
 
@@ -88,8 +91,9 @@ Two of those checks exist because a stage used to skip itself silently:
 - Don't pass `--max-frames` to make a run faster. It silently lowers the kept rate (the classroom ran
   at 1.1 frames/s because of one) and no amount of training recovers the missing views. The stage now
   logs a warning when a cap lowers the rate.
-- Don't raise `--cap-max` for a single room. Past the plan's cap the extra gaussians compete for the
-  same views and turn into floaters.
+- Don't force `--cap-max` (it turns growth's starting point into a fixed number). Let the growth rounds find the count:
+  each round has to beat the last on views it never trained on, so floaters from too many splats get measured
+  and the round is dropped. `--no-growth` trains once at the start estimate, for A/B runs only.
 - Don't trust an export filter that was never measured. `PLY_EXPORT_PROBES=0` made a 4M model export
   as 1.35M with no check; probes are on by default.
 - Don't compare renders at different exposures and call it quality. Compare a fixed pose, or compare
@@ -97,3 +101,11 @@ Two of those checks exist because a stage used to skip itself silently:
 - Don't edit a finished splat by hand. Every hand edit so far produced a worse file than the pipeline
   did: colour changes that ignore the higher-order SH shift hue per view. If a post-process is needed,
   it goes in `plypipe/` with a test, so the next run benefits too.
+
+## Restore points and stopping
+
+Training autosaves a restore point every `PLY_AUTOSAVE_MIN` minutes (default 10) and saves on a stop
+(Ctrl+C, a closed window, SIGTERM from the cloud). Running the same job again continues at the exact
+step. The cloud worker uploads the restore point (`PLY_RESTORE_UPLOAD_MIN`, default 15). On a stop it
+requeues the job as paused, and the next worker continues it; a job paused more than 8 times fails
+instead of looping. Growth rounds have their own restore points and a `growth.json` record.
