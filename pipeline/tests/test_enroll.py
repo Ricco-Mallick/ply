@@ -44,6 +44,7 @@ def test_worker_uses_the_paired_token_and_stops_when_revoked(monkeypatch, tmp_pa
     monkeypatch.delenv("PLY_API", raising=False)
     enroll.save({"api": "https://api.test", "name": "pc-lab-ab12", "token": "pm_pc-lab-ab12." + "a" * 64})
     monkeypatch.setenv("PLY_DEVICE_VRAM_GB", "4")
+    monkeypatch.setenv("PLY_LIVE_SNAPSHOTS", "")  # worker.main setdefaults it; scoped here so it cannot leak into later tests
     seen = {}
 
     def req(self, method, path, body=None, ctype=None, tries=5):
