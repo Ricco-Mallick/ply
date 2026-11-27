@@ -33,6 +33,7 @@ WARN_HELD_OUT_PSNR = 20.0
 # the exported twin rendered without any appearance model, at the held-out photos (export.viewerEval)
 BRIGHTNESS_TOLERANCE = 0.08
 WARN_HOLES = 0.03
+WARN_PATCH_SHARE = 0.05   # share of held-out tiles more than 4 dB under their view (plypipe.growth)
 
 
 def _views_per_second(frames: dict) -> float | None:
@@ -94,6 +95,19 @@ def check(report: dict, plan: dict | None = None) -> dict:
         add("warn", "held-out", f"held-out views score {psnr:.1f} dB PSNR (colour-corrected): the twin does not "
             "reproduce the photos it was not trained on. Expect blur or doubled surfaces; check the camera solve first.")
 
+    grown = train.get("growth") or {}
+    if grown.get("needsBiggerGpu"):
+        add("warn", "gpu-bound", "this twin was still getting sharper when the GPU ran out of room "
+            f"({(grown.get('stop') or {}).get('why')}): train it on a bigger GPU for full quality.")
+    patch = (grown.get("rounds") or [{}])[grown.get("best", 0)].get("patchShare") if grown.get("rounds") else None
+    if isinstance(patch, (int, float)) and patch > WARN_PATCH_SHARE:
+        add("warn", "patches", f"{patch:.1%} of the held-out views' detail is soft patches (tiles {4:g} dB under their view): "
+            "see train.density for where more filming would help.")
+    dens = train.get("density") or {}
+    if dens.get("underFilmed"):
+        add("warn", "under-filmed", f"{dens['underFilmed']} floor cells were barely filmed and stay thin whatever is trained: "
+            f"film again near {dens.get('underFilmedAt', [])[:5]} (scene x, z).")
+
     export = report.get("export") or {}
     clean = export.get("floaterClean")
     if export and not clean:
@@ -134,6 +148,7 @@ def check(report: dict, plan: dict | None = None) -> dict:
         "metrics": {"viewsPerSecond": views, "viewsFloor": fail_vps, "plannedViewsPerSecond": planned,
                     "registeredRatio": ratio, "antialiased": train.get("antialiased"),
                     "keptFraction": kept, "clippedFraction": clipped, "spzMB": spz,
+                    "growth": {k: grown.get(k) for k in ("best", "needsBiggerGpu", "stop")} if grown else None,
                     "heldOut": {k: held.get(k) for k in ("psnr", "ssim", "lpips", "ccPsnr", "views")} if held else None,
                     "viewer": viewer or None},
     }

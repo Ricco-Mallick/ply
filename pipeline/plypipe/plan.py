@@ -21,10 +21,9 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-# kept frames: a normal walk wants about one every half metre; faster or turning wants more
+# kept frames: a normal walk wants about one every half metre; faster or turning wants more. There is no total cap
 _SECONDS_PER_FRAME = 0.46
 _FPS_MIN, _FPS_MAX = 1.5, 3.2
-_FRAMES_MIN, _FRAMES_MAX = 700, 3200
 
 # pixels: never upscale, and a phone render gains little past 2k from a 4k clip
 _SIDE_MIN, _SIDE_MAX = 1280, 2048
@@ -42,9 +41,9 @@ _GAUSSIANS_PER_M2 = 4200
 _GAUSSIANS_PER_VIEW_MP = 2400
 _DEFAULT_VIEW_MP = 0.92  # 1280 x 720, the planned working size of a 1080p clip
 _CAP_MIN = 300_000
-# ceilings: Dr Johnson trained cleanly at 1.47M splats (31.0 dB as the viewer shows it) and went unstable at 3M in
-# both runs that tried (loss climbing from 3.6k steps, 10.7 dB). Until a larger cap is proven, stay under it
-_PRESET_CAP_MAX = {"quick": 1_000_000, "standard": 2_000_000, "high": 2_000_000}
+# no ceiling on splats. Dr Johnson went unstable when a run STARTED at 3M (loss climbing from 3.6k steps): so runs start
+# at the estimate below and grow from a trained model, one measured round at a time (plypipe.growth), keeping a round
+# only when the held-out views improve
 
 # steps: one view every ~50 steps is where gsplat stops adding detail. Small captures still need gsplat's
 # own schedules (7k / 30k), which is what the per-preset floors are; the preset scales the rest
@@ -91,11 +90,10 @@ def input_plan(duration_s: float, clips: int, source_long: int, capture: dict | 
     """Frames and pixels for the clips, before anything has been solved. `max_side` is the machine's ceiling
     (plypipe.device: only a card under 3.5 GB sets one); it lowers the pixels, never the frames."""
     mo = motion(capture)
-    budget = int(_clamp(2.0 * duration_s + 400, _FRAMES_MIN, _FRAMES_MAX))
+    # no frame budget: a long walk keeps the same views per metre as a short one. Fewer frames was the cheapest way
+    # to make a big capture fit, and it cost the twin coverage (soft patches where views were thin). Blurry frames
+    # are still dropped (frames.py keeps the sharpest of each window), which is the only reduction there is
     kept = _clamp((1 / _SECONDS_PER_FRAME) * mo["factor"], _FPS_MIN, _FPS_MAX)
-    capped = duration_s > 0 and kept * duration_s > budget
-    if capped:
-        kept = budget / duration_s
     side = int(_clamp(round(source_long * _SIDE_SHARE / 16) * 16, _SIDE_MIN, _SIDE_MAX))
     device_capped = bool(max_side and side > max_side)
     if device_capped:
@@ -103,14 +101,13 @@ def input_plan(duration_s: float, clips: int, source_long: int, capture: dict | 
     return {
         "keptFps": round(kept, 2),
         "longSide": side,
-        "frameBudget": budget,
         "expectedFrames": int(round(kept * duration_s)),
         "clips": clips,
         "durationSec": round(duration_s, 1),
         "sourceLongSide": source_long,
         "motion": mo,
         "why": (f"{mo['kind']} walk ({mo['source']}) → {round(kept, 2)} frames/s, "
-                f"{side} px from {source_long} px source" + (", capped by the frame budget" if capped else "")
+                f"{side} px from {source_long} px source"
                 + (f", held to {side} px by this GPU's memory" if device_capped else "")),
     }
 
@@ -130,8 +127,9 @@ def surface_area(bounds: dict | None, ceiling: float | None = None) -> dict:
 def model_plan(images: int, bounds: dict | None, preset: str = "standard", ceiling: float | None = None,
                *, iterations: int | None = None, cap_max: int | None = None, megapixels: float | None = None,
                max_gaussians: int | None = None) -> dict:
-    """Training budget once the model is solved. `megapixels` is the size of one training view; `max_gaussians` is
-    what this machine's GPU can hold (plypipe.device), the third ceiling next to surface area and views."""
+    """Where training starts once the model is solved. `megapixels` is the size of one training view. The splat count
+    is a starting estimate (surface area, views), not a limit; `max_gaussians` is what this machine's GPU physically
+    holds (plypipe.device), the one hard bound, and the growth rounds report when a twin wanted more than that."""
     area = surface_area(bounds, ceiling)
     mult = _PRESET_CAP.get(preset, 1.0)
     mp = megapixels or _DEFAULT_VIEW_MP
@@ -142,13 +140,15 @@ def model_plan(images: int, bounds: dict | None, preset: str = "standard", ceili
     else:  # no bounds yet: fall back to what the views can carry
         cap = int(images * mp * _GAUSSIANS_PER_VIEW_MP * mult) if images else _CAP_MIN
         notes.append("no bounds: budget from the views")
-    cap_hi = _PRESET_CAP_MAX.get(preset, _PRESET_CAP_MAX["standard"])
-    cap = int(_clamp(cap, _CAP_MIN, cap_hi))
+    # a starting point, not a ceiling: the growth rounds (plypipe.growth) add splats for as long as the held-out
+    # views measurably improve. Starting at the smaller of the two estimates keeps the first run stable (Dr Johnson
+    # diverged when it started at 3M); a twin that needs more gets it from measurement, not from this number
+    cap = max(cap, _CAP_MIN)
     if images:
         per_view = int(images * mp * _GAUSSIANS_PER_VIEW_MP * mult)
         if cap > per_view:
             cap = max(_CAP_MIN, per_view)
-            notes.append(f"capped at {_GAUSSIANS_PER_VIEW_MP}/view-MP × {images} views × {mp:.2f} MP × {mult}")
+            notes.append(f"starts at {_GAUSSIANS_PER_VIEW_MP}/view-MP × {images} views × {mp:.2f} MP × {mult}")
     device_cap = None
     if max_gaussians and cap > max_gaussians:
         device_cap = int(max_gaussians)

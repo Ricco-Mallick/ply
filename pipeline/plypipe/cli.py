@@ -128,6 +128,9 @@ def build_parser() -> argparse.ArgumentParser:
                    help="lens model for SfM: OPENCV for wide action cams (DJI, GoPro), OPENCV_FISHEYE beyond ~150 deg")
     g.add_argument("--exhaustive-max", type=int, default=250, help="auto: exhaustive up to this many frames")
     g.add_argument("--device", choices=["auto", "cuda", "cpu"], default="auto")
+    r.add_argument("--no-growth", action="store_true",
+                   help="train once at the planned start instead of growing the splats round by round while the held-out views "
+                        "improve (plypipe.growth)")
     r.add_argument("--device-profile", choices=["auto", "off"], default="auto",
                    help="auto: measure this machine's GPU and RAM and hold the plan inside them (splat cap, packed mode, "
                         "loader workers, SAM 3 off on small cards; plan.json['device']). off: plan as on a big cloud GPU")

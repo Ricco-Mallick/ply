@@ -38,7 +38,7 @@ def build_config(st, data: str, result: str, preset: str, ppisp: bool | None, an
                  iterations: int | None = None, sh_degree: int | None = None, cap_max: int | None = None,
                  holdout: int = 0, pose_opt: bool = False, depth_loss: bool = False, world_scale: float | None = None,
                  bilateral_grid: bool = False, random_bkgd: bool = False, opacity_reg: float = OPACITY_REG, holdout_block: int = 0,
-                 from_splats: int = 0, exposure_affine: bool = False):
+                 from_splats: int = 0, exposure_affine: bool = False, grow_cap: int = 0):
     p = dict(PRESETS[preset])
     # the capture app's advanced settings: explicit values win over the preset
     for k, v in (("max_steps", iterations), ("sh_degree", sh_degree), ("cap_max", cap_max)):
@@ -46,6 +46,8 @@ def build_config(st, data: str, result: str, preset: str, ppisp: bool | None, an
             p[k] = v
     if from_splats:  # a fine-tune (plypipe.finetune): the cap is the model's own count, so MCMC moves splats and adds none
         p["cap_max"] = from_splats
+        if grow_cap and grow_cap > from_splats:  # a growth round: MCMC adds splats (where the error is) up to grow_cap
+            p["cap_max"] = int(grow_cap)
     use_ppisp = p["ppisp"] if ppisp is None else ppisp
     steps = p["max_steps"]
     # world_scale: the median camera distance in metres. The MCMC recipe (noise_lr 5e5, scale_reg 0.01) is tuned
@@ -126,6 +128,7 @@ def build_config(st, data: str, result: str, preset: str, ppisp: bool | None, an
                  **({"opacityReg": opacity_reg} if opacity_reg != OPACITY_REG else {}),
                  **({"holdoutBlock": holdout_block} if holdout_block else {}),
                  **({"fromSplats": from_splats} if from_splats else {}),
+                 **({"growCap": int(grow_cap)} if from_splats and grow_cap and grow_cap > from_splats else {}),
                  **({"exposureAffine": True} if exposure_affine and getattr(cfg, "post_processing", None) == "bilateral_grid" else {})}
 
 
@@ -176,6 +179,7 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--random-bkgd", action="store_true")
     ap.add_argument("--from-ply", help="fine-tune: start from this trained model instead of the SfM points, the splat cap at its own "
                                        "count (its SH is cut to --sh-degree)")
+    ap.add_argument("--grow-cap", type=int, help="with --from-ply: let MCMC add splats up to this many (a growth round, plypipe.growth)")
     ap.add_argument("--world-scale", type=float, help="median camera distance (scene units): MCMC noise/scale_reg follow it")
     ap.add_argument("--restore", help="folder for restore points: autosave every PLY_AUTOSAVE_MIN minutes, save-and-exit on a signal (plypipe.restore)")
     ap.add_argument("--resume", action="store_true", help="continue from the restore point in --restore when its settings match")
@@ -205,7 +209,7 @@ def main(argv: list[str] | None = None) -> int:
     cfg, summary = build_config(st, os.path.abspath(a.data), os.path.abspath(a.result), a.preset, a.ppisp, a.antialiased,
                                 a.iterations, a.sh_degree, a.cap_max, a.holdout, a.pose_opt, a.depth_loss, a.world_scale,
                                 a.bilateral_grid, a.random_bkgd, a.opacity_reg, a.holdout_block, len(start["means"]) if start else 0,
-                                exposure_affine=a.exposure_affine)
+                                exposure_affine=a.exposure_affine, grow_cap=a.grow_cap or 0)
     block = None
     patched = [flag for flag, on in (("--holdout-block", a.holdout_block), ("--depth-loss", a.depth_loss), ("--from-ply", start),
                                      ("--masks", a.masks), ("--init-points", a.init_points)) if on]

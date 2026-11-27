@@ -27,9 +27,12 @@ def test_without_capture_json_it_is_a_normal_walk():
     assert 2.0 <= p["keptFps"] <= 2.4
 
 
-def test_long_footage_is_capped_by_the_frame_budget():
-    p = plan.input_plan(1800.0, 4, 3840, None)
-    assert p["expectedFrames"] <= p["frameBudget"]
+def test_long_footage_keeps_the_same_frame_rate_as_short_footage():
+    # no frame budget (the user's rule): half an hour of walking keeps the views per second of thirty seconds
+    short, long = plan.input_plan(30.0, 1, 3840, None), plan.input_plan(1800.0, 4, 3840, None)
+    assert long["keptFps"] == short["keptFps"]
+    assert abs(long["expectedFrames"] - long["keptFps"] * 1800) < 0.01 * 1800  # keptFps is shown rounded
+    assert "frameBudget" not in long
 
 
 def test_resolution_follows_the_source_pixels():
@@ -50,12 +53,13 @@ def test_a_short_capture_cannot_claim_the_area_budget():
     assert few["capMax"] <= 200 * plan._DEFAULT_VIEW_MP * plan._GAUSSIANS_PER_VIEW_MP
 
 
-def test_preset_scales_but_never_past_the_ceiling():
+def test_preset_scales_and_a_big_space_is_not_held_under_a_ceiling():
     light = plan.model_plan(900, ROOM, "quick", 3.1)
     best = plan.model_plan(900, ROOM, "high", 3.1)
     assert light["capMax"] < best["capMax"]
     assert best["iterations"] <= plan._PRESET_CEIL["high"]
-    assert best["capMax"] <= plan._PRESET_CAP_MAX["high"]
+    hall = {"min": [0, 0, 0], "max": [60, 8, 40]}  # a big hall, filmed with plenty of views
+    assert plan.model_plan(4000, hall, "high", 8.0)["capMax"] > 2_000_000
 
 
 def test_steps_follow_the_view_count():

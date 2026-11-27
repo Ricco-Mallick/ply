@@ -62,9 +62,13 @@ STAGE = "lidar"
 LITE_SRC = "scene_lite_src.ply"
 
 
+SCAN_SPLATS = 2_000_000  # a laser scan shown directly (no training): points thinned to this many for the viewer
+
+
 def splat_cap() -> int:
-    """The High preset's splat count (plan.py keeps it per preset, and a scan is a High job)."""
-    return int(plan_mod._PRESET_CAP_MAX["high"])
+    """How many of a laser scan's points become splats when the scan itself is the twin (nothing is trained here;
+    trained twins have no splat ceiling, see plypipe.growth)."""
+    return SCAN_SPLATS
 
 
 # ------------------------------------------------------------------ input
