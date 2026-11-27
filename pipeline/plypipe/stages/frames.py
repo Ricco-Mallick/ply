@@ -151,7 +151,7 @@ def _scale_filter(long_side: int) -> str:
 def run_stage(ctx: Ctx, src: Path) -> dict:
     # defaults until the plan has looked at the clips (a folder of photos skips the plan entirely)
     fps = float(ctx.opt("fps", 2.5))
-    long_side = int(ctx.opt("long_side", 1600))
+    long_side = int(ctx.opt("long_side", (plan.read(ctx.out).get("device") or {}).get("maxLongSide") or 1600))
     oversample = int(ctx.opt("oversample", 4))
     max_frames = ctx.opt("max_frames")
     out = ctx.frames_dir
@@ -191,7 +191,8 @@ def run_stage(ctx: Ctx, src: Path) -> dict:
     probes = [probe_video(v) for v in videos]
     duration = sum(p["durationSec"] or 0 for p in probes)
     source_long = max((p["longSide"] or 0 for p in probes), default=0) or 1920
-    planned = plan.input_plan(duration, len(videos), source_long, _capture(src, ctx))
+    dev = plan.read(ctx.out).get("device") or {}  # plypipe.device, written by the cli for this machine
+    planned = plan.input_plan(duration, len(videos), source_long, _capture(src, ctx), max_side=dev.get("maxLongSide"))
     fps = float(ctx.opt("fps", planned["keptFps"]))
     long_side = int(ctx.opt("long_side", planned["longSide"]))
     planned.update(fpsUsed=fps, longSideUsed=long_side)

@@ -27,6 +27,7 @@ jobs:
           node --experimental-strip-types test/modal.test.mts
           node --experimental-strip-types test/limits.test.mts
           node --experimental-strip-types test/places.test.mts
+          node --experimental-strip-types test/machines.test.mts
           node --experimental-strip-types test/summary.test.mts
   app:
     runs-on: ubuntu-latest

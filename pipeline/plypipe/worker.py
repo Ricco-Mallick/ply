@@ -805,8 +805,17 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--keep", action="store_true", help="keep job folders after upload")
     ap.add_argument("extra", nargs="*", help="extra plypipe flags for every job (e.g. --device cuda)")
     a = ap.parse_args(argv)
+    # a paired PC (plypipe.enroll, pipeline/local/start.bat): its own token, and only jobs assigned to it by name
+    from plypipe import enroll
+    paired = None if a.token else enroll.load()
+    specs = None
+    if paired:
+        a.token, a.api, a.name = paired["token"], a.api or paired.get("api"), paired["name"]
+        from plypipe import device
+        specs = device.device_plan(device.probe(a.work if a.work.exists() else Path.home()))
+        print(f"[worker] paired PC {a.name}: {specs['why']}", flush=True)
     if not a.api or not a.token:
-        ap.error("set PLY_API and PLY_WORKER_TOKEN (or --api/--token)")
+        ap.error("set PLY_API and PLY_WORKER_TOKEN (or --api/--token), or pair this PC: python -m plypipe.enroll")
     api, idle_since = Api(a.api, a.token), time.time()
     print(f"[worker] {a.name} polling {a.api}", flush=True)
     deadline = float(os.environ.get("PLY_DEADLINE", 0))  # epoch seconds when this machine will be killed (Modal timeout)
@@ -819,7 +828,22 @@ def main(argv: list[str] | None = None) -> int:
                 return 2
             print(f"[worker] less than {need_min:g} min left before this machine's deadline: not taking new jobs", flush=True)
             return 0
-        status, job = api.req("POST", "/v1/worker/claim", {"worker": a.name, "prefix": os.environ.get("PLY_CLAIM_PREFIX", "")})
+        body = {"worker": a.name, "prefix": os.environ.get("PLY_CLAIM_PREFIX", "")}
+        if specs:
+            body["specs"] = specs
+        try:
+            status, job = api.req("POST", "/v1/worker/claim", body)
+        except RuntimeError as e:
+            if not paired:
+                raise
+            if ": 401 " in str(e) or ": 403 " in str(e):
+                print("[worker] this PC's pairing was revoked or is no longer valid: pair again (start.bat, or python -m "
+                      "plypipe.enroll --again)", flush=True)
+                return 3
+            # a PC on a college network: an outage is a reason to wait, not to stop
+            print(f"[worker] cannot reach the API ({e}); trying again in a minute", flush=True)
+            time.sleep(60)
+            continue
         if status == 200 and job:
             print(f"[worker] claimed {job['id']} ({job['name']})", flush=True)
             took_job = True

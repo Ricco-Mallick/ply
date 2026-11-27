@@ -15,7 +15,7 @@ import sys
 import time
 from pathlib import Path
 
-from plypipe import plan
+from plypipe import device, plan
 from plypipe.util import Ctx, read_scene, run
 
 GSPLAT_SHA = "512d366b67073d77ca099ede742683c165dfc23b"  # nerfstudio-project/gsplat main, 2026-09-19 (v1.6.0)
@@ -170,8 +170,10 @@ def run_stage(ctx: Ctx) -> dict:
     if not views:  # a resumed job may have the solved frames only
         views = len(list((ctx.data_dir / "images").glob("*.jpg"))) if (ctx.data_dir / "images").exists() else 0
     height = min(shell.get("ceilingY") or 0, (bounds.get("max") or [0, 0, 0])[1] or 0) or None
+    dev = plan.read(ctx.out).get("device") or {}  # plypipe.device: what this machine's GPU and RAM can hold
     budget = plan.model_plan(views, bounds or None, preset, height, iterations=ctx.opt("iterations"),
-                             cap_max=ctx.opt("cap_max"), megapixels=view_megapixels(ctx.data_dir / "images"))
+                             cap_max=ctx.opt("cap_max"), megapixels=view_megapixels(ctx.data_dir / "images"),
+                             max_gaussians=dev.get("maxGaussians"))
     plan.write(ctx.out, "model", budget)
     ctx.log.emit("train", "progress", f"plan: {budget['why']}")
     cmd += ["--iterations", str(budget["iterations"]), "--cap-max", str(budget["capMax"])]
@@ -186,6 +188,10 @@ def run_stage(ctx: Ctx) -> dict:
         cmd += ["--sh-degree", str(ctx.opt("sh_degree"))]
     flags, block = split_flags(ctx)
     cmd += flags
+    if dev.get("packed"):
+        cmd.append("--packed")
+    if dev.get("loaderWorkers") is not None:
+        cmd += ["--loader-workers", str(dev["loaderWorkers"])]
     for flag in ("pose_opt", "depth_loss", "bilateral_grid", "exposure_affine", "random_bkgd"):
         if ctx.opt(flag):
             cmd.append("--" + flag.replace("_", "-"))
@@ -200,7 +206,23 @@ def run_stage(ctx: Ctx) -> dict:
         if (ctx.out / "scan" / "init.npz").is_file():
             cmd += ["--init-points", str(ctx.out / "scan" / "init.npz")]
         ctx.log.emit("train", "progress", "depth loss on the laser scan, training starts from its points")
-    run(cmd, ctx, "train", env=launcher_env(), progress_every=50)
+    oom_retry = None
+    try:
+        run(cmd, ctx, "train", env=launcher_env(), progress_every=50)
+    except RuntimeError as e:
+        # a small card (plypipe.device) whose per-splat estimate was optimistic: one retry at a lower cap, from scratch,
+        # rather than a failed job. An explicit --cap-max is the operator's number and is not second-guessed
+        if not device.oom(str(e)) or ctx.opt("cap_max") or not dev.get("maxGaussians"):
+            raise
+        lower = max(100_000, int(budget["capMax"] * device.OOM_RETRY_FACTOR))
+        ctx.log.emit("train", "warn", f"CUDA out of memory at {budget['capMax']:,} splats: retrying once at {lower:,}")
+        oom_retry = {"from": budget["capMax"], "to": lower}
+        i = cmd.index("--cap-max")
+        cmd[i + 1] = str(lower)
+        budget = {**budget, "capMax": lower, "why": budget["why"] + f"; out of memory, retried at {lower:,}"}
+        plan.write(ctx.out, "model", budget)
+        shutil.rmtree(result, ignore_errors=True)
+        run(cmd, ctx, "train", env=launcher_env(), progress_every=50)
     if ctx.opt("train_dry_run"):
         return {"dryRun": True}
     plys = sorted((result / "ply").glob("point_cloud_*.ply"), key=lambda p: int(p.stem.rsplit("_", 1)[1]))
@@ -225,6 +247,7 @@ def run_stage(ctx: Ctx) -> dict:
     return {"ply": "scene.ply", "sizeMB": round((ctx.out / "scene.ply").stat().st_size / 2**20, 1),
             "fromStep": int(plys[-1].stem.rsplit("_", 1)[1]), **preset_info,
             "plan": {k: budget[k] for k in ("iterations", "capMax", "why")},
+            **({"oomRetry": oom_retry} if oom_retry else {}),
             **({"eval": scores} if scores else {}), **extra, **({"exposureFold": fold} if fold else {})}
 
 

@@ -102,6 +102,11 @@ python3 -m venv .venv && .venv/bin/pip install -e '.[test]' 'pycolmap==4.2.1'
 ```
 CPU SfM is fine for ~50 frames of tests and far too slow for a real capture.
 
+### A worker PC (Windows 11 + NVIDIA, e.g. a college lab GTX 1650)
+Extract the repo zip and double-click `start.bat`: WSL 2, an install for that GPU, pairing with the API, then it runs
+the jobs the team assigns to it (`scripts/plyctl.py machines` / `assign`). Plans for its own VRAM and RAM
+(`plypipe.device`). See [docs/LOCAL.md](../docs/LOCAL.md).
+
 ### Kaggle (free T4)
 `kaggle/ply_pipeline.ipynb`: accelerator **GPU T4** (P100 is unsupported by torch cu128), internet on, add the video plus this `pipeline/` folder as a Dataset named `ply-pipeline`. The first run builds the CUDA wheels (~15 min) and saves them in `/kaggle/working/wheels`; publish that folder as a Dataset `ply-wheels` and later runs skip the build. Outputs land in `/kaggle/working/output` and `output.zip`.
 

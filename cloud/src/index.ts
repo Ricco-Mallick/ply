@@ -67,6 +67,7 @@ type Role = 'app' | 'worker' | null;
 
 import { inviteBudget, resultsVisible } from './limits.ts';
 import { summarize, summaryText } from './summary.ts';
+import { PAIR_PER_HOUR, PAIR_TTL_MS, machineKeyAllowed, machineName, machinePathAllowed, machineReadAllowed, normCode, pairCode, parseMachineAuth, randomHex, sha256hex, trimSpecs } from './machines.ts';
 
 
 /* Invite only. There is no signup: an invite is a signed code, label.expiry.mac, minted with the
@@ -108,6 +109,24 @@ function keyAllowed(key: string, r: Role) {
   return r === 'app' ? key.startsWith('captures/') : r === 'worker' ? key.startsWith('scenes/') : false;
 }
 
+type Machine = { name: string; busyJob: string | null; files: string[] };
+/** A paired PC (src/machines.ts): its own token, and the job it is working on, if any. */
+async function machineOf(req: Request, env: Env, now: number): Promise<Machine | null> {
+  const auth = parseMachineAuth(req.headers.get('authorization'));
+  if (!auth) return null;
+  const row = await env.DB.prepare("SELECT name FROM machines WHERE name = ? AND status = 'active' AND token_hash = ?")
+    .bind(auth.name, await sha256hex(auth.secret)).first() as any;
+  if (!row) return null;
+  await env.DB.prepare('UPDATE machines SET last_seen = ? WHERE name = ?').bind(now, row.name).run();
+  // its job: running now, or ended in the last half hour (the log and late files go up after the final status)
+  const job = await env.DB.prepare(`SELECT id, files FROM jobs WHERE assigned_worker = ? AND worker = ? AND
+      (status = 'running' OR (status IN ('done','failed','review') AND updated_at > ?)) ORDER BY started_at DESC LIMIT 1`).bind(row.name, row.name, now - 30 * 60_000).first() as any;
+  let files: string[] = [];
+  try { files = job ? JSON.parse(job.files) : []; } catch { /* malformed row: no inputs */ }
+  return { name: row.name, busyJob: job?.id ?? null, files };
+}
+const isTeam = async (req: Request, env: Env) => (await identity(req, env)).owner === 'team';
+
 export default {
   async fetch(req: Request, env: Env, ctx: Ctx): Promise<Response> {
     const c = cors(req, env);
@@ -119,15 +138,20 @@ export default {
   async scheduled(_e: unknown, env: Env, ctx: Ctx) {
     const now = Date.now();
     // queued for 2+ minutes, or 'running' with no heartbeat for 20 minutes (its worker died) and still allowed a retry
-    const waiting = await env.DB.prepare(`SELECT COUNT(*) n FROM jobs WHERE capture_id NOT LIKE 'rehearsal-%' AND
+    const waiting = await env.DB.prepare(`SELECT COUNT(*) n FROM jobs WHERE capture_id NOT LIKE 'rehearsal-%' AND assigned_worker IS NULL AND
       ((status='queued' AND created_at < ?) OR (status='running' AND updated_at < ? AND attempts < ?))`).bind(now - 120_000, now - STALE_MS, MAX_ATTEMPTS).first();
-    const live = await env.DB.prepare('SELECT COUNT(*) n FROM workers WHERE last_seen > ?').bind(now - 90_000).first();
+    const live = await env.DB.prepare('SELECT COUNT(*) n FROM workers WHERE last_seen > ? AND name NOT IN (SELECT name FROM machines)').bind(now - 90_000).first();
     if (waiting.n > 0 && live.n === 0) ctx.waitUntil(kickModal(env, 'cron'));
   },
 };
 
 async function route(req: Request, env: Env, ctx: Ctx): Promise<Response> {
-  const url = new URL(req.url), p = url.pathname, q = url.searchParams, r = await role(req, env), now = Date.now();
+  const url = new URL(req.url), p = url.pathname, q = url.searchParams, now = Date.now();
+  let r = await role(req, env);
+  // a paired PC: a worker for its assigned jobs only, and nobody anywhere else in the API
+  const mach = r ? null : await machineOf(req, env, now);
+  if (mach) r = machinePathAllowed(p) ? 'worker' : null;
+  const allowed = (key: string) => mach ? machineKeyAllowed(key, mach.busyJob) : keyAllowed(key, r);
   // who am I: the app checks an invite before it lets someone record and spend GPU time
   if (p === '/v1/whoami') {
     const key = req.headers.get('x-ply-key') ?? '';
@@ -138,6 +162,80 @@ async function route(req: Request, env: Env, ctx: Ctx): Promise<Response> {
   }
 
   // which code is live, in one request: a stale deploy shows here instead of as a slow viewer
+  // ---- paired PCs (src/machines.ts) ----
+  if (p === '/v1/machines/pair' && req.method === 'POST') {  // no key: the PC has none yet. It gets a code to show
+    await env.DB.prepare("DELETE FROM machines WHERE status = 'pending' AND created_at < ?").bind(now - PAIR_TTL_MS).run();
+    const recent = await env.DB.prepare('SELECT COUNT(*) n FROM machines WHERE created_at > ?').bind(now - 3600_000).first() as any;
+    if ((recent?.n ?? 0) >= PAIR_PER_HOUR) return json({ error: 'too many pairing requests this hour, try later' }, 429);
+    const b = await req.json().catch(() => ({})) as any;
+    const name = machineName(b.hint), code = pairCode(), poll = randomHex(32);
+    await env.DB.prepare('INSERT INTO machines (name,status,pair_code,poll_hash,specs,created_at) VALUES (?,?,?,?,?,?)')
+      .bind(name, 'pending', code, await sha256hex(poll), trimSpecs(b.specs), now).run();
+    return json({ name, code, poll, expiresInSec: PAIR_TTL_MS / 1000 }, 201, NO_STORE);
+  }
+  if (p === '/v1/machines/poll' && req.method === 'POST') {  // the PC waits here until the team approves its code
+    const b = await req.json().catch(() => ({})) as any;
+    const row = await env.DB.prepare('SELECT name,status,poll_hash FROM machines WHERE name = ?').bind(String(b.name ?? '')).first() as any;
+    if (!row || !row.poll_hash || row.poll_hash !== await sha256hex(String(b.poll ?? ''))) return json({ error: 'unknown pairing' }, 404, NO_STORE);
+    if (row.status === 'pending') return json({ status: 'pending' }, 200, NO_STORE);
+    if (row.status !== 'approved') return json({ status: row.status }, 200, NO_STORE);
+    const secret = randomHex(32);  // handed over once; only its hash is kept, and the poll secret dies with it
+    await env.DB.prepare("UPDATE machines SET status='active', token_hash=?, poll_hash=NULL, pair_code=NULL WHERE name=? AND status='approved'")
+      .bind(await sha256hex(secret), row.name).run();
+    return json({ status: 'active', name: row.name, token: `pm_${row.name}.${secret}` }, 200, NO_STORE);
+  }
+  if (p === '/v1/machines' || p.startsWith('/v1/machines/')) {
+    if (r !== 'app' || !(await isTeam(req, env))) return json({ error: 'team key required' }, 401);
+    if (p === '/v1/machines' && req.method === 'GET') {
+      const rows = await env.DB.prepare(`SELECT m.name,m.status,m.pair_code,m.specs,m.label,m.created_at,m.approved_at,m.last_seen,
+          (SELECT COUNT(*) FROM jobs j WHERE j.assigned_worker = m.name AND j.status IN ('queued','running')) AS queued
+          FROM machines m WHERE m.status != 'revoked' ORDER BY COALESCE(m.last_seen, m.created_at) DESC`).all();
+      return json({ machines: (rows.results as any[]).map(x => ({ ...x, specs: x.specs ? JSON.parse(x.specs) : null,
+        online: !!x.last_seen && now - x.last_seen < 90_000 })) }, 200, NO_STORE);
+    }
+    if (p === '/v1/machines/approve' && req.method === 'POST') {
+      const b = await req.json().catch(() => ({})) as any;
+      const code = normCode(b.code);
+      const row = code ? await env.DB.prepare("SELECT name FROM machines WHERE pair_code = ? AND status = 'pending'").bind(code).first() as any : null;
+      if (!row) return json({ error: 'no PC is waiting with that code (expired, or already approved)' }, 404);
+      await env.DB.prepare("UPDATE machines SET status='approved', approved_at=?, label=? WHERE name=?")
+        .bind(now, b.label ? String(b.label).slice(0, 80) : null, row.name).run();
+      return json({ ok: true, name: row.name });
+    }
+    const mm = p.match(/^\/v1\/machines\/([a-z0-9-]{3,48})\/(revoke|label)$/);
+    if (mm && req.method === 'POST') {
+      const b = await req.json().catch(() => ({})) as any;
+      if (mm[2] === 'revoke') {
+        await env.DB.prepare("UPDATE machines SET status='revoked', token_hash=NULL, poll_hash=NULL, pair_code=NULL WHERE name=?").bind(mm[1]).run();
+        // its waiting jobs go back to nobody; a running one is re-queued by the stale check once it stops reporting
+        await env.DB.prepare("UPDATE jobs SET assigned_worker=NULL WHERE assigned_worker=? AND status='queued'").bind(mm[1]).run();
+      } else {
+        await env.DB.prepare('UPDATE machines SET label=? WHERE name=?').bind(String(b.label ?? '').slice(0, 80) || null, mm[1]).run();
+      }
+      return json({ ok: true });
+    }
+    return json({ error: 'not found' }, 404);
+  }
+  // assign a job to a paired PC (or back to the shared queue with worker: null). A failed or finished job is queued again
+  const assign = p.match(/^\/v1\/jobs\/([\w-]{6,64})\/assign$/);
+  if (assign && req.method === 'POST') {
+    if (r !== 'app' || !(await isTeam(req, env))) return json({ error: 'team key required' }, 401);
+    const b = await req.json().catch(() => ({})) as any;
+    const worker = b.worker ? String(b.worker) : null;
+    if (worker) {
+      const m2 = await env.DB.prepare("SELECT name FROM machines WHERE name=? AND status IN ('approved','active')").bind(worker).first();
+      if (!m2) return json({ error: `no paired machine called ${worker}` }, 404);
+    }
+    const job = await env.DB.prepare('SELECT id,status,args,capture_id FROM jobs WHERE id=?').bind(assign[1]).first() as any;
+    if (!job) return json({ error: 'no such job' }, 404);
+    if (job.status === 'running') return json({ error: 'job is running: stop it first' }, 409);
+    const args = Array.isArray(b.args) ? JSON.stringify(b.args.map(String)) : job.args;  // what to run on it: --until, --from, --preset ...
+    await env.DB.prepare("UPDATE jobs SET assigned_worker=?, args=?, status='queued', attempts=0, progress=0, stage=NULL, message=?, updated_at=? WHERE id=?")
+      .bind(worker, args, worker ? `assigned to ${worker}` : 'back in the shared queue', now, job.id).run();
+    if (!worker && !String(job.capture_id ?? '').startsWith('rehearsal-')) ctx.waitUntil(kickModal(env, `job ${job.id}`));
+    return json({ ok: true, jobId: job.id, worker, args: JSON.parse(args) });
+  }
+
   if (p === '/' || p === '/v1') return json({ ok: true, service: 'ply-api', version: env.CF_VERSION?.tag ?? env.VERSION ?? 'manual', deployedAt: env.CF_VERSION?.timestamp ?? env.DEPLOYED_AT ?? null, id: env.CF_VERSION?.id ?? null }, 200, { 'cache-control': 'no-store' });
   if (p === '/v1/health' && req.method === 'GET') {
     const w = await env.DB.prepare('SELECT name,last_seen,busy_job,note FROM workers WHERE last_seen > ? ORDER BY last_seen DESC').bind(now - 90_000).all();
@@ -224,13 +322,13 @@ async function route(req: Request, env: Env, ctx: Ctx): Promise<Response> {
     if (!r) return json({ error: 'missing or wrong key' }, 401);
     const b = await req.json() as any;
     const key = r === 'app' ? `captures/${safeName(b.captureId)}/${safeName(b.name)}` : String(b.key ?? '');
-    if (!keyAllowed(key, r)) return json({ error: 'key not allowed' }, 403);
+    if (!allowed(key)) return json({ error: 'key not allowed' }, 403);
     const uploadId = await createMultipart(s3(env), key, b.type || 'application/octet-stream');
     return json({ key, uploadId });
   }
   if (p === '/v1/uploads/sign' && req.method === 'POST') {
     const b = await req.json() as any;
-    if (!keyAllowed(b.key, r)) return json({ error: 'not allowed' }, r ? 403 : 401);
+    if (!allowed(b.key)) return json({ error: 'not allowed' }, r ? 403 : 401);
     const parts: number[] = (b.parts ?? []).map(Number).filter((n: number) => n >= 1 && n <= 10000).slice(0, 200);
     const urls: Record<number, string> = {};
     for (const n of parts) urls[n] = await presign(s3(env), 'PUT', b.key, { partNumber: String(n), uploadId: String(b.uploadId) }, SIGN_TTL);
@@ -238,13 +336,13 @@ async function route(req: Request, env: Env, ctx: Ctx): Promise<Response> {
   }
   if (p === '/v1/uploads/complete' && req.method === 'POST') {
     const b = await req.json() as any;
-    if (!keyAllowed(b.key, r)) return json({ error: 'not allowed' }, r ? 403 : 401);
+    if (!allowed(b.key)) return json({ error: 'not allowed' }, r ? 403 : 401);
     await completeMultipart(s3(env), b.key, String(b.uploadId), (b.parts ?? []).map((x: any) => ({ partNumber: Number(x.partNumber), etag: String(x.etag) })));
     return json({ key: b.key });
   }
   if (p === '/v1/files' && req.method === 'PUT') {
     const key = q.get('key') ?? '';
-    if (!keyAllowed(key, r)) return json({ error: 'not allowed' }, r ? 403 : 401);
+    if (!allowed(key)) return json({ error: 'not allowed' }, r ? 403 : 401);
     const body = await req.arrayBuffer();
     if (body.byteLength > 25e6) return json({ error: 'too large: use a multipart upload' }, 413);
     const res = await signedFetch(s3(env), 'PUT', key, {}, body, { 'content-type': req.headers.get('content-type') ?? 'application/octet-stream' });
@@ -285,9 +383,10 @@ async function route(req: Request, env: Env, ctx: Ctx): Promise<Response> {
     const files: string[] = (b.files ?? []).filter((k: string) => typeof k === 'string' && (k.startsWith(`captures/${safeName(b.captureId)}/`) || /^gdrive:[\w-]{20,}:[\w.\-]{1,120}$/.test(k)));
     if (!files.length) return json({ error: 'no uploaded files for this capture' }, 400);
     const jobId = id();
-    await env.DB.prepare('INSERT INTO jobs (id,name,capture_id,settings,args,files,status,progress,created_at,updated_at,owner,idem) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)')
-      .bind(jobId, String(b.name ?? 'Capture').slice(0, 80), safeName(b.captureId), JSON.stringify(b.settings ?? {}), JSON.stringify((b.args ?? []).map(String)), JSON.stringify(files), 'queued', 0, now, now, me.owner || null, idem || null).run();
-    if (!safeName(b.captureId).startsWith('rehearsal-')) ctx.waitUntil(kickModal(env, `job ${jobId}`)); // rehearsals are for Kaggle CPU
+    const assignTo = b.worker && me.owner === 'team' ? String(b.worker).slice(0, 60) : null;  // a paired PC (team key only)
+    await env.DB.prepare('INSERT INTO jobs (id,name,capture_id,settings,args,files,status,progress,created_at,updated_at,owner,idem,assigned_worker) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)')
+      .bind(jobId, String(b.name ?? 'Capture').slice(0, 80), safeName(b.captureId), JSON.stringify(b.settings ?? {}), JSON.stringify((b.args ?? []).map(String)), JSON.stringify(files), 'queued', 0, now, now, me.owner || null, idem || null, assignTo).run();
+    if (!assignTo && !safeName(b.captureId).startsWith('rehearsal-')) ctx.waitUntil(kickModal(env, `job ${jobId}`)); // rehearsals are for Kaggle CPU
     return json({ jobId }, 201);
   }
 
@@ -316,6 +415,7 @@ async function route(req: Request, env: Env, ctx: Ctx): Promise<Response> {
   // ---- GPU worker ----
   if (p.startsWith('/v1/worker/')) {
     if (r !== 'worker') return json({ error: 'worker token required' }, 401);
+    if (mach && p === '/v1/worker/kick') return json({ error: 'not for paired machines' }, 403);
     if (p === '/v1/worker/kick' && req.method === 'POST') return json({ ok: true, modal: await kickModal(env, 'manual') });
     if (p === '/v1/worker/claim' && req.method === 'POST') {
       const b = await req.json().catch(() => ({})) as any;
@@ -324,21 +424,26 @@ async function route(req: Request, env: Env, ctx: Ctx): Promise<Response> {
       // again and again: each retry costs GPU time
       await env.DB.prepare(`UPDATE jobs SET status='failed', message='Stopped after 2 attempts: the GPU worker crashed or stalled each time. Check the capture, then queue it again.', finished_at=?, updated_at=?
         WHERE status='running' AND updated_at < ? AND attempts >= ?`).bind(now, now, now - STALE_MS, MAX_ATTEMPTS).run();
+      // a paired PC takes only what was assigned to it by name; the shared-token workers (Modal, Kaggle) only the rest
+      const mine = mach ? 'assigned_worker = ?' : 'assigned_worker IS NULL';
+      const claimer = mach ? mach.name : wname;
       const row = await env.DB.prepare(`UPDATE jobs SET status='running', worker=?, stage=NULL, progress=0, message='claimed', started_at=?, updated_at=?, attempts=attempts+1
-        WHERE id = (SELECT id FROM jobs WHERE (status='queued' OR (status='running' AND updated_at < ? AND attempts < ?)) AND capture_id LIKE ? ORDER BY created_at LIMIT 1) RETURNING *`)
-        .bind(String(b.worker ?? 'worker').slice(0, 60), now, now, now - STALE_MS, MAX_ATTEMPTS, `${String(b.prefix ?? '').replace(/[%_]/g, '')}%`).first();
-      if (!wname.startsWith('preflight')) // the pre-flight check's token probe is not a worker
-        await env.DB.prepare('INSERT INTO workers (name,last_seen,busy_job,note) VALUES (?,?,?,NULL) ON CONFLICT(name) DO UPDATE SET last_seen=excluded.last_seen, busy_job=excluded.busy_job, note=NULL').bind(wname, now, row?.id ?? null).run();
+        WHERE id = (SELECT id FROM jobs WHERE (status='queued' OR (status='running' AND updated_at < ? AND attempts < ?)) AND capture_id LIKE ? AND ${mine} ORDER BY created_at LIMIT 1) RETURNING *`)
+        .bind(claimer, now, now, now - STALE_MS, MAX_ATTEMPTS, `${String(b.prefix ?? '').replace(/[%_]/g, '')}%`, ...(mach ? [mach.name] : [])).first();
+      if (mach && b.specs) await env.DB.prepare('UPDATE machines SET specs=? WHERE name=?').bind(trimSpecs(b.specs), mach.name).run();
+      if (!claimer.startsWith('preflight')) // the pre-flight check's token probe is not a worker
+        await env.DB.prepare('INSERT INTO workers (name,last_seen,busy_job,note) VALUES (?,?,?,NULL) ON CONFLICT(name) DO UPDATE SET last_seen=excluded.last_seen, busy_job=excluded.busy_job, note=NULL').bind(claimer, now, row?.id ?? null).run();
       if (!row) return new Response(null, { status: 204 });
       return json({ ...row, settings: JSON.parse(row.settings), args: JSON.parse(row.args), files: JSON.parse(row.files) });
     }
     if (p === '/v1/worker/hello' && req.method === 'POST') {  // a starting worker says what it is doing (install progress)
       const b = await req.json().catch(() => ({})) as any;
-      await env.DB.prepare('INSERT INTO workers (name,last_seen,busy_job,note) VALUES (?,?,NULL,?) ON CONFLICT(name) DO UPDATE SET last_seen=excluded.last_seen, note=excluded.note').bind(String(b.worker ?? 'worker').slice(0, 60), now, String(b.note ?? '').slice(0, 200)).run();
+      await env.DB.prepare('INSERT INTO workers (name,last_seen,busy_job,note) VALUES (?,?,NULL,?) ON CONFLICT(name) DO UPDATE SET last_seen=excluded.last_seen, note=excluded.note').bind(mach ? mach.name : String(b.worker ?? 'worker').slice(0, 60), now, String(b.note ?? '').slice(0, 200)).run();
       return json({ ok: true });
     }
     m = p.match(/^\/v1\/worker\/jobs\/([\w-]+)$/);
     if (m && req.method === 'POST') {
+      if (mach && m[1] !== mach.busyJob) return json({ error: 'not your job' }, 403);
       const b = await req.json() as any, sets: string[] = ['updated_at=?'], vals: unknown[] = [now];
       if (b.status) { sets.push('status=?'); vals.push(b.status); if (b.status === 'done' || b.status === 'failed') { sets.push('finished_at=?'); vals.push(now); } }
       // a worker re-queueing its own job is a planned hand-over (the CPU camera solve hands back to a GPU), not a crash:
@@ -352,6 +457,7 @@ async function route(req: Request, env: Env, ctx: Ctx): Promise<Response> {
       await env.DB.prepare('UPDATE workers SET last_seen=? WHERE busy_job=?').bind(now, m[1]).run();
       return json({ ok: true });
     }
+    if (mach && p === '/v1/worker/file' && !machineReadAllowed(q.get('key') ?? '', mach.busyJob, mach.files)) return json({ error: 'not an input of your job' }, 403);
     if (p === '/v1/worker/file' && req.method === 'GET') return json({ url: await presign(s3(env), 'GET', q.get('key') ?? '', {}, SIGN_TTL) });
   }
   return json({ error: 'not found' }, 404);

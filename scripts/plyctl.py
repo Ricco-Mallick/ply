@@ -461,6 +461,53 @@ def cmd_cost(_api: Api, a, say=say, modal=None) -> int:
     return 1 if failed else 0
 
 
+def _ago(ms) -> str:
+    if not ms:
+        return "never"
+    sec = max(0, time.time() - ms / 1000)
+    return f"{sec:.0f} s ago" if sec < 120 else f"{sec / 60:.0f} min ago" if sec < 7200 else f"{sec / 3600:.0f} h ago"
+
+
+def cmd_machines(api: Api, a, say=say) -> int:
+    """Paired PCs (pipeline/local/start.bat): list, approve a pairing code, label, revoke."""
+    if a.action == "approve":
+        got = api.call("POST", "/v1/machines/approve", {"code": a.code, **({"label": a.label} if a.label else {})})
+        say(f"approved: {got['name']} (it picks up its token within a few seconds)")
+        return 0
+    if a.action == "revoke":
+        api.call("POST", f"/v1/machines/{a.name}/revoke", {})
+        say(f"revoked {a.name}: its token no longer works, its queued jobs are back in the shared queue")
+        return 0
+    if a.action == "label":
+        api.call("POST", f"/v1/machines/{a.name}/label", {"label": a.label or ""})
+        say(f"{a.name}: {a.label}")
+        return 0
+    rows = (api.call("GET", "/v1/machines") or {}).get("machines", [])
+    if not rows:
+        say("no paired PCs (one joins by running start.bat and sending you its code)")
+    for m in rows:
+        sp = m.get("specs") or {}
+        g = sp.get("gpu") or {}
+        state = "waiting for approval, code " + str(m.get("pair_code")) if m["status"] == "pending" else (
+            "online" if m.get("online") else f"offline, seen {_ago(m.get('last_seen'))}") if m["status"] == "active" else m["status"]
+        say(f"{m['name']:<28} {state}{'  [' + m['label'] + ']' if m.get('label') else ''}")
+        if g:
+            say(f"    {g.get('name')} {g.get('totalGB')} GB sm {g.get('sm')} | RAM {sp.get('ramGB')} GB | disk {sp.get('freeDiskGB')} GB free | "
+                f"train {'yes' if sp.get('trainable') else 'no'} | SAM 3 {'on' if sp.get('sam3') else 'off'} | "
+                f"splats <= {sp.get('maxGaussians') or '-'} | jobs waiting/running {m.get('queued', 0)}")
+    return 0
+
+
+def cmd_assign(api: Api, a, say=say) -> int:
+    """Send a job to a paired PC (or back to the shared queue with --shared), optionally with the plypipe flags to run."""
+    body: dict = {"worker": None if a.shared else a.machine}
+    if a.args is not None:
+        body["args"] = a.args.split()
+    got = api.call("POST", f"/v1/jobs/{a.job}/assign", body)
+    say(f"job {got['jobId']} -> {got['worker'] or 'shared queue'}; runs: plypipe run {' '.join(got['args'])}")
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     ap.add_argument("--api", default=os.environ.get("PLY_API", API))
@@ -484,8 +531,31 @@ def main(argv: list[str] | None = None) -> int:
                    help=f"the Modal profile that runs the {MODAL_APP} app (default: {DEFAULT_PROFILE})")
     c = sub.add_parser("cost")
     c.add_argument("--profile", default="all", help="'all' or one Modal profile name")
+    mc = sub.add_parser("machines", help="paired worker PCs: list, approve CODE, label NAME TEXT, revoke NAME")
+    mc.add_argument("action", nargs="?", default="list", choices=["list", "approve", "label", "revoke"])
+    mc.add_argument("target", nargs="?", help="the pairing code (approve) or the machine name (label, revoke)")
+    mc.add_argument("text", nargs="?", help="label text (label)")
+    mc.add_argument("--label", help="approve: a note for the list ('college lab 3')")
+    asg = sub.add_parser("assign", help="send a queued/failed/finished job to a paired PC")
+    asg.add_argument("job")
+    asg.add_argument("machine", nargs="?")
+    asg.add_argument("--shared", action="store_true", help="back to the shared queue (Modal / Kaggle)")
+    asg.add_argument("--args", help="replace the job's plypipe flags, one string: \"--preset standard --until occupancy\"")
     a = ap.parse_args(argv)
     api = Api(a.api, read_key(a))
+    if a.cmd in ("machines", "assign") and not api.key:
+        print(f"{a.cmd} needs the team code: PLY_TEAM_KEY or --key-file", file=sys.stderr)
+        return 2
+    if a.cmd == "machines":
+        a.code = a.name = a.target
+        if a.action == "label":
+            a.label = a.text
+        if a.action != "list" and not a.target:
+            print(f"machines {a.action} needs a {'code' if a.action == 'approve' else 'machine name'}", file=sys.stderr)
+            return 2
+    if a.cmd == "assign" and not (a.machine or a.shared):
+        print("assign needs a machine name, or --shared", file=sys.stderr)
+        return 2
     if a.cmd == "smoke" and a.clip and not api.key:
         print("smoke needs the team code: PLY_TEAM_KEY or --key-file", file=sys.stderr)
         return 2
@@ -498,6 +568,10 @@ def main(argv: list[str] | None = None) -> int:
             return cmd_stop(api, a)
         if a.cmd == "cost":
             return cmd_cost(api, a)
+        if a.cmd == "machines":
+            return cmd_machines(api, a)
+        if a.cmd == "assign":
+            return cmd_assign(api, a)
         return cmd_status(api, a)
     except KeyboardInterrupt:
         return 130

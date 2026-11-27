@@ -127,6 +127,9 @@ def build_parser() -> argparse.ArgumentParser:
                    help="lens model for SfM: OPENCV for wide action cams (DJI, GoPro), OPENCV_FISHEYE beyond ~150 deg")
     g.add_argument("--exhaustive-max", type=int, default=250, help="auto: exhaustive up to this many frames")
     g.add_argument("--device", choices=["auto", "cuda", "cpu"], default="auto")
+    r.add_argument("--device-profile", choices=["auto", "off"], default="auto",
+                   help="auto: measure this machine's GPU and RAM and hold the plan inside them (splat cap, packed mode, "
+                        "loader workers, SAM 3 off on small cards; plan.json['device']). off: plan as on a big cloud GPU")
     # no argparse default: an explicit choice beats the automatic one (ordered video of --incremental-min frames or
     # more goes straight to the incremental mapper), and a default would look explicit
     g.add_argument("--mapper", choices=["global", "incremental", "hierarchical", "keyframes"],
@@ -272,6 +275,8 @@ def main(argv: list[str] | None = None) -> int:
     order = list(STAGES)
     lo = order.index(a.only or a.from_stage or "frames")
     hi = order.index(a.only or a.until or "export")  # the splat is the product: the three.js twin/mesh is opt-in
+    if opts.get("device_profile", "auto") != "off":
+        _device_profile(ctx, order[lo:hi + 1])
     if a.force:
         clear_from(ctx, order[order.index(a.force):])
     (out / "job.json").write_text(json.dumps({"input": str(a.input), "opts": opts, "version": __version__}, indent=2, default=str))
@@ -305,6 +310,25 @@ def main(argv: list[str] | None = None) -> int:
             log.emit("verify", "error", "quality gate failed: this twin should not be published")
             return 1
     return 0
+
+
+def _device_profile(ctx: Ctx, stages: list[str]) -> None:
+    """Measure this machine (plypipe.device) and record its ceilings in plan.json for the stages to read. Every
+    invocation measures again: a job resumed on another PC plans for that PC."""
+    from plypipe import device, plan
+    dp = device.device_plan(device.probe(ctx.out))
+    plan.write(ctx.out, "device", dp)
+    ctx.log.emit("plan", "progress", f"device: {dp['why']}")
+    if not dp["sam3"]:
+        for key, stage, what in (("no_people_mask", "sfm", "people masks"), ("no_labels", "label", "SAM 3 labels")):
+            # masks made earlier on a bigger card (Kaggle coverage run, then train here) are still used: they cost nothing now
+            made = key == "no_people_mask" and (ctx.out / "masks" / "people.json").is_file()
+            if stage in stages and not ctx.opts.get(key) and not made:
+                ctx.opts[key] = True
+                ctx.log.emit("plan", "warn", f"{what} skipped: SAM 3 does not fit this GPU (run that stage on a bigger card, "
+                                             "or pass --device-profile off to try anyway)")
+    if not dp["trainable"] and "train" in stages:
+        ctx.log.emit("plan", "warn", "this machine cannot train: stop with --until occupancy and train elsewhere")
 
 
 if __name__ == "__main__":

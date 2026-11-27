@@ -407,3 +407,32 @@ def test_a_dead_network_is_one_clear_error(monkeypatch, capsys):
     assert plyctl.main(["--api", BASE, "logs", "job-1"]) == 1
     err = capsys.readouterr().err
     assert err.startswith("error: ") and "no route to host" in err and "Traceback" not in err
+
+
+def test_machines_and_assign_send_the_team_key_and_the_right_bodies():
+    sent = []
+
+    def send(method, url, data, headers):
+        sent.append((method, url.removeprefix(BASE), json.loads(data) if data else None, headers.get("x-ply-key")))
+        path = url.removeprefix(BASE)
+        if path == "/v1/machines":
+            return 200, {}, json.dumps({"machines": [
+                {"name": "pc-lab-ab12", "status": "active", "online": True, "label": "lab 3", "queued": 1,
+                 "specs": {"gpu": {"name": "GTX 1650", "totalGB": 4, "sm": 7.5}, "ramGB": 16, "trainable": True, "sam3": False}},
+                {"name": "pc-laptop-cd34", "status": "pending", "pair_code": "ABCD-EFGH"}]}).encode()
+        if path == "/v1/machines/approve":
+            return 200, {}, b'{"ok": true, "name": "pc-laptop-cd34"}'
+        if path.endswith("/assign"):
+            return 200, {}, json.dumps({"jobId": "job-1", "worker": "pc-lab-ab12", "args": ["--preset", "quick"]}).encode()
+        return 200, {}, b'{"ok": true}'
+
+    api = plyctl.Api(BASE, "the-code", send)
+    said = []
+    assert plyctl.cmd_machines(api, SimpleNamespace(action="list"), said.append) == 0
+    assert any("GTX 1650" in s for s in said) and any("ABCD-EFGH" in s for s in said)
+    assert plyctl.cmd_machines(api, SimpleNamespace(action="approve", code="abcd efgh", label="Toeesh laptop"), said.append) == 0
+    assert sent[-1][1:] == ("/v1/machines/approve", {"code": "abcd efgh", "label": "Toeesh laptop"}, "the-code")
+    assert plyctl.cmd_assign(api, SimpleNamespace(job="job-1", machine="pc-lab-ab12", shared=False, args="--preset quick"), said.append) == 0
+    assert sent[-1][1:3] == ("/v1/jobs/job-1/assign", {"worker": "pc-lab-ab12", "args": ["--preset", "quick"]})
+    plyctl.cmd_machines(api, SimpleNamespace(action="revoke", name="pc-lab-ab12"), said.append)
+    assert sent[-1][1] == "/v1/machines/pc-lab-ab12/revoke"

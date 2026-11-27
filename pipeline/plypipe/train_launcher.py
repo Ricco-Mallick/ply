@@ -177,6 +177,8 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--from-ply", help="fine-tune: start from this trained model instead of the SfM points, the splat cap at its own "
                                        "count (its SH is cut to --sh-degree)")
     ap.add_argument("--world-scale", type=float, help="median camera distance (scene units): MCMC noise/scale_reg follow it")
+    ap.add_argument("--packed", action="store_true", help="gsplat's packed rasterisation: less VRAM, a little slower (plypipe.device)")
+    ap.add_argument("--loader-workers", type=int, help="DataLoader worker processes (gsplat hard-codes 4; each is a process holding RAM)")
     ap.add_argument("--dry-run", action="store_true",
                     help="everything except the GPU work: import the trainer, build the config, load the scene with gsplat's parser")
     a = ap.parse_args(argv)
@@ -229,6 +231,11 @@ def main(argv: list[str] | None = None) -> int:
         if not hasattr(st, "create_splats_with_optimizers"):  # nothing to wrap: the run would start from the SfM points
             raise SystemExit("--from-ply: simple_trainer has no create_splats_with_optimizers to start from a model (check the gsplat pin)")
         finetune.install(st, start)
+    if a.packed and hasattr(cfg, "packed"):
+        cfg.packed = True
+        summary["packed"] = True
+    if a.loader_workers is not None:
+        summary["loaderWorkers"] = limit_loader_workers(st, a.loader_workers)
     cfg.adjust_steps(cfg.steps_scaler)
     os.makedirs(a.result, exist_ok=True)
     with open(os.path.join(a.result, "ply_preset.json"), "w") as f:
@@ -252,7 +259,35 @@ def main(argv: list[str] | None = None) -> int:
         print(json.dumps({"plyTrainDryRun": found}), flush=True)
         return 0
     st.cli(st.main, cfg, verbose=True)
+    try:  # what the run really used: calibrates plypipe.device's per-splat estimate on small cards
+        import torch
+        if torch.cuda.is_available():
+            summary["peakVramGB"] = round(torch.cuda.max_memory_allocated() / 2**30, 2)
+            with open(os.path.join(a.result, "ply_preset.json"), "w") as f:
+                json.dump(summary, f, indent=2)
+    except Exception:
+        pass
     return 0
+
+
+def limit_loader_workers(st, workers: int) -> int:
+    """simple_trainer builds its DataLoader with num_workers=4 inline; wrap the class it sees so the count follows RAM."""
+    import torch
+    base = torch.utils.data.DataLoader
+    n = max(0, int(workers))
+
+    class Loader(base):
+        def __init__(self, *args, **kw):
+            if "num_workers" in kw:
+                kw["num_workers"] = min(kw["num_workers"], n)
+                if n == 0:
+                    kw.pop("persistent_workers", None)
+            super().__init__(*args, **kw)
+
+    mod = getattr(st, "torch", None)
+    if mod is not None:
+        mod.utils.data.DataLoader = Loader
+    return n
 
 
 def install_init(st, path: str, cap: int) -> dict:

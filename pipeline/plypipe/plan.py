@@ -87,8 +87,9 @@ def motion(capture: dict | None) -> dict:
     return {"source": "sensors", "kind": kind, "factor": factor, "flowP80": round(f, 1), "turnP80": round(t, 1)}
 
 
-def input_plan(duration_s: float, clips: int, source_long: int, capture: dict | None) -> dict:
-    """Frames and pixels for the clips, before anything has been solved."""
+def input_plan(duration_s: float, clips: int, source_long: int, capture: dict | None, max_side: int | None = None) -> dict:
+    """Frames and pixels for the clips, before anything has been solved. `max_side` is the machine's ceiling
+    (plypipe.device: only a card under 3.5 GB sets one); it lowers the pixels, never the frames."""
     mo = motion(capture)
     budget = int(_clamp(2.0 * duration_s + 400, _FRAMES_MIN, _FRAMES_MAX))
     kept = _clamp((1 / _SECONDS_PER_FRAME) * mo["factor"], _FPS_MIN, _FPS_MAX)
@@ -96,6 +97,9 @@ def input_plan(duration_s: float, clips: int, source_long: int, capture: dict | 
     if capped:
         kept = budget / duration_s
     side = int(_clamp(round(source_long * _SIDE_SHARE / 16) * 16, _SIDE_MIN, _SIDE_MAX))
+    device_capped = bool(max_side and side > max_side)
+    if device_capped:
+        side = int(max_side)
     return {
         "keptFps": round(kept, 2),
         "longSide": side,
@@ -106,7 +110,8 @@ def input_plan(duration_s: float, clips: int, source_long: int, capture: dict | 
         "sourceLongSide": source_long,
         "motion": mo,
         "why": (f"{mo['kind']} walk ({mo['source']}) → {round(kept, 2)} frames/s, "
-                f"{side} px from {source_long} px source" + (", capped by the frame budget" if capped else "")),
+                f"{side} px from {source_long} px source" + (", capped by the frame budget" if capped else "")
+                + (f", held to {side} px by this GPU's memory" if device_capped else "")),
     }
 
 
@@ -123,8 +128,10 @@ def surface_area(bounds: dict | None, ceiling: float | None = None) -> dict:
 
 
 def model_plan(images: int, bounds: dict | None, preset: str = "standard", ceiling: float | None = None,
-               *, iterations: int | None = None, cap_max: int | None = None, megapixels: float | None = None) -> dict:
-    """Training budget once the model is solved. `megapixels` is the size of one training view."""
+               *, iterations: int | None = None, cap_max: int | None = None, megapixels: float | None = None,
+               max_gaussians: int | None = None) -> dict:
+    """Training budget once the model is solved. `megapixels` is the size of one training view; `max_gaussians` is
+    what this machine's GPU can hold (plypipe.device), the third ceiling next to surface area and views."""
     area = surface_area(bounds, ceiling)
     mult = _PRESET_CAP.get(preset, 1.0)
     mp = megapixels or _DEFAULT_VIEW_MP
@@ -142,6 +149,11 @@ def model_plan(images: int, bounds: dict | None, preset: str = "standard", ceili
         if cap > per_view:
             cap = max(_CAP_MIN, per_view)
             notes.append(f"capped at {_GAUSSIANS_PER_VIEW_MP}/view-MP × {images} views × {mp:.2f} MP × {mult}")
+    device_cap = None
+    if max_gaussians and cap > max_gaussians:
+        device_cap = int(max_gaussians)
+        notes.append(f"held to {device_cap:,} splats by this GPU's memory (planned {cap:,})")
+        cap = device_cap
     floor = _PRESET_FLOOR.get(preset, _PRESET_FLOOR["standard"])
     steps = int(_clamp(images * _STEPS_PER_VIEW * _PRESET_STEP.get(preset, 1.0),
                        floor, _PRESET_CEIL.get(preset, _PRESET_CEIL["standard"])))
@@ -152,6 +164,7 @@ def model_plan(images: int, bounds: dict | None, preset: str = "standard", ceili
         "capMax": cap_max or cap,
         "planIterations": steps,
         "planCapMax": cap,
+        **({"deviceCapMax": device_cap} if device_cap else {}),
         "views": images,
         "viewMegapixels": round(mp, 3),
         **area,

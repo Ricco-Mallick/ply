@@ -1,0 +1,4 @@
+# shell scripts run inside WSL/Linux: a Windows checkout (core.autocrlf) must not give them CRLF
+*.sh text eol=lf
+*.ps1 text eol=crlf
+*.bat text eol=crlf
